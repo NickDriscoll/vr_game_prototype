@@ -86,11 +86,15 @@ fn main() {
         None => {
             glfw.window_hint(glfw::WindowHint::ContextVersion(4, 3));
         }
-    }    
+    }
+    drop(reqs);
 	glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
 
     //Create the window
-    let (mut window, events) = glfw.create_window(800, 800, "OpenXR yay", glfw::WindowMode::Windowed).unwrap();
+    let window_size = glm::vec2(800, 800);
+    let aspect_ratio = window_size.x as f32 / window_size.y as f32;
+    let (mut window, events) = glfw.create_window(window_size.x, window_size.y, "OpenXR yay", glfw::WindowMode::Windowed).unwrap();
+    window.set_resizable(false);
 
     //Load OpenGL function pointers
     gl::load_with(|symbol| window.get_proc_address(symbol));
@@ -145,7 +149,19 @@ fn main() {
         None => { None }
     };
 
+    //Initialize view and projection matrices
+    let view_marix = glm::look_at(&glm::vec3(0.0, 1.0, 1.0), &glm::vec3(0.0, 0.0, 0.0), &glm::vec3(0.0, 0.0, 1.0));
+    let projection_matrix = glm::perspective(aspect_ratio, glm::half_pi(), 0.1, 500.0);
+
+    //Initialize texture caching struct
+    let mut texture_keeper = ozy::render::TextureKeeper::new();
+
+    ozy::render::SimpleMesh::from_ozy("models/sphere.ozy", &mut texture_keeper);
+
+    //Main loop
     while !window.should_close() {
+
+        //Poll window events and handle them
         glfw.poll_events();
         for (_, event) in glfw::flush_messages(&events) {
             match event {
@@ -154,6 +170,13 @@ fn main() {
             }
         }
 
-        //window.swap_buffers();
+
+        //Render
+        unsafe {
+            gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+
+        }
+
+        window.swap_buffers();
     }
 }
