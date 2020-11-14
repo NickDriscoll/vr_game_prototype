@@ -1,9 +1,13 @@
+//#![w]
 extern crate nalgebra_glm as glm;
 extern crate openxr as xr;
 extern crate ozy_engine as ozy;
 
 use glfw::{Context, WindowEvent};
+use gl::types::*;
 use std::process::exit;
+use std::ptr;
+use std::time::Instant;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use winapi::um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext};
 
@@ -115,7 +119,10 @@ fn main() {
 			gl::DebugMessageCallback(gl_debug_callback, ptr::null());		//Register the debug callback
 			gl::DebugMessageControl(gl::DONT_CARE, gl::DONT_CARE, gl::DONT_CARE, 0, ptr::null(), gl::TRUE);
 		}
-	}
+    }
+    
+    //Compile shader programs
+    let program_3D = unsafe { ozy::glutil::compile_program_from_files("shaders/mapped.vert", "shaders/mapped.frag") };
 
     //Initialize OpenXR session
     let xr_session = match xr_instance {
@@ -148,18 +155,46 @@ fn main() {
         }
         None => { None }
     };
+    
+    //Initialize default framebuffer
+    let default_framebuffer = ozy::render::Framebuffer {
+        name: 0,
+        size: (window_size.x as GLsizei, window_size.y as GLsizei),
+        clear_flags: gl::DEPTH_BUFFER_BIT | gl::COLOR_BUFFER_BIT,
+        cull_face: gl::BACK
+    };
 
     //Initialize view and projection matrices
-    let view_marix = glm::look_at(&glm::vec3(0.0, 1.0, 1.0), &glm::vec3(0.0, 0.0, 0.0), &glm::vec3(0.0, 0.0, 1.0));
+    let view_marix = glm::look_at(&glm::vec3(0.0, 1.5, 1.5), &glm::vec3(0.0, 0.0, 0.0), &glm::vec3(0.0, 0.0, 1.0));
     let projection_matrix = glm::perspective(aspect_ratio, glm::half_pi(), 0.1, 500.0);
+
+    //Uniform light source
+    let uniform_light = glm::normalize(&glm::vec4(-1.0, 0.0, 1.0, 0.0));
+
+    //Initialize shadow data
+    let shadow_view = glm::look_at(&glm::vec4_to_vec3(&uniform_light), &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
+    let shadow_proj_size = 3.0;
+    let shadow_projection = glm::ortho(-shadow_proj_size, shadow_proj_size, -shadow_proj_size, shadow_proj_size, -shadow_proj_size, 2.0 * shadow_proj_size);
+    let shadow_size = 8192;
+    let shadow_rendertarget = unsafe { ozy::render::RenderTarget::new_shadow((shadow_size, shadow_size)) };
 
     //Initialize texture caching struct
     let mut texture_keeper = ozy::render::TextureKeeper::new();
 
-    ozy::render::SimpleMesh::from_ozy("models/sphere.ozy", &mut texture_keeper);
+    let mut sphere_matrix = glm::identity();
+    let sphere_mesh = ozy::render::SimpleMesh::from_ozy("models/sphere.ozy", &mut texture_keeper);
 
     //Main loop
+    let mut last_frame_instant = Instant::now();
+    let mut elapsed_time = 0.0;
     while !window.should_close() {
+        let delta_time = {
+			let frame_instant = Instant::now();
+			let dur = frame_instant.duration_since(last_frame_instant);
+			last_frame_instant = frame_instant;
+			dur.as_secs_f32()
+        };
+        elapsed_time += delta_time;
 
         //Poll window events and handle them
         glfw.poll_events();
@@ -171,10 +206,33 @@ fn main() {
         }
 
 
+        sphere_matrix = glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
+
         //Render
         unsafe {
-            gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+            shadow_rendertarget.bind();
+            default_framebuffer.bind();
 
+            ozy::glutil::bind_matrix4(program_3D, "mvp", &(projection_matrix * view_marix * sphere_matrix));
+            ozy::glutil::bind_matrix4(program_3D, "model_matrix", &sphere_matrix);
+            ozy::glutil::bind_matrix4(program_3D, "shadow_matrix", &(shadow_projection * shadow_view));
+            ozy::glutil::bind_vector4(program_3D, "sun_direction", &uniform_light);
+
+            let texture_map_names = ["albedo_map", "normal_map", "roughness_map"];
+            for i in 0..ozy::render::TEXTURE_MAP_COUNT {
+                //Init texture samplers
+                ozy::glutil::bind_int(program_3D, texture_map_names[i], i as GLint);
+
+                //Bind textures to said samplers
+                gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
+                gl::BindTexture(gl::TEXTURE_2D, sphere_mesh.texture_maps[i]);
+            }
+            ozy::glutil::bind_int(program_3D, "shadow_map", ozy::render::TEXTURE_MAP_COUNT as GLint);
+            gl::ActiveTexture(gl::TEXTURE0 + ozy::render::TEXTURE_MAP_COUNT as GLenum);
+            gl::BindTexture(gl::TEXTURE_2D, shadow_rendertarget.texture);
+            
+            gl::BindVertexArray(sphere_mesh.vao);
+            gl::DrawElements(gl::TRIANGLES, sphere_mesh.index_count, gl::UNSIGNED_SHORT, ptr::null());
         }
 
         window.swap_buffers();
