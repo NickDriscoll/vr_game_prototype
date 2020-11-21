@@ -12,6 +12,7 @@ glfw = "*"
 gl = "*"
 nalgebra-glm = "*"
 raw-window-handle = "*"
+rand = "0.7.3"
 
 [dependencies.openxr]
 version = "*"

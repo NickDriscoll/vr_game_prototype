@@ -386,6 +386,7 @@ dependencies = [
  "nalgebra-glm",
  "openxr",
  "ozy_engine",
+ "rand",
  "raw-window-handle",
  "winapi",
 ]
