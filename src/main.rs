@@ -210,6 +210,8 @@ fn main() {
 
     let sphere_block_width = 8;
     let sphere_block_sidelength = 40.0;
+    //let sphere_block_width = 40;
+    //let sphere_block_sidelength = 200.0;
     let sphere_count = sphere_block_width * sphere_block_width;
     let sphere_mesh = ozy::render::SimpleMesh::from_ozy("models/sphere.ozy", &mut texture_keeper);
     let mut sphere_instanced_mesh = unsafe { ozy::render::InstancedMesh::from_simplemesh(&sphere_mesh, sphere_count, 5) };
@@ -218,12 +220,11 @@ fn main() {
     //Create spheres
     let mut spheres = Vec::with_capacity(sphere_count);
     for i in 0..sphere_count {
-        let rotation = if i == 0 {
-            0.0
+        let (rotation, hover) = if i == 0 {
+            (0.0, 0.0)
         } else {
-            3.0 * random::<f32>()
+            (3.0 * random::<f32>(), 3.0 * random::<f32>())
         };
-        let hover = 3.0 * random::<f32>();
         let sphere = structs::Sphere::new(rotation, hover);
         spheres.push(sphere)
     }
@@ -345,10 +346,8 @@ fn main() {
                 let xpos = sphere_block_sidelength * j as f32 / (sphere_block_width as f32 - 1.0) - sphere_block_sidelength / 2.0;
                 
                 let sphere_index = i * sphere_block_width + j;
-
                 let rotation = spheres[sphere_index].rotation_multiplier;
                 let hover = spheres[sphere_index].hover_multiplier;
-
                 let transform = glm::translation(&glm::vec3(xpos, ypos, 2.0 + f32::sin(hover * elapsed_time))) * 
                                 glm::rotation(elapsed_time * rotation, &glm::vec3(0.0, 0.0, 1.0));
 
@@ -361,7 +360,7 @@ fn main() {
         sphere_instanced_mesh.update_buffer(&sphere_transforms);
 
         //Make the light dance around
-        uniform_light = glm::normalize(&glm::vec4(f32::cos(elapsed_time), f32::sin(elapsed_time), 2.0, 0.0));
+        uniform_light = glm::normalize(&glm::vec4(f32::cos(0.0), f32::sin(0.0), 2.0, 0.0));
         shadow_view = glm::look_at(&glm::vec4_to_vec3(&uniform_light), &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
 
         //Render
@@ -391,6 +390,7 @@ fn main() {
                 //Init texture samplers
                 ozy::glutil::bind_int(simple_3D, texture_map_names[i], i as GLint);
                 ozy::glutil::bind_int(complex_3D, texture_map_names[i], i as GLint);
+                ozy::glutil::bind_int(complex_instanced_3D, texture_map_names[i], i as GLint);
             }
 
             for i in 0..ozy::render::TEXTURE_MAP_COUNT {
@@ -402,6 +402,7 @@ fn main() {
             //Draw plane mesh
             ozy::glutil::bind_matrix4(simple_3D, "mvp", &(projection_matrix * view_matrix * plane_matrix));
             ozy::glutil::bind_matrix4(simple_3D, "model_matrix", &plane_matrix);
+            ozy::glutil::bind_vector4(simple_3D, "view_position", &glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0));
             ozy::glutil::bind_float(simple_3D, "uv_scale", 10.0);
             gl::UseProgram(simple_3D);
             gl::BindVertexArray(plane_mesh.vao);
@@ -414,6 +415,7 @@ fn main() {
                 gl::BindTexture(gl::TEXTURE_2D, sphere_mesh.texture_maps[i]);
             }
 
+            ozy::glutil::bind_vector4(complex_instanced_3D, "view_position", &glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0));
             ozy::glutil::bind_matrix4(complex_instanced_3D, "view_projection", &(projection_matrix * view_matrix));
             ozy::glutil::bind_matrix4(complex_instanced_3D, "shadow_matrix", &(shadow_projection * shadow_view));
             gl::UseProgram(complex_instanced_3D);

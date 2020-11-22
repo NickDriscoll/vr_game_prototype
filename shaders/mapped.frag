@@ -1,6 +1,7 @@
 #version 330 core
 
 in mat3 tangent_matrix;
+in vec4 world_space_pos;
 in vec4 shadow_space_pos;
 in vec2 f_uvs;
 
@@ -15,13 +16,14 @@ uniform sampler2D roughness_map;
 uniform sampler2D shadow_map;
 
 uniform vec4 sun_direction;
-uniform vec4 view_direction;
+uniform vec4 view_position;
 uniform float uv_scale = 1.0;
 
 const float AMBIENT = 0.1;
 
 void main() {
     vec2 scaled_uvs = f_uvs * uv_scale;
+    vec4 view_direction = normalize(view_position - world_space_pos);
 
     vec3 albedo = texture(albedo_map, scaled_uvs).xyz;
     vec3 tangent_normal = texture(normal_map, scaled_uvs).xyz * 2.0 - 1.0;
@@ -39,8 +41,7 @@ void main() {
     } else {
         //Do PCF
         //Average the nxn block of shadow texels centered at this pixel
-        int n = 3;
-        int bound = n - 2;
+        int bound = 1;
         for (int x = -bound; x <= bound; x++) {
             for (int y = -bound; y <= bound; y++) {
                 float sampled_depth = texture(shadow_map, adj_shadow_space_pos.xy + vec2(x, y) * texel_size).r;
@@ -51,12 +52,12 @@ void main() {
     }
 
     float diffuse = max(0.0, dot(vec3(sun_direction), normal));
-
+    
     float roughness = texture(roughness_map, scaled_uvs).x;
     vec4 halfway = normalize(view_direction + sun_direction);
     float specular_angle = max(0.0, dot(vec3(halfway), normal));
-    float specular_coefficient = 100 / (500 * roughness + 0.01);
-    float specular = pow(specular_angle, specular_coefficient);
+    float shininess = (1.0 - roughness) * (128.0 - 16.0) + 16.0;
+    float specular = pow(specular_angle, shininess);
 
     vec3 final_color = ((specular + diffuse) * (1.0 - shadow) + AMBIENT) * albedo;
     frag_color = vec4(final_color, 1.0);
