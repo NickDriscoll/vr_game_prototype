@@ -26,7 +26,6 @@ void main() {
     vec4 view_direction = normalize(view_position - world_space_pos);
 
     vec3 albedo = texture(albedo_map, scaled_uvs).xyz;
-    vec3 tangent_normal = texture(normal_map, scaled_uvs).xyz * 2.0 - 1.0;
     vec3 normal = normalize(f_normal);
 
     //Determine if the fragment is shadowed
@@ -40,11 +39,12 @@ void main() {
     else {
         //Do PCF
         //Average the nxn block of shadow texels centered at this pixel
+        float bias = 0.001;
         int bound = 1;
         for (int x = -bound; x <= bound; x++) {
             for (int y = -bound; y <= bound; y++) {
                 float sampled_depth = texture(shadow_map, adj_shadow_space_pos.xy + vec2(x, y) * texel_size).r;
-                shadow += sampled_depth < adj_shadow_space_pos.z ? 1.0 : 0.0;
+                shadow += sampled_depth + bias < adj_shadow_space_pos.z ? 1.0 : 0.0;
             }
         }
         shadow /= 9.0;

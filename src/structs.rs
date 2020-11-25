@@ -11,3 +11,8 @@ impl Sphere {
         }
     }
 }
+
+#[derive(Clone, Copy)]
+pub enum Command {
+    Quit
+}

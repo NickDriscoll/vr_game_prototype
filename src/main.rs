@@ -5,6 +5,8 @@ extern crate ozy_engine as ozy;
 
 mod structs;
 
+use structs::{Command, Sphere};
+
 use glfw::{Action, Context, Key, WindowEvent};
 use gl::types::*;
 use std::process::exit;
@@ -13,6 +15,10 @@ use std::time::Instant;
 use rand::random;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use winapi::um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext};
+
+use ozy::render::ScreenState;
+
+const FONT_BYTES: &[u8; 212276] = include_bytes!("../fonts/Constantia.ttf");
 
 fn main() {
     //Initialize the OpenXR instance
@@ -61,20 +67,67 @@ fn main() {
         None => { None }
     };
 
-    let reqs = match &xr_instance {
+    let xr_graphics_reqs = match &xr_instance {
         Some(inst) => {
             match xr_systemid {
                 Some(sysid) => {
                     match inst.graphics_requirements::<xr::OpenGL>(sysid) {
                         Ok(reqs) => { Some(reqs) }
                         Err(e) => {
-                            println!("Couldn't get graphics requirements: {}", e);
+                            println!("Couldn't get OpenXR graphics requirements: {}", e);
                             None
                         }
                     }
                 }
                 None => { None }
             }
+        }
+        None => { None }
+    };
+
+    //Create the paths to appropriate equipment
+    let left_hand_path = match &xr_instance {
+        Some(instance) => {
+            match instance.string_to_path(xr::USER_HAND_LEFT) {
+                Ok(path) => { Some(path) }
+                Err(e) => {
+                    println!("Error getting XrPath: {}", e);
+                    None
+                }
+            }
+        }
+        None => { None }
+    };
+
+    //Create the actionset
+    let xr_controller_actionset = match &xr_instance {
+        Some(inst) => {
+            match inst.create_action_set("controllers", "Controllers", 0) {
+                Ok(set) => { Some(set) }
+                Err(e) => {
+                    println!("Error creating XrActionSet: {}", e);
+                    None
+                }
+            }
+        }
+        None => { None }
+    };
+
+    //Create the actions for getting pose data
+    let controller_pose_action = match &xr_controller_actionset {
+        Some(actionset) => {
+            match left_hand_path {
+                Some(path) => {
+                    match actionset.create_action::<xr::Posef>("get_pose", "Get pose", &[path]) {
+                        Ok(action) => { Some(action) }
+                        Err(e) => {
+                            println!("Error creating XrAction: {}", e);
+                            None
+                        }
+                    }
+                }
+                None => { None }
+            }            
         }
         None => { None }
     };
@@ -86,7 +139,7 @@ fn main() {
     };
     
     //Ask for an OpenGL version based on what OpenXR says. Default to 4.3
-    match reqs {
+    match xr_graphics_reqs {
         Some(r) => {
             glfw.window_hint(glfw::WindowHint::ContextVersion(r.min_api_version_supported.major() as u32, r.min_api_version_supported.minor() as u32));
         }
@@ -94,13 +147,17 @@ fn main() {
             glfw.window_hint(glfw::WindowHint::ContextVersion(4, 3));
         }
     }
-    drop(reqs);
 	glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
 
     //Create the window
     let window_size = glm::vec2(1280, 1024);
     let aspect_ratio = window_size.x as f32 / window_size.y as f32;
-    let (mut window, events) = glfw.create_window(window_size.x, window_size.y, "OpenXR yay", glfw::WindowMode::Windowed).unwrap();
+    let (mut window, events) = match glfw.create_window(window_size.x, window_size.y, "OpenXR yay", glfw::WindowMode::Windowed) {
+        Some(stuff) => { stuff }
+        None => {
+            panic!("Unable to create a window!");
+        }
+    };
     window.set_resizable(false);
     window.set_key_polling(true);
     window.set_mouse_button_polling(true);
@@ -113,7 +170,6 @@ fn main() {
 	unsafe {
         gl::Enable(gl::CULL_FACE);										//Enable face culling
         gl::DepthFunc(gl::LESS);										//Pass the fragment with the smallest z-value.
-        gl::Enable(gl::DEPTH_TEST);                                     //Enable depth testing
 		gl::Enable(gl::FRAMEBUFFER_SRGB); 								//Enable automatic linear->SRGB space conversion
 		gl::Enable(gl::BLEND);											//Enable alpha blending
 		gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);			//Set blend func to (Cs * alpha + Cd * (1.0 - alpha))
@@ -128,16 +184,9 @@ fn main() {
 			gl::DebugMessageControl(gl::DONT_CARE, gl::DONT_CARE, gl::DONT_CARE, 0, ptr::null(), gl::TRUE);
 		}
     }
-    
-    //Compile shader programs
-    let simple_3D = unsafe { ozy::glutil::compile_program_from_files("shaders/simple.vert", "shaders/simple.frag") };
-    let complex_3D = unsafe { ozy::glutil::compile_program_from_files("shaders/mapped.vert", "shaders/mapped.frag") };
-    let complex_instanced_3D = unsafe { ozy::glutil::compile_program_from_files("shaders/mapped_instanced.vert", "shaders/mapped.frag") };
-    let shadow_3D = unsafe { ozy::glutil::compile_program_from_files("shaders/shadow.vert", "shaders/shadow.frag") };
-    let shadow_instanced_3D = unsafe { ozy::glutil::compile_program_from_files("shaders/shadow_instanced.vert", "shaders/shadow.frag") };
 
     //Initialize OpenXR session
-    let xr_session = match xr_instance {
+    let (xr_session, xr_framewaiter, xr_framestream) = match &xr_instance {
         Some(inst) => {
             match xr_systemid {
                 Some(sysid) => unsafe {
@@ -153,20 +202,73 @@ fn main() {
                         h_glrc: wglGetCurrentContext()
                     };
 
-                    let sesh = match inst.create_session::<xr::OpenGL>(sysid, &session_create_info) {
-                        Ok(s) => { Some(s) }
+                    match inst.create_session::<xr::OpenGL>(sysid, &session_create_info) {
+                        Ok(sesh) => { (Some(sesh.0), Some(sesh.1), Some(sesh.2)) }
                         Err(e) => {
                             println!("Error initializing OpenXR session: {}", e);
-                            None
+                            (None, None, None)
                         }
-                    };
-                    sesh
+                    }
                 }
-                None => { None }
+                None => { (None, None, None) }
+            }
+        }
+        None => { (None, None, None) }
+    };
+
+    //Set controller actionset as active
+    match (&xr_session, &xr_controller_actionset) {
+        (Some(session), Some(actionset)) => {
+            if let Err(e) = session.attach_action_sets(&[&actionset]) {
+                println!("Unable to sync actions: {}", e);
+            }
+        }
+        _ => {}
+    }
+
+    //Create tracking space
+    let tracking_space = match &xr_session {
+        Some(session) => {
+            match session.create_reference_space(xr::ReferenceSpaceType::STAGE, xr::Posef::IDENTITY) {
+                Ok(space) => { Some(space) }
+                Err(e) => {
+                    println!("Couldn't create reference space: {}", e);
+                    None
+                }
             }
         }
         None => { None }
     };
+
+    //Create swapchains
+    /*
+    let swapchain = match &xr_session {
+        Some(session) => {
+            let create_info = xr::SwapchainCreateInfo {
+                create_flags: xr::SwapchainCreateFlags::STATIC_IMAGE,
+                usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT | xr::SwapchainUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                format: gl::SRGB8_ALPHA8,
+
+            };
+
+            match session.create_swapchain(&create_info) {
+                Ok(sc) => { Some(sc) }
+                Err(e) => {
+                    println!("Error creating swapchain: {}", e);
+                    None
+                }
+            }
+        }
+        None => { None }
+    };
+    */
+    
+    //Compile shader programs
+    let simple_3D = unsafe { ozy::glutil::compile_program_from_files("shaders/simple.vert", "shaders/simple.frag") };
+    let complex_3D = unsafe { ozy::glutil::compile_program_from_files("shaders/mapped.vert", "shaders/mapped.frag") };
+    let complex_instanced_3D = unsafe { ozy::glutil::compile_program_from_files("shaders/mapped_instanced.vert", "shaders/mapped.frag") };
+    let shadow_3D = unsafe { ozy::glutil::compile_program_from_files("shaders/shadow.vert", "shaders/shadow.frag") };
+    let shadow_instanced_3D = unsafe { ozy::glutil::compile_program_from_files("shaders/shadow_instanced.vert", "shaders/shadow.frag") };
     
     //Initialize default framebuffer
     let default_framebuffer = ozy::render::Framebuffer {
@@ -181,13 +283,13 @@ fn main() {
     let mut camera_input: glm::TVec4<f32> = glm::zero();             //This is a unit vector in the xy plane in view space that represents the input camera movement vector
     let mut camera_orientation = glm::vec2(0.0, -glm::half_pi::<f32>() * 0.6);
     let mut camera_speed = 5.0;
+    let camera_hit_sphere_radius = 0.2;
 
-    //Initialize view and projection matrices
-    let mut view_matrix = glm::identity();
-    let projection_matrix = glm::perspective(aspect_ratio, glm::half_pi(), 0.1, 500.0);
+    //Initialize screen state
+    let mut screen_state = ozy::render::ScreenState::new(window_size, glm::identity(), glm::perspective_zo(aspect_ratio, glm::half_pi(), 0.1, 500.0));
 
     //Uniform light source
-    let mut uniform_light = glm::normalize(&glm::vec4(-1.0, 0.0, 1.0, 0.0));
+    let mut uniform_light = glm::normalize(&glm::vec4(1.0, 0.0, 1.0, 0.0));
 
     //Initialize shadow data
     let mut shadow_view;
@@ -198,34 +300,65 @@ fn main() {
 
     //Initialize texture caching struct
     let mut texture_keeper = ozy::render::TextureKeeper::new();
+    let tex_params = [
+        (gl::TEXTURE_WRAP_S, gl::REPEAT),
+	    (gl::TEXTURE_WRAP_T, gl::REPEAT),
+	    (gl::TEXTURE_MIN_FILTER, gl::LINEAR),
+	    (gl::TEXTURE_MAG_FILTER, gl::LINEAR)
+    ];
+
+    let mut mouse_lbutton_pressed = false;
+    let mut mouse_lbutton_pressed_last_frame = false;
+    let mut screen_space_mouse = glm::zero();
+
+    //Initialize UI system
+    let pause_menu_index = 0;
+    let pause_menu_chain_index;
+    let mut ui_state = {
+        let menus = vec![
+            ozy::ui::Menu::new(vec![
+                ("Quit", Some(Command::Quit))
+            ], ozy::ui::UIAnchor::LeftAligned((20.0, 20.0)), 24.0)
+        ];
+
+        let button_program = unsafe { ozy::glutil::compile_program_from_files("shaders/button.vert", "shaders/button.frag") };
+        let glyph_program = unsafe { ozy::glutil::compile_program_from_files("shaders/glyph.vert", "shaders/glyph.frag") };
+
+        let mut state = ozy::ui::UIState::<Command>::new(FONT_BYTES, (window_size.x, window_size.y), [button_program, glyph_program]);
+        state.set_menus(menus);
+        pause_menu_chain_index = state.create_menu_chain();
+        state.toggle_menu(pause_menu_chain_index, pause_menu_index);
+        state
+    };
 
     let plane_mesh = {
         let plane_vertex_width = 2;
         let plane_index_count = (plane_vertex_width - 1) * (plane_vertex_width - 1) * 6;
         let plane_vao = ozy::prims::plane_vao(plane_vertex_width);  
 
-        ozy::render::SimpleMesh::new(plane_vao, plane_index_count as GLint, "wood_veneer", &mut texture_keeper)
+        ozy::render::SimpleMesh::new(plane_vao, plane_index_count as GLint, "tiles", &mut texture_keeper, &tex_params)
     };
-    let plane_matrix = ozy::routines::uniform_scale(500.0);
+    let plane_matrix = ozy::routines::uniform_scale(250.0);
 
     let sphere_block_width = 8;
     let sphere_block_sidelength = 40.0;
     //let sphere_block_width = 40;
     //let sphere_block_sidelength = 200.0;
     let sphere_count = sphere_block_width * sphere_block_width;
-    let sphere_mesh = ozy::render::SimpleMesh::from_ozy("models/sphere.ozy", &mut texture_keeper);
+    let sphere_mesh = ozy::render::SimpleMesh::from_ozy("models/sphere.ozy", &mut texture_keeper, &tex_params);
     let mut sphere_instanced_mesh = unsafe { ozy::render::InstancedMesh::from_simplemesh(&sphere_mesh, sphere_count, 5) };
     let mut sphere_transforms = vec![0.0; sphere_count * 16];
 
-    //Create spheres
+    //Create spheres    
     let mut spheres = Vec::with_capacity(sphere_count);
     for i in 0..sphere_count {
+        let randomness_multiplier = 4.0;
         let (rotation, hover) = if i == 0 {
             (0.0, 0.0)
         } else {
-            (3.0 * random::<f32>(), 3.0 * random::<f32>())
+            (2.0 * randomness_multiplier * random::<f32>(), randomness_multiplier * random::<f32>())
         };
-        let sphere = structs::Sphere::new(rotation, hover);
+        let sphere = Sphere::new(rotation, hover);
         spheres.push(sphere)
     }
 
@@ -233,6 +366,7 @@ fn main() {
     let mut last_frame_instant = Instant::now();
     let mut elapsed_time = 0.0;
     let mut wireframe = false;
+    let mut command_buffer = Vec::new();
     while !window.should_close() {
         let delta_time = {
 			let frame_instant = Instant::now();
@@ -241,6 +375,42 @@ fn main() {
 			dur.as_secs_f32()
         };
         elapsed_time += delta_time;
+        mouse_lbutton_pressed_last_frame = mouse_lbutton_pressed;
+
+        //Get data from the VR hardware
+        /*
+        let left_hand_pose = match (&xr_session, &tracking_space, left_hand_path, &controller_pose_action) {
+            (Some(session), Some(t_space), Some(path), Some(action)) => {
+                match action.create_space(session.clone(), path, xr::Posef::IDENTITY) {
+                    Ok(space) => {
+                        match space.locate(t_space, ) {
+                            Ok(space_location) => {
+                                Some(space_location.pose)
+                            }
+                            Err(e) => {
+                                println!("Couldn't locate space: {}", e);
+                                None
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("Couldn't get left hand space: {}", e);
+                        None
+                    }
+                }
+            }
+            _ => { None }
+        };
+        
+        match left_hand_pose {
+            Some(pose) => {
+                println!("Position: ({}, {}, {})", pose.position.x, pose.position.y, pose.position.z);
+            }
+            None => {
+                println!("Pose was none");
+            }
+        }
+        */
 
         //Poll window events and handle them
         glfw.poll_events();
@@ -301,6 +471,13 @@ fn main() {
                         _ => {}
                     }
                 }
+                WindowEvent::MouseButton(glfw::MouseButtonLeft, action, ..) => {
+                    if action == glfw::Action::Press {
+                        mouse_lbutton_pressed = true;
+                    } else {
+                        mouse_lbutton_pressed = false;
+                    }
+                }
                 WindowEvent::MouseButton(glfw::MouseButtonRight, glfw::Action::Release, ..) => {
                     if active_camera {
                         window.set_cursor_mode(glfw::CursorMode::Normal);
@@ -310,6 +487,7 @@ fn main() {
                     active_camera = !active_camera;
                 }
                 WindowEvent::CursorPos(x, y) => {
+                    screen_space_mouse = glm::vec2(x as f32, y as f32);
                     if active_camera {
                         const CAMERA_SENSITIVITY_DAMPENING: f32 = 0.002;
                         let offset = glm::vec2(x as f32 - window_size.x as f32 / 2.0, y as f32 - window_size.y as f32 / 2.0);
@@ -325,18 +503,23 @@ fn main() {
             }
         }
 
+        //Update the state of the ui
+        ui_state.update_buttons(screen_space_mouse, mouse_lbutton_pressed, mouse_lbutton_pressed_last_frame, &mut command_buffer);
+
+        //Drain the command_buffer and process commands
+        for command in command_buffer.drain(0..command_buffer.len()) {
+            match command {
+                Command::Quit => { window.set_should_close(true); }
+            }
+        }
+
         //If the user is controlling the camera, force the mouse cursor into the center of the screen
         if active_camera {
             window.set_cursor_pos(window_size.x as f64 / 2.0, window_size.y as f64 / 2.0);
         }
 
-        let camera_velocity = glm::vec4_to_vec3(&(glm::affine_inverse(view_matrix) * camera_input));
+        let camera_velocity = glm::vec4_to_vec3(&(glm::affine_inverse(*screen_state.get_view_from_world()) * camera_input));
         camera_position += camera_velocity * delta_time * camera_speed;
-
-        //Create a view matrix from the camera state
-        view_matrix = glm::rotation(camera_orientation.y, &glm::vec3(1.0, 0.0, 0.0)) *
-                      glm::rotation(camera_orientation.x, &glm::vec3(0.0, 0.0, 1.0)) *
-                      glm::translation(&(-camera_position));
 
         //Update sphere transforms
         for i in 0..sphere_block_width {
@@ -359,12 +542,51 @@ fn main() {
         }
         sphere_instanced_mesh.update_buffer(&sphere_transforms);
 
+        //Collision handling section
+
+        for i in 0..sphere_count {
+            let sphere_pos = glm::vec3(
+                sphere_transforms[16 * i + 12],
+                sphere_transforms[16 * i + 13],
+                sphere_transforms[16 * i + 14]
+            );            
+            let sphere_radius = 1.0;
+            let distance = glm::distance(&sphere_pos, &camera_position);
+            let min_distance = sphere_radius + camera_hit_sphere_radius;
+
+            if distance < min_distance {
+                let direction = camera_position - sphere_pos;
+
+                camera_position = sphere_pos + glm::normalize(&direction) * min_distance;
+            }
+        }
+        
+        //Check for camera collisions
+        if camera_position.z < 0.5 {
+            camera_position.z = 0.5;
+        }
+
         //Make the light dance around
-        uniform_light = glm::normalize(&glm::vec4(f32::cos(0.0), f32::sin(0.0), 2.0, 0.0));
+        uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(-0.5 * elapsed_time), 4.0 * f32::sin(-0.5 * elapsed_time), 2.0, 0.0));
+        //uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(0.5 * elapsed_time), 0.0, 2.0, 0.0));
         shadow_view = glm::look_at(&glm::vec4_to_vec3(&uniform_light), &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
+
+        //Pre-render phase
+
+        //Create a view matrix from the camera state
+        let new_view_matrix = glm::rotation(camera_orientation.y, &glm::vec3(1.0, 0.0, 0.0)) *
+                      glm::rotation(camera_orientation.x, &glm::vec3(0.0, 0.0, 1.0)) *
+                      glm::translation(&(-camera_position));
+        screen_state.update_view(new_view_matrix);
+
+        //Synchronize ui_state before rendering
+        ui_state.synchronize();
 
         //Render
         unsafe {
+            //Enable depth test for 3D rendering
+            gl::Enable(gl::DEPTH_TEST);
+
             //Shadow map rendering
             shadow_rendertarget.bind();
             gl::UseProgram(shadow_instanced_3D);
@@ -400,10 +622,10 @@ fn main() {
             }
 
             //Draw plane mesh
-            ozy::glutil::bind_matrix4(simple_3D, "mvp", &(projection_matrix * view_matrix * plane_matrix));
+            ozy::glutil::bind_matrix4(simple_3D, "mvp", &(screen_state.get_clipping_from_world() * plane_matrix));
             ozy::glutil::bind_matrix4(simple_3D, "model_matrix", &plane_matrix);
             ozy::glutil::bind_vector4(simple_3D, "view_position", &glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0));
-            ozy::glutil::bind_float(simple_3D, "uv_scale", 10.0);
+            ozy::glutil::bind_float(simple_3D, "uv_scale", 5.0);
             gl::UseProgram(simple_3D);
             gl::BindVertexArray(plane_mesh.vao);
             gl::DrawElements(gl::TRIANGLES, plane_mesh.index_count, gl::UNSIGNED_SHORT, ptr::null());
@@ -416,10 +638,15 @@ fn main() {
             }
 
             ozy::glutil::bind_vector4(complex_instanced_3D, "view_position", &glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0));
-            ozy::glutil::bind_matrix4(complex_instanced_3D, "view_projection", &(projection_matrix * view_matrix));
+            ozy::glutil::bind_matrix4(complex_instanced_3D, "view_projection", screen_state.get_clipping_from_world());
             ozy::glutil::bind_matrix4(complex_instanced_3D, "shadow_matrix", &(shadow_projection * shadow_view));
+            ozy::glutil::bind_float(complex_instanced_3D, "uv_scale", 2.0);
             gl::UseProgram(complex_instanced_3D);
             sphere_instanced_mesh.draw();
+
+            //Render 2D elements
+            gl::Disable(gl::DEPTH_TEST);
+            ui_state.draw(&screen_state);
         }
 
         window.swap_buffers();
