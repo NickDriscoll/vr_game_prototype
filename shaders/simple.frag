@@ -19,6 +19,8 @@ uniform vec4 sun_direction;
 uniform vec4 view_position;
 uniform float uv_scale = 1.0;
 
+uniform bool visualize_normals = false;
+
 const float AMBIENT = 0.1;
 
 void main() {
@@ -35,8 +37,7 @@ void main() {
     
     if (adj_shadow_space_pos.z > 1.0 || adj_shadow_space_pos.x < 0.0 || adj_shadow_space_pos.x > 1.0 || adj_shadow_space_pos.y < 0.0 || adj_shadow_space_pos.y > 1.0) {
         shadow = 0.0;
-    }
-    else {
+    } else {
         //Do PCF
         //Average the nxn block of shadow texels centered at this pixel
         float bias = 0.001;
@@ -59,6 +60,9 @@ void main() {
     float specular = pow(specular_angle, specular_coefficient);
 
     vec3 final_color = ((specular + diffuse) * (1.0 - shadow) + AMBIENT) * albedo;
-    frag_color = vec4(final_color, 1.0);
-    //frag_color = vec4(normal / 2.0 + 0.5, 1.0);
+    if (visualize_normals) {
+        frag_color = vec4(normal / 2.0 + 0.5, 1.0);
+    } else {
+        frag_color = vec4(final_color, 1.0);
+    }
 }

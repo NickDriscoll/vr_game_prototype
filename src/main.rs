@@ -18,7 +18,7 @@ use winapi::um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext};
 
 use ozy::render::ScreenState;
 
-const FONT_BYTES: &[u8; 212276] = include_bytes!("../fonts/Constantia.ttf");
+const FONT_BYTES: &'static [u8; 212276] = include_bytes!("../fonts/Constantia.ttf");
 
 fn main() {
     //Initialize the OpenXR instance
@@ -53,7 +53,7 @@ fn main() {
         }
     };
 
-    //Get the system id for the HMD
+    //Get the system id
     let xr_systemid = match &xr_instance {
         Some(inst) => {
             match inst.system(xr::FormFactor::HEAD_MOUNTED_DISPLAY) {
@@ -67,6 +67,28 @@ fn main() {
         None => { None }
     };
 
+    //Get the max swapchain size
+    let xr_swapchain_size = match (&xr_instance, &xr_systemid) {
+        (Some(inst), Some(id)) => {
+            match inst.system_properties(*id) {
+                Ok(sys_properties) => {
+                    let dims = glm::vec2(
+                        sys_properties.graphics_properties.max_swapchain_image_width,
+                        sys_properties.graphics_properties.max_swapchain_image_height
+                    );
+                    
+                    Some(dims)
+                }
+                Err(e) => {
+                    println!("Error getting OpenXR system properties: {}", e);
+                    None
+                }
+            }
+        }
+        _ => { None }
+    };
+
+    //Get the OpenXR runtime's OpenGL version requirements
     let xr_graphics_reqs = match &xr_instance {
         Some(inst) => {
             match xr_systemid {
@@ -150,7 +172,16 @@ fn main() {
 	glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
 
     //Create the window
-    let window_size = glm::vec2(1280, 1024);
+    let window_size = match &xr_swapchain_size {
+        Some(size) => { 
+            glm::vec2(
+                size.x / 2,
+                size.y / 2
+            )
+        }
+        None => { glm::vec2(1280, 1024) }
+    };
+
     let aspect_ratio = window_size.x as f32 / window_size.y as f32;
     let (mut window, events) = match glfw.create_window(window_size.x, window_size.y, "OpenXR yay", glfw::WindowMode::Windowed) {
         Some(stuff) => { stuff }
@@ -186,7 +217,7 @@ fn main() {
     }
 
     //Initialize OpenXR session
-    let (xr_session, xr_framewaiter, xr_framestream) = match &xr_instance {
+    let (xr_session, mut xr_framewaiter, mut xr_framestream) = match &xr_instance {
         Some(inst) => {
             match xr_systemid {
                 Some(sysid) => unsafe {
@@ -203,7 +234,15 @@ fn main() {
                     };
 
                     match inst.create_session::<xr::OpenGL>(sysid, &session_create_info) {
-                        Ok(sesh) => { (Some(sesh.0), Some(sesh.1), Some(sesh.2)) }
+                        Ok(sesh) => {
+                            match sesh.0.begin(xr::ViewConfigurationType::PRIMARY_STEREO) {
+                                Ok(_) => { (Some(sesh.0), Some(sesh.1), Some(sesh.2)) }
+                                Err(e) => {
+                                    println!("Error beginning XrSession: {}", e);
+                                    (None, None, None)
+                                }
+                            }                            
+                         }
                         Err(e) => {
                             println!("Error initializing OpenXR session: {}", e);
                             (None, None, None)
@@ -241,14 +280,18 @@ fn main() {
     };
 
     //Create swapchains
-    /*
-    let swapchain = match &xr_session {
-        Some(session) => {
+    let mut xr_swapchain = match (&xr_session, &xr_swapchain_size) {
+        (Some(session), Some(size)) => {
             let create_info = xr::SwapchainCreateInfo {
                 create_flags: xr::SwapchainCreateFlags::STATIC_IMAGE,
                 usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT | xr::SwapchainUsageFlags::DEPTH_STENCIL_ATTACHMENT,
                 format: gl::SRGB8_ALPHA8,
-
+                sample_count: 1,
+                width: size.x,
+                height: size.y,
+                face_count: 1,
+                array_size: 1,
+                mip_count: 1
             };
 
             match session.create_swapchain(&create_info) {
@@ -259,9 +302,23 @@ fn main() {
                 }
             }
         }
+        _ => { None }
+    };
+
+    let xr_swapchain_index = match &xr_swapchain {
+        Some(chain) => {
+            match chain.enumerate_images() {
+                Ok(images) => {
+                    Some(images[0])
+                }
+                Err(e) => {
+                    println!("Error getting swapchain images: {}", e);
+                    None
+                }
+            }
+        }
         None => { None }
     };
-    */
     
     //Compile shader programs
     let simple_3D = unsafe { ozy::glutil::compile_program_from_files("shaders/simple.vert", "shaders/simple.frag") };
@@ -313,20 +370,30 @@ fn main() {
 
     //Initialize UI system
     let pause_menu_index = 0;
+    let graphics_menu_index = 1;
     let pause_menu_chain_index;
+    let graphics_menu_chain_index;
     let mut ui_state = {
-        let menus = vec![
-            ozy::ui::Menu::new(vec![
-                ("Quit", Some(Command::Quit))
-            ], ozy::ui::UIAnchor::LeftAligned((20.0, 20.0)), 24.0)
-        ];
-
         let button_program = unsafe { ozy::glutil::compile_program_from_files("shaders/button.vert", "shaders/button.frag") };
         let glyph_program = unsafe { ozy::glutil::compile_program_from_files("shaders/glyph.vert", "shaders/glyph.frag") };
 
-        let mut state = ozy::ui::UIState::<Command>::new(FONT_BYTES, (window_size.x, window_size.y), [button_program, glyph_program]);
-        state.set_menus(menus);
+        let mut state = ozy::ui::UIState::new(FONT_BYTES, (window_size.x, window_size.y), [button_program, glyph_program]);
         pause_menu_chain_index = state.create_menu_chain();
+        graphics_menu_chain_index = state.create_menu_chain();
+        
+        let menus = vec![
+            ozy::ui::Menu::new(vec![
+                ("Quit", Some(Command::Quit)),
+                ("Graphics options", Some(Command::ToggleMenu(graphics_menu_chain_index, 1)))
+            ], ozy::ui::UIAnchor::LeftAligned((20.0, 20.0)), 24.0),
+            ozy::ui::Menu::new(vec![
+                ("Normals visualization", Some(Command::ToggleNormalVis)),
+                ("Complex normals", Some(Command::ToggleComplexNormals)),
+                ("Wireframe view", Some(Command::ToggleWireframe))
+            ], ozy::ui::UIAnchor::LeftAligned((20.0, window_size.y as f32 / 2.0)), 24.0)
+        ];
+
+        state.set_menus(menus);
         state.toggle_menu(pause_menu_chain_index, pause_menu_index);
         state
     };
@@ -342,8 +409,6 @@ fn main() {
 
     let sphere_block_width = 8;
     let sphere_block_sidelength = 40.0;
-    //let sphere_block_width = 40;
-    //let sphere_block_sidelength = 200.0;
     let sphere_count = sphere_block_width * sphere_block_width;
     let sphere_mesh = ozy::render::SimpleMesh::from_ozy("models/sphere.ozy", &mut texture_keeper, &tex_params);
     let mut sphere_instanced_mesh = unsafe { ozy::render::InstancedMesh::from_simplemesh(&sphere_mesh, sphere_count, 5) };
@@ -361,6 +426,9 @@ fn main() {
         let sphere = Sphere::new(rotation, hover);
         spheres.push(sphere)
     }
+
+    let mut visualize_normals = false;
+    let mut complex_normals = true;
 
     //Main loop
     let mut last_frame_instant = Instant::now();
@@ -419,14 +487,6 @@ fn main() {
                 WindowEvent::Close => { window.set_should_close(true); }
                 WindowEvent::Key(key, _, Action::Press, _) => {
                     match key {
-                        Key::Q => unsafe {
-                            if wireframe {
-                                gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
-                            } else {
-                                gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
-                            }
-                            wireframe = !wireframe;
-                        }
                         Key::W => {
                             camera_input.z += -1.0;
                         }
@@ -510,6 +570,17 @@ fn main() {
         for command in command_buffer.drain(0..command_buffer.len()) {
             match command {
                 Command::Quit => { window.set_should_close(true); }
+                Command::ToggleMenu(chain_index, menu_index) => { ui_state.toggle_menu(chain_index, menu_index); }
+                Command::ToggleNormalVis => { visualize_normals = !visualize_normals; }
+                Command::ToggleComplexNormals => { complex_normals = !complex_normals; }
+                Command::ToggleWireframe => unsafe {
+                    if wireframe {
+                        gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
+                    } else {
+                        gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
+                    }
+                    wireframe = !wireframe;
+                }
             }
         }
 
@@ -562,8 +633,8 @@ fn main() {
         }
         
         //Check for camera collisions
-        if camera_position.z < 0.5 {
-            camera_position.z = 0.5;
+        if camera_position.z < camera_hit_sphere_radius {
+            camera_position.z = camera_hit_sphere_radius;
         }
 
         //Make the light dance around
@@ -594,9 +665,6 @@ fn main() {
             ozy::glutil::bind_matrix4(shadow_instanced_3D, "view_projection", &(shadow_projection * shadow_view));
             sphere_instanced_mesh.draw();
 
-            //Main scene rendering
-            default_framebuffer.bind();
-
             //Bind common uniforms
             let programs = [complex_3D, simple_3D, complex_instanced_3D];
             for program in &programs {
@@ -606,6 +674,37 @@ fn main() {
             }
             gl::ActiveTexture(gl::TEXTURE0 + ozy::render::TEXTURE_MAP_COUNT as GLenum);
             gl::BindTexture(gl::TEXTURE_2D, shadow_rendertarget.texture);
+
+            //Render into HMD
+            
+            match (&xr_session, &mut xr_swapchain, &mut xr_framewaiter, &mut xr_framestream, &tracking_space) {
+                (Some(session), Some(swapchain), Some(framewaiter), Some(framestream), Some(t_space)) => {
+                    let state = framewaiter.wait().unwrap();
+                    let image = swapchain.acquire_image().unwrap();
+                    swapchain.wait_image(xr::Duration::INFINITE).unwrap();
+
+                    framestream.begin().unwrap();
+
+                    let mut eye_views = [glm::identity(); 2];
+                    if state.should_render {
+                        let (viewflags, views) = session.locate_views(xr::ViewConfigurationType::PRIMARY_STEREO, state.predicted_display_time, t_space).unwrap();
+                        for i in 0..views.len() {
+                            let mut matrix = glm::quat_cast(&glm::quat(views[i].pose.orientation.x, views[i].pose.orientation.y, views[i].pose.orientation.z, views[i].pose.orientation.w));
+                            matrix[12] = views[i].pose.position.x;
+                            matrix[13] = views[i].pose.position.y;
+                            matrix[14] = views[i].pose.position.z;
+                            eye_views[i] = matrix;
+                        }
+
+
+                    }
+                }
+                _ => {}
+            }
+            
+
+            //Main scene rendering
+            default_framebuffer.bind();
 
             let texture_map_names = ["albedo_map", "normal_map", "roughness_map"];
             for i in 0..ozy::render::TEXTURE_MAP_COUNT {
@@ -626,6 +725,7 @@ fn main() {
             ozy::glutil::bind_matrix4(simple_3D, "model_matrix", &plane_matrix);
             ozy::glutil::bind_vector4(simple_3D, "view_position", &glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0));
             ozy::glutil::bind_float(simple_3D, "uv_scale", 5.0);
+            ozy::glutil::bind_int(simple_3D, "visualize_normals", visualize_normals as GLint);
             gl::UseProgram(simple_3D);
             gl::BindVertexArray(plane_mesh.vao);
             gl::DrawElements(gl::TRIANGLES, plane_mesh.index_count, gl::UNSIGNED_SHORT, ptr::null());
@@ -640,7 +740,9 @@ fn main() {
             ozy::glutil::bind_vector4(complex_instanced_3D, "view_position", &glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0));
             ozy::glutil::bind_matrix4(complex_instanced_3D, "view_projection", screen_state.get_clipping_from_world());
             ozy::glutil::bind_matrix4(complex_instanced_3D, "shadow_matrix", &(shadow_projection * shadow_view));
-            ozy::glutil::bind_float(complex_instanced_3D, "uv_scale", 2.0);
+            ozy::glutil::bind_float(complex_instanced_3D, "uv_scale", 5.0);
+            ozy::glutil::bind_int(complex_instanced_3D, "visualize_normals", visualize_normals as GLint);
+            ozy::glutil::bind_int(complex_instanced_3D, "complex_normals", complex_normals as GLint);
             gl::UseProgram(complex_instanced_3D);
             sphere_instanced_mesh.draw();
 

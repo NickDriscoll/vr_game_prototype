@@ -19,6 +19,9 @@ uniform vec4 sun_direction;
 uniform vec4 view_position;
 uniform float uv_scale = 1.0;
 
+uniform bool complex_normals = false;
+uniform bool visualize_normals = false;
+
 const float AMBIENT = 0.1;
 
 void main() {
@@ -26,10 +29,16 @@ void main() {
     vec4 view_direction = normalize(view_position - world_space_pos);
 
     vec3 albedo = texture(albedo_map, scaled_uvs).xyz;
-    vec3 sampled_normal = texture(normal_map, scaled_uvs).xyz;
-    vec3 tangent_normal = vec3(sampled_normal.xy * 2.0 - 1.0, sampled_normal.z);
-    tangent_normal.y *= -1.0;       //Flip the y because OpenGL loads textures upside-down
-    vec3 world_space_normal = normalize(tangent_matrix * tangent_normal);
+
+    vec3 world_space_normal;
+    if (complex_normals) {
+        vec3 sampled_normal = texture(normal_map, scaled_uvs).xyz;
+        vec3 tangent_normal = vec3(sampled_normal.xy * 2.0 - 1.0, sampled_normal.z);
+        tangent_normal.y *= -1.0;       //Flip the y because OpenGL loads textures upside-down
+        world_space_normal = normalize(tangent_matrix * tangent_normal);
+    } else {
+        world_space_normal = normalize(tangent_matrix[2]);
+    }
 
     //Determine if the fragment is shadowed
     float shadow = 0.0; 
@@ -62,7 +71,9 @@ void main() {
     float specular = pow(specular_angle, shininess);
 
     vec3 final_color = ((specular + diffuse) * (1.0 - shadow) + AMBIENT) * albedo;
-    frag_color = vec4(final_color, 1.0);
-    //frag_color = vec4(world_space_normal / 2.0 + 0.5, 1.0);
-    //frag_color = vec4(roughness, 0.0, 1.0 - roughness, 1.0);
+    if (visualize_normals) {
+        frag_color = vec4(world_space_normal / 2.0 + 0.5, 1.0);
+    } else {
+        frag_color = vec4(final_color, 1.0);
+    }
 }

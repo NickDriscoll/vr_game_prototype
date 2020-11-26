@@ -14,5 +14,9 @@ impl Sphere {
 
 #[derive(Clone, Copy)]
 pub enum Command {
-    Quit
+    Quit,
+    ToggleMenu(usize, usize),
+    ToggleNormalVis,
+    ToggleComplexNormals,
+    ToggleWireframe
 }
