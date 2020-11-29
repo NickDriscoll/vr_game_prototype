@@ -9,16 +9,58 @@ use structs::{Command, Sphere};
 
 use glfw::{Action, Context, Key, WindowEvent};
 use gl::types::*;
+use std::ffi::{c_void, CStr};
+use std::os::raw::c_char;
 use std::process::exit;
 use std::ptr;
 use std::time::Instant;
 use rand::random;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
+use xr::sys::{Bool32, DebugUtilsMessengerEXT, DebugUtilsMessengerCallbackDataEXT, DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT};
 use winapi::um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext};
 
-use ozy::render::ScreenState;
+use ozy::render::{ScreenState, SimpleMesh};
 
 const FONT_BYTES: &'static [u8; 212276] = include_bytes!("../fonts/Constantia.ttf");
+
+unsafe extern "system" fn xr_debug_callback(severity_flags: DebugUtilsMessageSeverityFlagsEXT, type_flags: DebugUtilsMessageTypeFlagsEXT, callback_data: *const DebugUtilsMessengerCallbackDataEXT, user_data: *mut c_void) -> Bool32 {
+    println!("---------------------------OpenXR Debug Message---------------------------");
+
+    if severity_flags.contains(DebugUtilsMessageSeverityFlagsEXT::ERROR) {
+        println!("Severity: ERROR");
+    } else if severity_flags.contains(DebugUtilsMessageSeverityFlagsEXT::WARNING) {        
+        println!("Severity: WARNING");
+    } else if severity_flags.contains(DebugUtilsMessageSeverityFlagsEXT::INFO) {        
+        println!("Severity: INFO");
+    } else if severity_flags.contains(DebugUtilsMessageSeverityFlagsEXT::VERBOSE) {        
+        println!("Severity: VERBOSE");
+    }
+
+    if type_flags.contains(DebugUtilsMessageTypeFlagsEXT::GENERAL) {
+        println!("Type: GENERAL");
+    } else if type_flags.contains(DebugUtilsMessageTypeFlagsEXT::VALIDATION) {
+        println!("Type: VALIDATION");
+    } else if type_flags.contains(DebugUtilsMessageTypeFlagsEXT::PERFORMANCE) {
+        println!("Type: PERFORMANCE");
+    } else if type_flags.contains(DebugUtilsMessageTypeFlagsEXT::CONFORMANCE) {
+        println!("Type: CONFORMANCE");
+    }
+
+    let message_id = CStr::from_ptr((*callback_data).message_id);
+    
+    let f_name = CStr::from_ptr((*callback_data).function_name);
+
+    let message = CStr::from_ptr((*callback_data).message);
+
+    println!("Function name: {:?}\nMessage ID: {:?}\nMessage: {:?}", f_name, message_id, message);
+    drop(message_id);
+    drop(f_name);
+    drop(message);
+
+
+    println!("--------------------------------------------------------------------------");
+    Bool32::from(true)
+}
 
 fn main() {
     //Initialize the OpenXR instance
@@ -42,16 +84,48 @@ fn main() {
             println!("OpenXR implementation does not support OpenGL!");
             exit(-1);
         }
+
+        if let Ok(layer_properties) = openxr_entry.enumerate_layers() {
+            println!("API layers:");
+            for layer in layer_properties.iter() {
+                println!("{}", layer.layer_name);
+            }
+        }
         
-        //Create the instance. We're not using any additional API layers
+        //Create the instance
+        #[cfg(xrdebug)]
+        let mut messenger = DebugUtilsMessengerEXT::NULL;
         match openxr_entry.create_instance(&app_info, &extension_set, &[]) {
-            Ok(inst) => { Some(inst) }
+            Ok(inst) => unsafe {
+                //Enable the OpenXR debug extension
+                #[cfg(xrdebug)]
+                {
+                    match xr::raw::DebugUtilsEXT::load(&openxr_entry, inst.as_raw()) {
+                        Ok(debug_utils) => {
+                            let debug_createinfo = DebugUtilsMessengerCreateInfoEXT {
+                                ty: xr::sys::StructureType::DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+                                next: ptr::null(),
+                                message_severities: DebugUtilsMessageSeverityFlagsEXT::VERBOSE | DebugUtilsMessageSeverityFlagsEXT::WARNING | DebugUtilsMessageSeverityFlagsEXT::INFO | DebugUtilsMessageSeverityFlagsEXT::ERROR,
+                                message_types: DebugUtilsMessageTypeFlagsEXT::GENERAL | DebugUtilsMessageTypeFlagsEXT::VALIDATION | DebugUtilsMessageTypeFlagsEXT::PERFORMANCE | DebugUtilsMessageTypeFlagsEXT::CONFORMANCE,
+                                user_callback: Some(xr_debug_callback),
+                                user_data: ptr::null_mut()
+                            };
+                            
+                            (debug_utils.create_debug_utils_messenger)(inst.as_raw(), &debug_createinfo as *const _, &mut messenger as *mut _);
+                        }
+                        Err(e) => {
+                            println!("Couldn't load OpenXR debug utils: {}", e);
+                        }
+                    }
+                }
+                Some(inst)
+            }
             Err(e) => { 
                 println!("Error creating OpenXR instance: {}", e);
                 None
             }
         }
-    };
+    };    
 
     //Get the system id
     let xr_systemid = match &xr_instance {
@@ -305,11 +379,12 @@ fn main() {
         _ => { None }
     };
 
-    let xr_swapchain_index = match &xr_swapchain {
+    let xr_swapchain_images = match &xr_swapchain {
         Some(chain) => {
             match chain.enumerate_images() {
                 Ok(images) => {
-                    Some(images[0])
+                    println!("{}", images.len());
+                    Some(images)
                 }
                 Err(e) => {
                     println!("Error getting swapchain images: {}", e);
@@ -343,7 +418,7 @@ fn main() {
     let camera_hit_sphere_radius = 0.2;
 
     //Initialize screen state
-    let mut screen_state = ozy::render::ScreenState::new(window_size, glm::identity(), glm::perspective_zo(aspect_ratio, glm::half_pi(), 0.1, 500.0));
+    let mut screen_state = ScreenState::new(window_size, glm::identity(), glm::perspective_zo(aspect_ratio, glm::half_pi(), 0.1, 500.0));
 
     //Uniform light source
     let mut uniform_light = glm::normalize(&glm::vec4(1.0, 0.0, 1.0, 0.0));
@@ -387,7 +462,7 @@ fn main() {
                 ("Graphics options", Some(Command::ToggleMenu(graphics_menu_chain_index, 1)))
             ], ozy::ui::UIAnchor::LeftAligned((20.0, 20.0)), 24.0),
             ozy::ui::Menu::new(vec![
-                ("Normals visualization", Some(Command::ToggleNormalVis)),
+                ("Visualize normals", Some(Command::ToggleNormalVis)),
                 ("Complex normals", Some(Command::ToggleComplexNormals)),
                 ("Wireframe view", Some(Command::ToggleWireframe))
             ], ozy::ui::UIAnchor::LeftAligned((20.0, window_size.y as f32 / 2.0)), 24.0)
@@ -427,13 +502,17 @@ fn main() {
         spheres.push(sphere)
     }
 
+    //Create teapot
+    let teapot_mesh = SimpleMesh::from_ozy("models/teapot.ozy", &mut texture_keeper, &tex_params);
+    let mut teapot_matrix;
+
     let mut visualize_normals = false;
-    let mut complex_normals = true;
+    let mut complex_normals = false;
+    let mut wireframe = false;
 
     //Main loop
     let mut last_frame_instant = Instant::now();
     let mut elapsed_time = 0.0;
-    let mut wireframe = false;
     let mut command_buffer = Vec::new();
     while !window.should_close() {
         let delta_time = {
@@ -613,6 +692,8 @@ fn main() {
         }
         sphere_instanced_mesh.update_buffer(&sphere_transforms);
 
+        teapot_matrix = glm::translation(&glm::vec3(0.0, 4.0, 0.0)) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0)) * glm::translation(&glm::vec3(3.0, 0.0, 6.0));
+
         //Collision handling section
 
         for i in 0..sphere_count {
@@ -622,9 +703,9 @@ fn main() {
                 sphere_transforms[16 * i + 14]
             );            
             let sphere_radius = 1.0;
+
             let distance = glm::distance(&sphere_pos, &camera_position);
             let min_distance = sphere_radius + camera_hit_sphere_radius;
-
             if distance < min_distance {
                 let direction = camera_position - sphere_pos;
 
@@ -632,7 +713,7 @@ fn main() {
             }
         }
         
-        //Check for camera collisions
+        //Check for camera collision with the floor
         if camera_position.z < camera_hit_sphere_radius {
             camera_position.z = camera_hit_sphere_radius;
         }
@@ -660,8 +741,13 @@ fn main() {
 
             //Shadow map rendering
             shadow_rendertarget.bind();
-            gl::UseProgram(shadow_instanced_3D);
 
+            gl::UseProgram(shadow_3D);
+            ozy::glutil::bind_matrix4(shadow_3D, "mvp", &(shadow_projection * shadow_view * teapot_matrix));
+            gl::BindVertexArray(teapot_mesh.vao);
+            gl::DrawElements(gl::TRIANGLES, teapot_mesh.index_count, gl::UNSIGNED_SHORT, ptr::null());
+
+            gl::UseProgram(shadow_instanced_3D);
             ozy::glutil::bind_matrix4(shadow_instanced_3D, "view_projection", &(shadow_projection * shadow_view));
             sphere_instanced_mesh.draw();
 
@@ -671,49 +757,113 @@ fn main() {
                 ozy::glutil::bind_matrix4(*program, "shadow_matrix", &(shadow_projection * shadow_view));
                 ozy::glutil::bind_vector4(*program, "sun_direction", &uniform_light);
                 ozy::glutil::bind_int(*program, "shadow_map", ozy::render::TEXTURE_MAP_COUNT as GLint);
+                ozy::glutil::bind_int(*program, "visualize_normals", visualize_normals as GLint);
+                ozy::glutil::bind_int(*program, "complex_normals", complex_normals as GLint);
+                ozy::glutil::bind_vector4(*program, "view_position", &glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0));
             }
-            gl::ActiveTexture(gl::TEXTURE0 + ozy::render::TEXTURE_MAP_COUNT as GLenum);
-            gl::BindTexture(gl::TEXTURE_2D, shadow_rendertarget.texture);
 
             //Render into HMD
-            
-            match (&xr_session, &mut xr_swapchain, &mut xr_framewaiter, &mut xr_framestream, &tracking_space) {
-                (Some(session), Some(swapchain), Some(framewaiter), Some(framestream), Some(t_space)) => {
-                    let state = framewaiter.wait().unwrap();
-                    let image = swapchain.acquire_image().unwrap();
-                    swapchain.wait_image(xr::Duration::INFINITE).unwrap();
+            match (&xr_session, &mut xr_swapchain, &xr_swapchain_size, &xr_swapchain_images, &mut xr_framewaiter, &mut xr_framestream, &tracking_space) {
+                (Some(session), Some(swapchain), Some(sc_size), Some(sc_images), Some(framewaiter), Some(framestream), Some(t_space)) => {
+                    let eye_rendertarget_size = glm::vec2(sc_size.x as GLint, sc_size.y as GLint);
+                    match framewaiter.wait() {
+                        Ok(framestate) => {
+                            match swapchain.acquire_image() {
+                                Ok(image_index) => {
+                                    let swapchain_framebuffer = ozy::render::Framebuffer {
+                                        name: sc_images[image_index as usize],
+                                        size: (eye_rendertarget_size.x, eye_rendertarget_size.y),
+                                        clear_flags: gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT,
+                                        cull_face: gl::BACK
+                                    };
 
-                    framestream.begin().unwrap();
+                                    match swapchain.wait_image(xr::Duration::INFINITE) {
+                                        Ok(_) => {
+                                            let (viewflags, views) = session.locate_views(xr::ViewConfigurationType::PRIMARY_STEREO, framestate.predicted_display_time, t_space).unwrap();
+                                            let mut eye_views = [glm::identity(); 2];
+                                            framestream.begin().unwrap();
+                                            
+                                            if framestate.should_render {
+                                                swapchain_framebuffer.bind();
 
-                    let mut eye_views = [glm::identity(); 2];
-                    if state.should_render {
-                        let (viewflags, views) = session.locate_views(xr::ViewConfigurationType::PRIMARY_STEREO, state.predicted_display_time, t_space).unwrap();
-                        for i in 0..views.len() {
-                            let mut matrix = glm::quat_cast(&glm::quat(views[i].pose.orientation.x, views[i].pose.orientation.y, views[i].pose.orientation.z, views[i].pose.orientation.w));
-                            matrix[12] = views[i].pose.position.x;
-                            matrix[13] = views[i].pose.position.y;
-                            matrix[14] = views[i].pose.position.z;
-                            eye_views[i] = matrix;
+                                                for i in 0..views.len() {
+                                                    let mut matrix = glm::quat_cast(&glm::quat(views[i].pose.orientation.x, views[i].pose.orientation.y, views[i].pose.orientation.z, views[i].pose.orientation.w));
+                                                    matrix[12] = views[i].pose.position.x;
+                                                    matrix[13] = views[i].pose.position.y;
+                                                    matrix[14] = views[i].pose.position.z;
+                                                    eye_views[i] = matrix;
+                                                }
+
+
+                                            }
+
+                                            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+                                            swapchain.release_image().unwrap();
+                                            framestream.end(framestate.predicted_display_time, xr::EnvironmentBlendMode::OPAQUE,
+                                                &[&xr::CompositionLayerProjection::new()
+                                                    .space(t_space)
+                                                    .views(&[
+                                                        xr::CompositionLayerProjectionView::new()
+                                                            .pose(views[0].pose)
+                                                            .fov(views[0].fov)
+                                                            .sub_image( 
+                                                                xr::SwapchainSubImage::new()
+                                                                    .swapchain(swapchain)
+                                                                    .image_array_index(0)
+                                                                    .image_rect(xr::Rect2Di {
+                                                                        offset: xr::Offset2Di { x: 0, y: 0 },
+                                                                        extent: xr::Extent2Di {width: eye_rendertarget_size.x, height: eye_rendertarget_size.y}
+                                                                    })
+                                                            ),
+                                                        xr::CompositionLayerProjectionView::new()
+                                                            .pose(views[1].pose)
+                                                            .fov(views[1].fov)
+                                                            .sub_image(
+                                                                xr::SwapchainSubImage::new()
+                                                                    .swapchain(swapchain)
+                                                                    .image_array_index(1)
+                                                                    .image_rect(xr::Rect2Di {
+                                                                        offset: xr::Offset2Di { x: 0, y: 0 },
+                                                                        extent: xr::Extent2Di {width: eye_rendertarget_size.x, height: eye_rendertarget_size.y}
+                                                                    })
+                                                            )
+                                                    ])
+                                                ]
+                                            ).unwrap();
+                                            println!("Through");
+                                        }
+                                        Err(e) => {
+                                            println!("Error waiting on swapchain image: {}", e);
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    println!("Error acquiring swapchain image: {}", e);
+                                }
+                            }
                         }
-
-
+                        Err(e) => {
+                            println!("Error during framewaiting: {}", e);
+                        } 
                     }
                 }
                 _ => {}
             }
-            
 
             //Main scene rendering
             default_framebuffer.bind();
 
-            let texture_map_names = ["albedo_map", "normal_map", "roughness_map"];
+            let texture_map_names = ["albedo_map", "normal_map", "roughness_map", "shadow_map"];
             for i in 0..ozy::render::TEXTURE_MAP_COUNT {
                 //Init texture samplers
                 ozy::glutil::bind_int(simple_3D, texture_map_names[i], i as GLint);
                 ozy::glutil::bind_int(complex_3D, texture_map_names[i], i as GLint);
                 ozy::glutil::bind_int(complex_instanced_3D, texture_map_names[i], i as GLint);
             }
+            gl::ActiveTexture(gl::TEXTURE0 + ozy::render::TEXTURE_MAP_COUNT as GLenum);
+            gl::BindTexture(gl::TEXTURE_2D, shadow_rendertarget.texture);
 
+            //Bind textures for the plane
             for i in 0..ozy::render::TEXTURE_MAP_COUNT {
                 //Bind textures to said samplers
                 gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
@@ -723,14 +873,25 @@ fn main() {
             //Draw plane mesh
             ozy::glutil::bind_matrix4(simple_3D, "mvp", &(screen_state.get_clipping_from_world() * plane_matrix));
             ozy::glutil::bind_matrix4(simple_3D, "model_matrix", &plane_matrix);
-            ozy::glutil::bind_vector4(simple_3D, "view_position", &glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0));
             ozy::glutil::bind_float(simple_3D, "uv_scale", 5.0);
-            ozy::glutil::bind_int(simple_3D, "visualize_normals", visualize_normals as GLint);
             gl::UseProgram(simple_3D);
             gl::BindVertexArray(plane_mesh.vao);
             gl::DrawElements(gl::TRIANGLES, plane_mesh.index_count, gl::UNSIGNED_SHORT, ptr::null());
 
-            //Bind texture for the spheres
+            //Bind textures for the teapot
+            for i in 0..ozy::render::TEXTURE_MAP_COUNT {
+                gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
+                gl::BindTexture(gl::TEXTURE_2D, teapot_mesh.texture_maps[i]);
+            }
+
+            //Bind matrices for teapot
+            ozy::glutil::bind_matrix4(complex_3D, "mvp", &(screen_state.get_clipping_from_world() * teapot_matrix));
+            ozy::glutil::bind_matrix4(complex_3D, "model_matrix", &teapot_matrix);
+            gl::UseProgram(complex_3D);
+            gl::BindVertexArray(teapot_mesh.vao);
+            gl::DrawElements(gl::TRIANGLES, teapot_mesh.index_count, gl::UNSIGNED_SHORT, ptr::null());
+
+            //Bind textures for the spheres
             for i in 0..ozy::render::TEXTURE_MAP_COUNT {
                 //Bind textures to said samplers
                 gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
@@ -739,10 +900,7 @@ fn main() {
 
             ozy::glutil::bind_vector4(complex_instanced_3D, "view_position", &glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0));
             ozy::glutil::bind_matrix4(complex_instanced_3D, "view_projection", screen_state.get_clipping_from_world());
-            ozy::glutil::bind_matrix4(complex_instanced_3D, "shadow_matrix", &(shadow_projection * shadow_view));
             ozy::glutil::bind_float(complex_instanced_3D, "uv_scale", 5.0);
-            ozy::glutil::bind_int(complex_instanced_3D, "visualize_normals", visualize_normals as GLint);
-            ozy::glutil::bind_int(complex_instanced_3D, "complex_normals", complex_normals as GLint);
             gl::UseProgram(complex_instanced_3D);
             sphere_instanced_mesh.draw();
 
