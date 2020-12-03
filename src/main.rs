@@ -125,7 +125,7 @@ fn main() {
                 None
             }
         }
-    };    
+    };
 
     //Get the system id
     let xr_systemid = match &xr_instance {
@@ -357,10 +357,10 @@ fn main() {
     let mut xr_swapchain = match (&xr_session, &xr_swapchain_size) {
         (Some(session), Some(size)) => {
             let create_info = xr::SwapchainCreateInfo {
-                create_flags: xr::SwapchainCreateFlags::STATIC_IMAGE,
+                create_flags: xr::SwapchainCreateFlags::EMPTY,
                 usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT | xr::SwapchainUsageFlags::DEPTH_STENCIL_ATTACHMENT,
                 format: gl::SRGB8_ALPHA8,
-                sample_count: 1,
+                sample_count: 4,
                 width: size.x,
                 height: size.y,
                 face_count: 1,
@@ -462,6 +462,7 @@ fn main() {
                 ("Graphics options", Some(Command::ToggleMenu(graphics_menu_chain_index, 1)))
             ], ozy::ui::UIAnchor::LeftAligned((20.0, 20.0)), 24.0),
             ozy::ui::Menu::new(vec![
+                ("Highlight spheres", Some(Command::ToggleOutline)),
                 ("Visualize normals", Some(Command::ToggleNormalVis)),
                 ("Complex normals", Some(Command::ToggleComplexNormals)),
                 ("Wireframe view", Some(Command::ToggleWireframe))
@@ -480,12 +481,12 @@ fn main() {
 
         ozy::render::SimpleMesh::new(plane_vao, plane_index_count as GLint, "tiles", &mut texture_keeper, &tex_params)
     };
-    let plane_matrix = ozy::routines::uniform_scale(250.0);
+    let plane_matrix = ozy::routines::uniform_scale(200.0);
 
     let sphere_block_width = 8;
     let sphere_block_sidelength = 40.0;
     let sphere_count = sphere_block_width * sphere_block_width;
-    let sphere_mesh = ozy::render::SimpleMesh::from_ozy("models/sphere.ozy", &mut texture_keeper, &tex_params);
+    let sphere_mesh = SimpleMesh::from_ozy("models/sphere.ozy", &mut texture_keeper, &tex_params);
     let mut sphere_instanced_mesh = unsafe { ozy::render::InstancedMesh::from_simplemesh(&sphere_mesh, sphere_count, 5) };
     let mut sphere_transforms = vec![0.0; sphere_count * 16];
 
@@ -509,6 +510,7 @@ fn main() {
     let mut visualize_normals = false;
     let mut complex_normals = false;
     let mut wireframe = false;
+    let mut outlining = false;
 
     //Main loop
     let mut last_frame_instant = Instant::now();
@@ -558,6 +560,14 @@ fn main() {
             }
         }
         */
+
+        //Poll for OpenXR events
+        if let Some(instance) = &xr_instance {
+            let mut buffer = xr::EventDataBuffer::new();
+            if let Ok(Some(event)) = instance.poll_event(&mut buffer) {
+                
+            }
+        }
 
         //Poll window events and handle them
         glfw.poll_events();
@@ -651,7 +661,8 @@ fn main() {
                 Command::Quit => { window.set_should_close(true); }
                 Command::ToggleMenu(chain_index, menu_index) => { ui_state.toggle_menu(chain_index, menu_index); }
                 Command::ToggleNormalVis => { visualize_normals = !visualize_normals; }
-                Command::ToggleComplexNormals => { complex_normals = !complex_normals; }
+                Command::ToggleComplexNormals => { complex_normals = !complex_normals; }                
+                Command::ToggleOutline => { outlining = !outlining; }
                 Command::ToggleWireframe => unsafe {
                     if wireframe {
                         gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
@@ -759,6 +770,7 @@ fn main() {
                 ozy::glutil::bind_int(*program, "shadow_map", ozy::render::TEXTURE_MAP_COUNT as GLint);
                 ozy::glutil::bind_int(*program, "visualize_normals", visualize_normals as GLint);
                 ozy::glutil::bind_int(*program, "complex_normals", complex_normals as GLint);
+                ozy::glutil::bind_int(*program, "outlining", outlining as GLint);
                 ozy::glutil::bind_vector4(*program, "view_position", &glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0));
             }
 

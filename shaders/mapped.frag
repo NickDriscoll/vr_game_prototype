@@ -21,12 +21,14 @@ uniform float uv_scale = 1.0;
 
 uniform bool complex_normals = false;
 uniform bool visualize_normals = false;
+uniform bool outlining = false;
 
 const float AMBIENT = 0.1;
 
 void main() {
     vec2 scaled_uvs = f_uvs * uv_scale;
     vec4 view_direction = normalize(view_position - world_space_pos);
+    vec3 world_space_geometry_normal = tangent_matrix[2];
 
     vec3 albedo = texture(albedo_map, scaled_uvs).xyz;
 
@@ -45,10 +47,8 @@ void main() {
     vec4 adj_shadow_space_pos = shadow_space_pos * 0.5 + 0.5;
     vec2 texel_size = 1.0 / textureSize(shadow_map, 0);
     
-    //Check if this fragment can even receive shadows
-    if (adj_shadow_space_pos.z > 1.0 || adj_shadow_space_pos.x < 0.0 || adj_shadow_space_pos.x > 1.0 || adj_shadow_space_pos.y < 0.0 || adj_shadow_space_pos.y > 1.0) {
-        shadow = 0.0;
-    } else {
+    //Check if this fragment can even receive shadows before doing this expensive calculation
+    if (!(adj_shadow_space_pos.z > 1.0 || adj_shadow_space_pos.x < 0.0 || adj_shadow_space_pos.x > 1.0 || adj_shadow_space_pos.y < 0.0 || adj_shadow_space_pos.y > 1.0)) {
         //Do PCF
         //Average the nxn block of shadow texels centered at this pixel
         float bias = 0.001;
@@ -70,7 +70,14 @@ void main() {
     float shininess = (1.0 - roughness) * (128.0 - 16.0) + 16.0;
     float specular = pow(specular_angle, shininess);
 
-    vec3 final_color = ((specular + diffuse) * (1.0 - shadow) + AMBIENT) * albedo;
+    vec3 outline_color = vec3(0.0);
+    if (outlining) {
+        float outline_cos =  dot(vec3(view_direction), world_space_geometry_normal);
+        float outline_factor = 1.0 - smoothstep(0.0, 0.5, outline_cos);
+        outline_color = vec3(0.0, 0.0, 1.0) * outline_factor;
+    }
+
+    vec3 final_color = ((specular + diffuse) * (1.0 - shadow) + AMBIENT) * albedo + outline_color;
     if (visualize_normals) {
         frag_color = vec4(world_space_normal / 2.0 + 0.5, 1.0);
     } else {

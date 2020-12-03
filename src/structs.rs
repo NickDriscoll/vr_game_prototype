@@ -18,5 +18,6 @@ pub enum Command {
     ToggleMenu(usize, usize),
     ToggleNormalVis,
     ToggleComplexNormals,
-    ToggleWireframe
+    ToggleWireframe,
+    ToggleOutline
 }
