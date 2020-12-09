@@ -27,15 +27,17 @@ const float AMBIENT = 0.1;
 
 void main() {
     vec2 scaled_uvs = f_uvs * uv_scale;
+    vec3 albedo = texture(albedo_map, scaled_uvs).xyz;
+    float roughness = texture(roughness_map, scaled_uvs).x;
+
     vec4 view_direction = normalize(view_position - world_space_pos);
     vec3 world_space_geometry_normal = tangent_matrix[2];
-
-    vec3 albedo = texture(albedo_map, scaled_uvs).xyz;
 
     vec3 world_space_normal;
     if (complex_normals) {
         vec3 sampled_normal = texture(normal_map, scaled_uvs).xyz;
-        vec3 tangent_normal = vec3(sampled_normal.xy * 2.0 - 1.0, sampled_normal.z);
+        //vec3 tangent_normal = vec3(sampled_normal.xy * 2.0 - 1.0, sampled_normal.z);
+        vec3 tangent_normal = sampled_normal * 2.0 - 1.0;
         tangent_normal.y *= -1.0;       //Flip the y because OpenGL loads textures upside-down
         world_space_normal = normalize(tangent_matrix * tangent_normal);
     } else {
@@ -64,7 +66,6 @@ void main() {
 
     float diffuse = max(0.0, dot(vec3(sun_direction), world_space_normal));
     
-    float roughness = texture(roughness_map, scaled_uvs).x;
     vec4 halfway = normalize(view_direction + sun_direction);
     float specular_angle = max(0.0, dot(vec3(halfway), world_space_normal));
     float shininess = (1.0 - roughness) * (128.0 - 16.0) + 16.0;
