@@ -453,12 +453,12 @@ fn main() {
     let mut screen_state = ScreenState::new(window_size, glm::identity(), glm::perspective_zo(aspect_ratio, glm::half_pi(), 0.1, 200.0));
 
     //Uniform light source
-    let mut uniform_light = glm::normalize(&glm::vec4(5.0, 3.0, 1.0, 0.0));
+    let mut uniform_light = glm::normalize(&glm::vec4(-2.0, -3.0, 1.0, 0.0));
 
     //Initialize shadow data
     let mut shadow_view;
-    let shadow_proj_size = 90.0;
-    let shadow_projection = glm::ortho(-shadow_proj_size, shadow_proj_size, -shadow_proj_size, shadow_proj_size, -shadow_proj_size, 2.0 * shadow_proj_size);
+    let shadow_proj_size = 30.0;
+    let shadow_projection = glm::ortho(-shadow_proj_size, shadow_proj_size, -shadow_proj_size, shadow_proj_size, 2.0 * -shadow_proj_size, 2.0 * shadow_proj_size);
     let shadow_size = 8192;
     let shadow_rendertarget = unsafe { ozy::render::RenderTarget::new_shadow((shadow_size, shadow_size)) };
 
@@ -481,8 +481,8 @@ fn main() {
     let pause_menu_chain_index;
     let graphics_menu_chain_index;
     let mut ui_state = {
-        let button_program = unsafe { ozy::glutil::compile_program_from_files("shaders/button.vert", "shaders/button.frag") };
-        let glyph_program = unsafe { ozy::glutil::compile_program_from_files("shaders/glyph.vert", "shaders/glyph.frag") };
+        let button_program = unsafe { ozy::glutil::compile_program_from_files("shaders/ui/button.vert", "shaders/ui/button.frag") };
+        let glyph_program = unsafe { ozy::glutil::compile_program_from_files("shaders/ui/glyph.vert", "shaders/ui/glyph.frag") };
 
         let mut state = ozy::ui::UIState::new(FONT_BYTES, (window_size.x, window_size.y), [button_program, glyph_program]);
         pause_menu_chain_index = state.create_menu_chain();
@@ -507,7 +507,7 @@ fn main() {
     };
 
     let plane_mesh = {
-        let plane_vertex_width = 2;
+        let plane_vertex_width = 64;
         let plane_index_count = (plane_vertex_width - 1) * (plane_vertex_width - 1) * 6;
         let plane_vao = ozy::prims::plane_vao(plane_vertex_width);  
 
@@ -541,7 +541,7 @@ fn main() {
     let mut teapot_matrix;
 
     let mut visualize_normals = false;
-    let mut complex_normals = true;
+    let mut complex_normals = false;
     let mut wireframe = false;
     let mut outlining = false;
 
@@ -801,6 +801,7 @@ fn main() {
             sphere_instanced_mesh.draw();
 
             //Bind common uniforms
+            let texture_map_names = ["albedo_map", "normal_map", "roughness_map", "shadow_map"];
             let programs = [complex_3D, complex_instanced_3D];
             for program in &programs {
                 glutil::bind_matrix4(*program, "shadow_matrix", &(shadow_projection * shadow_view));
@@ -810,7 +811,13 @@ fn main() {
                 glutil::bind_int(*program, "complex_normals", complex_normals as GLint);
                 glutil::bind_int(*program, "outlining", outlining as GLint);
                 glutil::bind_vector4(*program, "view_position", &glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0));
+
+                for i in 0..ozy::render::TEXTURE_MAP_COUNT {
+                    glutil::bind_int(*program, texture_map_names[i], i as GLint);
+                }
             }
+            gl::ActiveTexture(gl::TEXTURE0 + ozy::render::TEXTURE_MAP_COUNT as GLenum);
+            gl::BindTexture(gl::TEXTURE_2D, shadow_rendertarget.texture);
 
             //Render into HMD
             match (&xr_session, &mut xr_swapchains, &xr_swapchain_size, &xr_swapchain_images, &mut xr_framewaiter, &mut xr_framestream, &tracking_space) {
@@ -926,17 +933,9 @@ fn main() {
 
             //Main scene rendering
             default_framebuffer.bind();
-            gl::UseProgram(complex_3D);
 
-            let texture_map_names = ["albedo_map", "normal_map", "roughness_map", "shadow_map"];
-            for i in 0..ozy::render::TEXTURE_MAP_COUNT {
-                for program in &programs {
-                    //Init texture samplers
-                    glutil::bind_int(*program, texture_map_names[i], i as GLint);
-                }
-            }
-            gl::ActiveTexture(gl::TEXTURE0 + ozy::render::TEXTURE_MAP_COUNT as GLenum);
-            gl::BindTexture(gl::TEXTURE_2D, shadow_rendertarget.texture);
+            //Non-instanced program
+            gl::UseProgram(complex_3D);
 
             //Bind textures for the plane
             for i in 0..ozy::render::TEXTURE_MAP_COUNT {
@@ -972,10 +971,12 @@ fn main() {
                 gl::BindTexture(gl::TEXTURE_2D, sphere_mesh.texture_maps[i]);
             }
 
+            //Instanced program
+            gl::UseProgram(complex_instanced_3D);
+
             ozy::glutil::bind_vector4(complex_instanced_3D, "view_position", &glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0));
             ozy::glutil::bind_matrix4(complex_instanced_3D, "view_projection", screen_state.get_clipping_from_world());
             ozy::glutil::bind_float(complex_instanced_3D, "uv_scale", 5.0);
-            gl::UseProgram(complex_instanced_3D);
             sphere_instanced_mesh.draw();
 
             //Render 2D elements

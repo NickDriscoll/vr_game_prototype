@@ -10,11 +10,14 @@ out mat3 tangent_matrix;
 out vec4 world_space_pos;
 out vec4 shadow_space_pos;
 out vec2 f_uvs;
-//out float f_view_depth;
+out float f_view_depth;
 
 uniform mat4 mvp;
 uniform mat4 model_matrix;
+uniform mat4 view_projection;
 uniform mat4 shadow_matrix;
+
+uniform bool instanced;
 
 void main() {
     mat4 normal_matrix = transpose(mat4(inverse(mat3(model_matrix))));
