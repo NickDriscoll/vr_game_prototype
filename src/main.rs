@@ -450,10 +450,10 @@ fn main() {
     let camera_hit_sphere_radius = 0.2;
 
     //Initialize screen state
-    let mut screen_state = ScreenState::new(window_size, glm::identity(), glm::perspective_zo(aspect_ratio, glm::half_pi(), 0.1, 500.0));
+    let mut screen_state = ScreenState::new(window_size, glm::identity(), glm::perspective_zo(aspect_ratio, glm::half_pi(), 0.1, 200.0));
 
     //Uniform light source
-    let mut uniform_light = glm::normalize(&glm::vec4(1.0, 0.0, 1.0, 0.0));
+    let mut uniform_light = glm::normalize(&glm::vec4(5.0, 3.0, 1.0, 0.0));
 
     //Initialize shadow data
     let mut shadow_view;
@@ -541,7 +541,7 @@ fn main() {
     let mut teapot_matrix;
 
     let mut visualize_normals = false;
-    let mut complex_normals = false;
+    let mut complex_normals = true;
     let mut wireframe = false;
     let mut outlining = false;
 
@@ -609,6 +609,9 @@ fn main() {
                 WindowEvent::Close => { window.set_should_close(true); }
                 WindowEvent::Key(key, _, Action::Press, _) => {
                     match key {
+                        Key::Escape => {
+                            command_buffer.push(Command::ToggleMenu(pause_menu_chain_index, pause_menu_index));
+                        }
                         Key::W => {
                             camera_input.z += -1.0;
                         }
@@ -761,10 +764,9 @@ fn main() {
         if camera_position.z < camera_hit_sphere_radius {
             camera_position.z = camera_hit_sphere_radius;
         }
-        println!("{:?}", camera_position);
 
         //Make the light dance around
-        uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(-0.5 * elapsed_time), 4.0 * f32::sin(-0.5 * elapsed_time), 2.0, 0.0));
+        //uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(-0.5 * elapsed_time), 4.0 * f32::sin(-0.5 * elapsed_time), 2.0, 0.0));
         //uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(0.5 * elapsed_time), 0.0, 2.0, 0.0));
         shadow_view = glm::look_at(&glm::vec4_to_vec3(&uniform_light), &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
 

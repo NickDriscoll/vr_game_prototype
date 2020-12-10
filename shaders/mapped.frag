@@ -4,6 +4,7 @@ in mat3 tangent_matrix;
 in vec4 world_space_pos;
 in vec4 shadow_space_pos;
 in vec2 f_uvs;
+in float f_view_depth;
 
 out vec4 frag_color;
 
@@ -26,7 +27,11 @@ uniform bool outlining = false;
 const float AMBIENT = 0.1;
 
 void main() {
+    //Affine texture mapping
+    //vec2 scaled_uvs = f_uvs / f_view_depth;
     vec2 scaled_uvs = f_uvs * uv_scale;
+
+    //vec2 scaled_uvs = f_uvs * uv_scale;
     vec3 albedo = texture(albedo_map, scaled_uvs).xyz;
     float roughness = texture(roughness_map, scaled_uvs).x;
 
@@ -36,9 +41,7 @@ void main() {
     vec3 world_space_normal;
     if (complex_normals) {
         vec3 sampled_normal = texture(normal_map, scaled_uvs).xyz;
-        //vec3 tangent_normal = vec3(sampled_normal.xy * 2.0 - 1.0, sampled_normal.z);
         vec3 tangent_normal = sampled_normal * 2.0 - 1.0;
-        tangent_normal.y *= -1.0;       //Flip the y because OpenGL loads textures upside-down
         world_space_normal = normalize(tangent_matrix * tangent_normal);
     } else {
         world_space_normal = normalize(tangent_matrix[2]);
@@ -80,7 +83,7 @@ void main() {
 
     vec3 final_color = ((specular + diffuse) * (1.0 - shadow) + AMBIENT) * albedo + outline_color;
     if (visualize_normals) {
-        frag_color = vec4(world_space_normal / 2.0 + 0.5, 1.0);
+        frag_color = vec4(world_space_normal * 0.5 + 0.5, 1.0);
     } else {
         frag_color = vec4(final_color, 1.0);
     }
