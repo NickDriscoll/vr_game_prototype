@@ -811,7 +811,7 @@ fn main() {
             let programs = [complex_3D, complex_instanced_3D];
             for program in &programs {
                 glutil::bind_matrix4(*program, "shadow_matrix", &(shadow_projection * shadow_view));
-                glutil::bind_matrix4(complex_instanced_3D, "view_projection", screen_state.get_clipping_from_world());
+                glutil::bind_matrix4(*program, "view_projection", screen_state.get_clipping_from_world());
                 glutil::bind_vector4(*program, "sun_direction", &uniform_light);
                 glutil::bind_int(*program, "shadow_map", ozy::render::TEXTURE_MAP_COUNT as GLint);
                 glutil::bind_int(*program, "visualize_normals", visualize_normals as GLint);
@@ -909,7 +909,7 @@ fn main() {
                                 let aspect = (fov.angle_right - fov.angle_left) / fovy;
                                 let view_projection = glm::perspective_zo(aspect, fovy, 0.1, 200.0) * view_matrix;
 
-                                //This is where we would actually do the rendering
+                                //Actaully rendering
                                 gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
                                 gl::ActiveTexture(gl::TEXTURE0 + ozy::render::TEXTURE_MAP_COUNT as GLenum);
                                 gl::BindTexture(gl::TEXTURE_2D, shadow_rendertarget.texture);
@@ -945,7 +945,7 @@ fn main() {
                                 gl::DrawElements(gl::TRIANGLES, teapot_mesh.index_count, gl::UNSIGNED_SHORT, ptr::null());
 
                                 //Bind textures for the spheres
-                                for i in 0..ozy::render::TEXTURE_MAP_COUNT {
+                                for i in 0..ozy::render::TEXTURE_MAP_COUNT { 
                                     //Bind textures to said samplers
                                     gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
                                     gl::BindTexture(gl::TEXTURE_2D, sphere_mesh.texture_maps[i]);

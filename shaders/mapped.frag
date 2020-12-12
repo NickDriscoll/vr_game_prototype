@@ -74,11 +74,11 @@ void main() {
     float shininess = (1.0 - roughness) * (128.0 - 16.0) + 16.0;
     float specular = pow(specular_angle, shininess);
 
+    //Calculate edge outline
     vec3 outline_color = vec3(0.0);
     if (outlining) {
-        float outline_cos =  dot(vec3(view_direction), world_space_geometry_normal);
-        float outline_factor = 1.0 - smoothstep(0.0, 0.5, outline_cos);
-        outline_color = vec3(0.0, 0.0, 1.0) * outline_factor;
+        float outline_cos = max(0.0, 1.0 - (2.0 * dot(vec3(view_direction), world_space_geometry_normal)));
+        outline_color = vec3(0.0, 0.0, 1.0) * outline_cos;
     }
 
     vec3 final_color = ((specular + diffuse) * (1.0 - shadow) + AMBIENT) * albedo + outline_color;
