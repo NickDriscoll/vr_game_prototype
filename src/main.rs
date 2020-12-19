@@ -535,8 +535,8 @@ fn main() {
 
     let sphere_count = sphere_block_width * sphere_block_width;
     let sphere_mesh = SimpleMesh::from_ozy("models/sphere.ozy", &mut texture_keeper, &tex_params);
-    let mut sphere_instanced_mesh = unsafe { InstancedMesh::from_simplemesh(&sphere_mesh, sphere_count + 1, 5) };
-    let mut sphere_transforms = vec![0.0; (sphere_count + 1) * 16];
+    let mut sphere_instanced_mesh = unsafe { InstancedMesh::from_simplemesh(&sphere_mesh, sphere_count, 5) };
+    let mut sphere_transforms = vec![0.0; sphere_count * 16];
 
     //Create spheres    
     let mut spheres = Vec::with_capacity(sphere_count);
@@ -757,10 +757,6 @@ fn main() {
                 }
             }
         }
-        
-        for k in 0..16 {
-            sphere_transforms[16 * sphere_block_width + k] = glm::value_ptr(&hmd_transform)[k];
-        }
         sphere_instanced_mesh.update_buffer(&sphere_transforms);
 
         //Update teapot transforms
@@ -837,6 +833,7 @@ fn main() {
             let programs = [complex_3D, complex_instanced_3D];
 
             //Render into HMD
+            let mut hmd_perspective = glm::identity();
             match (&xr_session, &mut xr_swapchains, &xr_swapchain_size, &xr_swapchain_images, &mut xr_framewaiter, &mut xr_framestream, &tracking_space) {
                 (Some(session), Some(swapchains), Some(sc_size), Some(sc_images), Some(framewaiter), Some(framestream), Some(t_space)) => {
                     let swapchain_size = glm::vec2(sc_size.x as GLint, sc_size.y as GLint);
@@ -852,6 +849,7 @@ fn main() {
 
                                 //Bind the framebuffer and bind the swapchain image to its first color attachment
                                 let color_texture = sc_images[i][sc_indices[i] as usize];
+                                gl::Viewport(0, 0, swapchain_size.x, swapchain_size.y);
                                 gl::BindFramebuffer(gl::FRAMEBUFFER, xr_swapchain_framebuffer);
                                 gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, color_texture, 0);
 
@@ -899,15 +897,27 @@ fn main() {
                                 //We have to translate to right-handed z-up from right-handed y-up
                                 let pose = views[i].pose;
                                 let fov = views[i].fov;
-                                let mut view_matrix = glm::quat_cast(&glm::quat(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w)) *
-                                                      glm::translation(&glm::vec3(-pose.position.x, -pose.position.y, -pose.position.z));
+                                let view_matrix = glm::quat_cast(&glm::quat(pose.orientation.x, pose.orientation.y, pose.orientation.z, -pose.orientation.w)) *
+                                                  glm::translation(&glm::vec3(-pose.position.x, -pose.position.y, -pose.position.z));
                                 
                                 hmd_transform = view_matrix;
 
-                                let fovy = fov.angle_up - fov.angle_down;
-                                let aspect = (fov.angle_right - fov.angle_left) / fovy;
-                                let view_projection = glm::perspective_zo(aspect_ratio, fovy, 0.1, 200.0) * view_matrix;
-                                //let view_projection = glm::perspective(aspect_ratio, 2.0, 0.1, 200.0) * view_matrix;
+                                //Use the fov to get the t, b, l, and r values of the perspective matrix
+                                let near_value = 0.1;
+                                let far_value = 200.0;
+                                let l = near_value * f32::tan(fov.angle_left);
+                                let r = near_value * f32::tan(fov.angle_right);
+                                let t = near_value * f32::tan(fov.angle_up);
+                                let b = near_value * f32::tan(fov.angle_down);
+
+                                hmd_perspective = glm::mat4(
+                                    2.0 * near_value / (r - l), 0.0, (r + l) / (r - l), 0.0,
+                                    0.0, 2.0 * near_value / (t - b), (t + b) / (t - b), 0.0,
+                                    0.0, 0.0, -(far_value + near_value) / (far_value - near_value), -2.0 * far_value * near_value / (far_value - near_value),
+                                    0.0, 0.0, -1.0, 0.0
+                                );
+
+                                let view_projection = hmd_perspective * view_matrix;
                                 
                                 //Bind common uniforms
                                 for program in &programs {
@@ -925,10 +935,26 @@ fn main() {
                                     }
                                 }
 
-                                //Actaully rendering
+                                //Actually rendering
                                 gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
                                 gl::ActiveTexture(gl::TEXTURE0 + ozy::render::TEXTURE_MAP_COUNT as GLenum);
                                 gl::BindTexture(gl::TEXTURE_2D, shadow_rendertarget.texture);
+                                
+                                //Bind common uniforms
+                                for program in &programs {
+                                    glutil::bind_matrix4(*program, "shadow_matrix", &(shadow_projection * shadow_view));
+                                    glutil::bind_matrix4(*program, "view_projection", &view_projection);
+                                    glutil::bind_vector4(*program, "sun_direction", &uniform_light);
+                                    glutil::bind_int(*program, "shadow_map", ozy::render::TEXTURE_MAP_COUNT as GLint);
+                                    glutil::bind_int(*program, "visualize_normals", visualize_normals as GLint);
+                                    glutil::bind_int(*program, "complex_normals", complex_normals as GLint);
+                                    glutil::bind_int(*program, "outlining", outlining as GLint);
+                                    glutil::bind_vector4(*program, "view_position", &glm::vec4(pose.position.x, pose.position.y, pose.position.z, 1.0));
+
+                                    for i in 0..ozy::render::TEXTURE_MAP_COUNT {
+                                        glutil::bind_int(*program, texture_map_names[i], i as GLint);
+                                    }
+                                }
 
                                 //Non-instanced program
                                 gl::UseProgram(complex_3D);
@@ -966,14 +992,14 @@ fn main() {
                                     gl::BindTexture(gl::TEXTURE_2D, teapot_mesh.texture_maps[i]);
                                 }
                                 
-                                glutil::bind_float(complex_3D, "uv_scale", 1.0);
+                                glutil::bind_float(complex_instanced_3D, "uv_scale", 1.0);
                                 teapot_instanced_mesh.draw();
 
                                 swapchains[i].release_image().unwrap();
                             }
 
                             //End the frame
-                            framestream.end(wait_info.predicted_display_time, xr::EnvironmentBlendMode::OPAQUE,
+                            let end_result = framestream.end(wait_info.predicted_display_time, xr::EnvironmentBlendMode::OPAQUE,
                                 &[&xr::CompositionLayerProjection::new()
                                     .space(t_space)
                                     .views(&[
@@ -1003,7 +1029,11 @@ fn main() {
                                             )
                                     ])
                                 ]
-                            ).unwrap();
+                            );
+
+                            if let Err(e) = end_result {
+                                println!("{}", e);
+                            }
                         }
                         Err(e) => {
                             println!("Error doing framewaiter.wait(): {}", e);
@@ -1019,7 +1049,7 @@ fn main() {
             gl::BindTexture(gl::TEXTURE_2D, shadow_rendertarget.texture);
                                 
             //Bind common uniforms
-            let view_projection = screen_state.get_clipping_from_view() * hmd_transform;
+            let view_projection = hmd_perspective * hmd_transform;
             for program in &programs {
                 glutil::bind_matrix4(*program, "shadow_matrix", &(shadow_projection * shadow_view));
                 glutil::bind_matrix4(*program, "view_projection", &view_projection);
