@@ -12,12 +12,12 @@ out vec4 shadow_space_pos;
 out vec2 f_uvs;
 out float f_view_depth;
 
-uniform mat4 mvp;
-uniform mat4 model_matrix;
-uniform mat4 view_projection;
+//Constant per-frame uniforms
 uniform mat4 shadow_matrix;
 
-uniform bool instanced;
+//Verying per geometry
+uniform mat4 view_projection;
+uniform mat4 model_matrix;
 
 void main() {
     mat4 normal_matrix = transpose(mat4(inverse(mat3(model_matrix))));
@@ -29,7 +29,7 @@ void main() {
     world_space_pos = model_matrix * vec4(position, 1.0);
     shadow_space_pos = shadow_matrix * world_space_pos;
 
-    gl_Position = mvp * vec4(position, 1.0);
+    gl_Position = view_projection * model_matrix * vec4(position, 1.0);
 
     f_uvs = uv;
     //Setup affine texture mapping

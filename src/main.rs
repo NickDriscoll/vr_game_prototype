@@ -4,8 +4,10 @@ extern crate openxr as xr;
 extern crate ozy_engine as ozy;
 
 mod structs;
+mod render;
 
 use structs::{Command, Sphere};
+use render::{InstancedEntity, render_main_scene, SceneData, SingleEntity, ViewData};
 
 use glfw::{Action, Context, Key, WindowEvent};
 use gl::types::*;
@@ -17,7 +19,7 @@ use std::time::Instant;
 use rand::random;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use ozy::{glutil};
-use ozy::render::{InstancedMesh, ScreenState, SimpleMesh};
+use ozy::render::{Framebuffer, InstancedMesh, ScreenState, SimpleMesh};
 use xr::sys::{Bool32, DebugUtilsMessengerEXT, DebugUtilsMessengerCallbackDataEXT, DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT};
 
 #[cfg(windows)]
@@ -475,6 +477,14 @@ fn main() {
     let shadow_size = 8192;
     let shadow_rendertarget = unsafe { ozy::render::RenderTarget::new_shadow((shadow_size, shadow_size)) };
 
+    //Initialize scene data struct
+    let mut scene_data = SceneData {
+        shadow_texture: shadow_rendertarget.texture,
+        programs: [complex_3D, complex_instanced_3D],
+        uniform_light,
+        ..Default::default()
+    };
+
     //Initialize texture caching struct
     let mut texture_keeper = ozy::render::TextureKeeper::new();
     let tex_params = [
@@ -522,11 +532,17 @@ fn main() {
     let plane_mesh = {
         let plane_vertex_width = 2;
         let plane_index_count = (plane_vertex_width - 1) * (plane_vertex_width - 1) * 6;
-        let plane_vao = ozy::prims::plane_vao(plane_vertex_width);  
+        let plane_vao = ozy::prims::plane_vao(plane_vertex_width);
 
-        SimpleMesh::new(plane_vao, plane_index_count as GLint, "tiles", &mut texture_keeper, &tex_params)
+        SimpleMesh::new(plane_vao, plane_index_count as GLint, "tiles", &mut texture_keeper, &tex_params)        
     };
-    let plane_matrix = ozy::routines::uniform_scale(200.0);
+    let entity = SingleEntity {
+        mesh: plane_mesh,
+        uv_scale: 10.0,
+        model_matrix: ozy::routines::uniform_scale(200.0)
+    };    
+    scene_data.single_entities.push(entity);
+    let plane_entity_index = scene_data.single_entities.len() - 1;
 
     //Data for the sphere square
     let sphere_block_scale = 1;
@@ -537,6 +553,14 @@ fn main() {
     let sphere_mesh = SimpleMesh::from_ozy("models/sphere.ozy", &mut texture_keeper, &tex_params);
     let mut sphere_instanced_mesh = unsafe { InstancedMesh::from_simplemesh(&sphere_mesh, sphere_count, 5) };
     let mut sphere_transforms = vec![0.0; sphere_count * 16];
+
+    //Add sphere instanced mesh to list of drawn instanced entities
+    let entity = InstancedEntity {
+        mesh: sphere_instanced_mesh,
+        uv_scale: 5.0
+    };
+    scene_data.instanced_entities.push(entity);
+    let sphere_entity_index = scene_data.instanced_entities.len() - 1;
 
     //Create spheres    
     let mut spheres = Vec::with_capacity(sphere_count);
@@ -551,18 +575,20 @@ fn main() {
         spheres.push(sphere)
     }
 
-    let mut hmd_transform = glm::identity();
-
     //Create teapot
     let teapot_count = 4;
     let teapot_mesh = SimpleMesh::from_ozy("models/teapot.ozy", &mut texture_keeper, &tex_params);
     let mut teapot_instanced_mesh = unsafe { InstancedMesh::from_simplemesh(&teapot_mesh, teapot_count, 5) };
     let mut teapot_transforms = vec![0.0; teapot_count * 16];
 
-    let mut visualize_normals = false;
-    let mut complex_normals = true;
+    let entity = InstancedEntity {
+        mesh: teapot_instanced_mesh,
+        uv_scale: 1.0
+    };
+    scene_data.instanced_entities.push(entity);
+    let teapot_entity_index = scene_data.instanced_entities.len() - 1;
+
     let mut wireframe = false;
-    let mut outlining = false;
 
     //Main loop
     let mut last_frame_instant = Instant::now();
@@ -716,9 +742,9 @@ fn main() {
             match command {
                 Command::Quit => { window.set_should_close(true); }
                 Command::ToggleMenu(chain_index, menu_index) => { ui_state.toggle_menu(chain_index, menu_index); }
-                Command::ToggleNormalVis => { visualize_normals = !visualize_normals; }
-                Command::ToggleComplexNormals => { complex_normals = !complex_normals; }                
-                Command::ToggleOutline => { outlining = !outlining; }
+                Command::ToggleNormalVis => { scene_data.visualize_normals = !scene_data.visualize_normals; }
+                Command::ToggleComplexNormals => { scene_data.complex_normals = !scene_data.complex_normals; }                
+                Command::ToggleOutline => { scene_data.outlining = !scene_data.outlining; }
                 Command::ToggleWireframe => unsafe {
                     wireframe = !wireframe;
                     if wireframe {
@@ -757,7 +783,7 @@ fn main() {
                 }
             }
         }
-        sphere_instanced_mesh.update_buffer(&sphere_transforms);
+        scene_data.instanced_entities[sphere_entity_index].mesh.update_buffer(&sphere_transforms);
 
         //Update teapot transforms
         for i in 0..teapot_count {
@@ -771,7 +797,7 @@ fn main() {
                 teapot_transforms[16 * i + k] = transform[k];
             }
         }
-        teapot_instanced_mesh.update_buffer(&teapot_transforms);
+        scene_data.instanced_entities[teapot_entity_index].mesh.update_buffer(&teapot_transforms);
 
         //Collision handling section
 
@@ -801,6 +827,7 @@ fn main() {
         //uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(-0.5 * elapsed_time), 4.0 * f32::sin(-0.5 * elapsed_time), 2.0, 0.0));
         //uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(0.5 * elapsed_time), 0.0, 2.0, 0.0));
         shadow_view = glm::look_at(&glm::vec4_to_vec3(&uniform_light), &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
+        scene_data.shadow_matrix = shadow_projection * shadow_view;
 
         //Pre-render phase
 
@@ -822,18 +849,17 @@ fn main() {
             shadow_rendertarget.bind();
 
             //Render instanced meshes
-            glutil::bind_matrix4(shadow_instanced_3D, "view_projection", &(shadow_projection * shadow_view));
+            glutil::bind_matrix4(shadow_instanced_3D, "view_projection", &scene_data.shadow_matrix);
             gl::UseProgram(shadow_instanced_3D);
 
-            teapot_instanced_mesh.draw();
-            sphere_instanced_mesh.draw();
+            scene_data.instanced_entities[teapot_entity_index].mesh.draw();
+            scene_data.instanced_entities[sphere_entity_index].mesh.draw();
 
             //Define convenience arrays
             let texture_map_names = ["albedo_map", "normal_map", "roughness_map", "shadow_map"];
             let programs = [complex_3D, complex_instanced_3D];
 
             //Render into HMD
-            let mut hmd_perspective = glm::identity();
             match (&xr_session, &mut xr_swapchains, &xr_swapchain_size, &xr_swapchain_images, &mut xr_framewaiter, &mut xr_framestream, &tracking_space) {
                 (Some(session), Some(swapchains), Some(sc_size), Some(sc_images), Some(framewaiter), Some(framestream), Some(t_space)) => {
                     let swapchain_size = glm::vec2(sc_size.x as GLint, sc_size.y as GLint);
@@ -849,7 +875,6 @@ fn main() {
 
                                 //Bind the framebuffer and bind the swapchain image to its first color attachment
                                 let color_texture = sc_images[i][sc_indices[i] as usize];
-                                gl::Viewport(0, 0, swapchain_size.x, swapchain_size.y);
                                 gl::BindFramebuffer(gl::FRAMEBUFFER, xr_swapchain_framebuffer);
                                 gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, color_texture, 0);
 
@@ -899,8 +924,6 @@ fn main() {
                                 let fov = views[i].fov;
                                 let view_matrix = glm::quat_cast(&glm::quat(pose.orientation.x, pose.orientation.y, pose.orientation.z, -pose.orientation.w)) *
                                                   glm::translation(&glm::vec3(-pose.position.x, -pose.position.y, -pose.position.z));
-                                
-                                hmd_transform = view_matrix;
 
                                 //Use the fov to get the t, b, l, and r values of the perspective matrix
                                 let near_value = 0.1;
@@ -910,90 +933,22 @@ fn main() {
                                 let t = near_value * f32::tan(fov.angle_up);
                                 let b = near_value * f32::tan(fov.angle_down);
 
-                                hmd_perspective = glm::mat4(
+                                let perspective = glm::mat4(
                                     2.0 * near_value / (r - l), 0.0, (r + l) / (r - l), 0.0,
                                     0.0, 2.0 * near_value / (t - b), (t + b) / (t - b), 0.0,
                                     0.0, 0.0, -(far_value + near_value) / (far_value - near_value), -2.0 * far_value * near_value / (far_value - near_value),
                                     0.0, 0.0, -1.0, 0.0
                                 );
 
-                                let view_projection = hmd_perspective * view_matrix;
-                                
-                                //Bind common uniforms
-                                for program in &programs {
-                                    glutil::bind_matrix4(*program, "shadow_matrix", &(shadow_projection * shadow_view));
-                                    glutil::bind_matrix4(*program, "view_projection", &view_projection);
-                                    glutil::bind_vector4(*program, "sun_direction", &uniform_light);
-                                    glutil::bind_int(*program, "shadow_map", ozy::render::TEXTURE_MAP_COUNT as GLint);
-                                    glutil::bind_int(*program, "visualize_normals", visualize_normals as GLint);
-                                    glutil::bind_int(*program, "complex_normals", complex_normals as GLint);
-                                    glutil::bind_int(*program, "outlining", outlining as GLint);
-                                    glutil::bind_vector4(*program, "view_position", &glm::vec4(view_matrix[12], view_matrix[13], view_matrix[14], 1.0));
-
-                                    for i in 0..ozy::render::TEXTURE_MAP_COUNT {
-                                        glutil::bind_int(*program, texture_map_names[i], i as GLint);
-                                    }
-                                }
-
                                 //Actually rendering
                                 gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
-                                gl::ActiveTexture(gl::TEXTURE0 + ozy::render::TEXTURE_MAP_COUNT as GLenum);
-                                gl::BindTexture(gl::TEXTURE_2D, shadow_rendertarget.texture);
-                                
-                                //Bind common uniforms
-                                for program in &programs {
-                                    glutil::bind_matrix4(*program, "shadow_matrix", &(shadow_projection * shadow_view));
-                                    glutil::bind_matrix4(*program, "view_projection", &view_projection);
-                                    glutil::bind_vector4(*program, "sun_direction", &uniform_light);
-                                    glutil::bind_int(*program, "shadow_map", ozy::render::TEXTURE_MAP_COUNT as GLint);
-                                    glutil::bind_int(*program, "visualize_normals", visualize_normals as GLint);
-                                    glutil::bind_int(*program, "complex_normals", complex_normals as GLint);
-                                    glutil::bind_int(*program, "outlining", outlining as GLint);
-                                    glutil::bind_vector4(*program, "view_position", &glm::vec4(pose.position.x, pose.position.y, pose.position.z, 1.0));
+                                gl::Viewport(0, 0, swapchain_size.x, swapchain_size.y);
 
-                                    for i in 0..ozy::render::TEXTURE_MAP_COUNT {
-                                        glutil::bind_int(*program, texture_map_names[i], i as GLint);
-                                    }
-                                }
-
-                                //Non-instanced program
-                                gl::UseProgram(complex_3D);
-
-                                //Bind textures for the plane
-                                for i in 0..ozy::render::TEXTURE_MAP_COUNT {
-                                    //Bind textures to said samplers
-                                    gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
-                                    gl::BindTexture(gl::TEXTURE_2D, plane_mesh.texture_maps[i]);
-                                }
-
-                                //Draw plane mesh
-                                glutil::bind_matrix4(complex_3D, "mvp", &(view_projection * plane_matrix));
-                                glutil::bind_matrix4(complex_3D, "model_matrix", &plane_matrix);
-                                glutil::bind_float(complex_3D, "uv_scale", 10.0);
-                                gl::BindVertexArray(plane_mesh.vao);
-                                gl::DrawElements(gl::TRIANGLES, plane_mesh.index_count, gl::UNSIGNED_SHORT, ptr::null());
-
-                                //Instanced program
-                                gl::UseProgram(complex_instanced_3D);                                
-
-                                //Bind textures for the spheres
-                                for i in 0..ozy::render::TEXTURE_MAP_COUNT { 
-                                    //Bind textures to said samplers
-                                    gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
-                                    gl::BindTexture(gl::TEXTURE_2D, sphere_mesh.texture_maps[i]);
-                                }
-
-                                glutil::bind_float(complex_instanced_3D, "uv_scale", 5.0);
-                                sphere_instanced_mesh.draw();                                
-
-                                //Bind textures for the teapot
-                                for i in 0..ozy::render::TEXTURE_MAP_COUNT {
-                                    gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
-                                    gl::BindTexture(gl::TEXTURE_2D, teapot_mesh.texture_maps[i]);
-                                }
-                                
-                                glutil::bind_float(complex_instanced_3D, "uv_scale", 1.0);
-                                teapot_instanced_mesh.draw();
+                                let view_data = ViewData {
+                                    view_position: glm::vec4(pose.position.x, pose.position.y, pose.position.z, 1.0),
+                                    view_projection: perspective * view_matrix
+                                };
+                                render_main_scene(&scene_data, &view_data);
 
                                 swapchains[i].release_image().unwrap();
                             }
@@ -1044,65 +999,12 @@ fn main() {
             }
 
             //Main scene rendering
+            let view_data = ViewData {
+                view_position: glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0),
+                view_projection: *screen_state.get_clipping_from_world()
+            };
             default_framebuffer.bind();
-            gl::ActiveTexture(gl::TEXTURE0 + ozy::render::TEXTURE_MAP_COUNT as GLenum);
-            gl::BindTexture(gl::TEXTURE_2D, shadow_rendertarget.texture);
-                                
-            //Bind common uniforms
-            let view_projection = hmd_perspective * hmd_transform;
-            for program in &programs {
-                glutil::bind_matrix4(*program, "shadow_matrix", &(shadow_projection * shadow_view));
-                glutil::bind_matrix4(*program, "view_projection", &view_projection);
-                glutil::bind_vector4(*program, "sun_direction", &uniform_light);
-                glutil::bind_int(*program, "shadow_map", ozy::render::TEXTURE_MAP_COUNT as GLint);
-                glutil::bind_int(*program, "visualize_normals", visualize_normals as GLint);
-                glutil::bind_int(*program, "complex_normals", complex_normals as GLint);
-                glutil::bind_int(*program, "outlining", outlining as GLint);
-                glutil::bind_vector4(*program, "view_position", &glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0));
-
-                for i in 0..ozy::render::TEXTURE_MAP_COUNT {
-                    glutil::bind_int(*program, texture_map_names[i], i as GLint);
-                }
-            }
-
-            //Non-instanced program
-            gl::UseProgram(complex_3D);
-
-            //Bind textures for the plane
-            for i in 0..ozy::render::TEXTURE_MAP_COUNT {
-                //Bind textures to said samplers
-                gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
-                gl::BindTexture(gl::TEXTURE_2D, plane_mesh.texture_maps[i]);
-            }
-
-            //Draw plane mesh
-            glutil::bind_matrix4(complex_3D, "mvp", &(view_projection * plane_matrix));
-            glutil::bind_matrix4(complex_3D, "model_matrix", &plane_matrix);
-            glutil::bind_float(complex_3D, "uv_scale", 10.0);
-            gl::BindVertexArray(plane_mesh.vao);
-            gl::DrawElements(gl::TRIANGLES, plane_mesh.index_count, gl::UNSIGNED_SHORT, ptr::null());
-
-            //Instanced program
-            gl::UseProgram(complex_instanced_3D);
-
-            //Bind textures for the spheres
-            for i in 0..ozy::render::TEXTURE_MAP_COUNT {
-                //Bind textures to said samplers
-                gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
-                gl::BindTexture(gl::TEXTURE_2D, sphere_instanced_mesh.texture_maps()[i]);
-            }
-
-            glutil::bind_float(complex_instanced_3D, "uv_scale", 5.0);
-            sphere_instanced_mesh.draw();            
-
-            //Bind textures for the teapot
-            for i in 0..ozy::render::TEXTURE_MAP_COUNT {
-                gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
-                gl::BindTexture(gl::TEXTURE_2D, teapot_instanced_mesh.texture_maps()[i]);
-            }
-
-            glutil::bind_float(complex_instanced_3D, "uv_scale", 1.0);
-            teapot_instanced_mesh.draw();
+            render_main_scene(&scene_data, &view_data);
 
             //Render 2D elements
             gl::Disable(gl::DEPTH_TEST);
