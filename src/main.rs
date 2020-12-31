@@ -19,7 +19,7 @@ use std::time::Instant;
 use rand::random;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use ozy::{glutil};
-use ozy::render::{Framebuffer, InstancedMesh, ScreenState, SimpleMesh};
+use ozy::render::{Framebuffer, InstancedMesh, RenderTarget, ScreenState, SimpleMesh, TextureKeeper};
 use xr::sys::{Bool32, DebugUtilsMessengerEXT, DebugUtilsMessengerCallbackDataEXT, DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT};
 
 #[cfg(windows)]
@@ -184,17 +184,27 @@ fn main() {
     };
 
     //Create the paths to appropriate equipment
-    let left_hand_path = match &xr_instance {
+    let (left_hand_path, right_hand_path) = match &xr_instance {
         Some(instance) => {
-            match instance.string_to_path(xr::USER_HAND_LEFT) {
+            let l_path = match instance.string_to_path(xr::USER_HAND_LEFT) {
                 Ok(path) => { Some(path) }
                 Err(e) => {
                     println!("Error getting XrPath: {}", e);
                     None
                 }
-            }
+            };
+
+            let r_path = match instance.string_to_path(xr::USER_HAND_RIGHT) {
+                Ok(path) => { Some(path) }
+                Err(e) => {
+                    println!("Error getting XrPath: {}", e);
+                    None
+                }
+            };
+
+            (l_path, r_path)
         }
-        None => { None }
+        None => { (None, None) }
     };
 
     //Create the actionset
@@ -457,9 +467,9 @@ fn main() {
         cull_face: gl::BACK
     };
 
-    let mut active_camera = false;
+    let mut mouselook_enabled = false;
     let mut camera_position = glm::vec3(0.0, -8.0, 5.5);
-    let mut camera_input: glm::TVec4<f32> = glm::zero();             //This is a unit vector in the xy plane in view space that represents the input camera movement vector
+    let mut camera_input: glm::TVec4<f32> = glm::zero();             //This is a unit vector in the xz plane in view space that represents the input camera movement vector
     let mut camera_orientation = glm::vec2(0.0, -glm::half_pi::<f32>() * 0.6);
     let mut camera_speed = 5.0;
     let camera_hit_sphere_radius = 0.2;
@@ -475,7 +485,7 @@ fn main() {
     let shadow_proj_size = 30.0;
     let shadow_projection = glm::ortho(-shadow_proj_size, shadow_proj_size, -shadow_proj_size, shadow_proj_size, 2.0 * -shadow_proj_size, 2.0 * shadow_proj_size);
     let shadow_size = 8192;
-    let shadow_rendertarget = unsafe { ozy::render::RenderTarget::new_shadow((shadow_size, shadow_size)) };
+    let shadow_rendertarget = unsafe { RenderTarget::new_shadow((shadow_size, shadow_size)) };
 
     //Initialize scene data struct
     let mut scene_data = SceneData {
@@ -486,7 +496,7 @@ fn main() {
     };
 
     //Initialize texture caching struct
-    let mut texture_keeper = ozy::render::TextureKeeper::new();
+    let mut texture_keeper = TextureKeeper::new();
     let tex_params = [
         (gl::TEXTURE_WRAP_S, gl::REPEAT),
 	    (gl::TEXTURE_WRAP_T, gl::REPEAT),
@@ -520,7 +530,8 @@ fn main() {
                 ("Highlight spheres", Some(Command::ToggleOutline)),
                 ("Visualize normals", Some(Command::ToggleNormalVis)),
                 ("Complex normals", Some(Command::ToggleComplexNormals)),
-                ("Wireframe view", Some(Command::ToggleWireframe))
+                ("Wireframe view", Some(Command::ToggleWireframe)),
+                ("HMD view", Some(Command::ToggleHMDPov))
             ], ozy::ui::UIAnchor::LeftAligned((20.0, window_size.y as f32 / 2.0)), 24.0)
         ];
 
@@ -542,7 +553,6 @@ fn main() {
         model_matrix: ozy::routines::uniform_scale(200.0)
     };    
     scene_data.single_entities.push(entity);
-    let plane_entity_index = scene_data.single_entities.len() - 1;
 
     //Data for the sphere square
     let sphere_block_scale = 1;
@@ -551,10 +561,10 @@ fn main() {
 
     let sphere_count = sphere_block_width * sphere_block_width;
     let sphere_mesh = SimpleMesh::from_ozy("models/sphere.ozy", &mut texture_keeper, &tex_params);
-    let mut sphere_instanced_mesh = unsafe { InstancedMesh::from_simplemesh(&sphere_mesh, sphere_count, 5) };
     let mut sphere_transforms = vec![0.0; sphere_count * 16];
 
     //Add sphere instanced mesh to list of drawn instanced entities
+    let sphere_instanced_mesh = unsafe { InstancedMesh::from_simplemesh(&sphere_mesh, sphere_count, 5) };
     let entity = InstancedEntity {
         mesh: sphere_instanced_mesh,
         uv_scale: 5.0
@@ -578,9 +588,9 @@ fn main() {
     //Create teapot
     let teapot_count = 4;
     let teapot_mesh = SimpleMesh::from_ozy("models/teapot.ozy", &mut texture_keeper, &tex_params);
-    let mut teapot_instanced_mesh = unsafe { InstancedMesh::from_simplemesh(&teapot_mesh, teapot_count, 5) };
     let mut teapot_transforms = vec![0.0; teapot_count * 16];
 
+    let teapot_instanced_mesh = unsafe { InstancedMesh::from_simplemesh(&teapot_mesh, teapot_count, 5) };
     let entity = InstancedEntity {
         mesh: teapot_instanced_mesh,
         uv_scale: 1.0
@@ -589,8 +599,10 @@ fn main() {
     let teapot_entity_index = scene_data.instanced_entities.len() - 1;
 
     let mut wireframe = false;
+    let mut hmd_pov = false;
 
     //Main loop
+    let mut frame_count = 0;
     let mut last_frame_instant = Instant::now();
     let mut elapsed_time = 0.0;
     let mut command_buffer = Vec::new();
@@ -604,6 +616,7 @@ fn main() {
         };
         elapsed_time += delta_time;
         mouse_lbutton_pressed_last_frame = mouse_lbutton_pressed;
+        frame_count += 1;
 
         //Get data from the VR hardware
         /*
@@ -656,7 +669,7 @@ fn main() {
                 WindowEvent::Key(key, _, Action::Press, _) => {
                     match key {
                         Key::Escape => {
-                            command_buffer.push(Command::ToggleMenu(pause_menu_chain_index, pause_menu_index));
+                            command_buffer.push(Command::ToggleAllMenus);
                         }
                         Key::W => {
                             camera_input.z += -1.0;
@@ -710,16 +723,16 @@ fn main() {
                     }
                 }
                 WindowEvent::MouseButton(glfw::MouseButtonRight, glfw::Action::Release, ..) => {
-                    if active_camera {
+                    if mouselook_enabled {
                         window.set_cursor_mode(glfw::CursorMode::Normal);
                     } else {
                         window.set_cursor_mode(glfw::CursorMode::Hidden);
                     }
-                    active_camera = !active_camera;
+                    mouselook_enabled = !mouselook_enabled;
                 }
                 WindowEvent::CursorPos(x, y) => {
                     screen_space_mouse = glm::vec2(x as f32, y as f32);
-                    if active_camera {
+                    if mouselook_enabled {
                         const CAMERA_SENSITIVITY_DAMPENING: f32 = 0.002;
                         let offset = glm::vec2(x as f32 - window_size.x as f32 / 2.0, y as f32 - window_size.y as f32 / 2.0);
                         camera_orientation += offset * CAMERA_SENSITIVITY_DAMPENING;
@@ -745,6 +758,10 @@ fn main() {
                 Command::ToggleNormalVis => { scene_data.visualize_normals = !scene_data.visualize_normals; }
                 Command::ToggleComplexNormals => { scene_data.complex_normals = !scene_data.complex_normals; }                
                 Command::ToggleOutline => { scene_data.outlining = !scene_data.outlining; }
+                Command::ToggleHMDPov => { hmd_pov = !hmd_pov; }
+                Command::ToggleAllMenus => {
+                    ui_state.toggle_hide_all_menus();
+                }
                 Command::ToggleWireframe => unsafe {
                     wireframe = !wireframe;
                     if wireframe {
@@ -757,7 +774,7 @@ fn main() {
         }
 
         //If the user is controlling the camera, force the mouse cursor into the center of the screen
-        if active_camera {
+        if mouselook_enabled {
             window.set_cursor_pos(window_size.x as f64 / 2.0, window_size.y as f64 / 2.0);
         }
 
@@ -854,10 +871,6 @@ fn main() {
 
             scene_data.instanced_entities[teapot_entity_index].mesh.draw();
             scene_data.instanced_entities[sphere_entity_index].mesh.draw();
-
-            //Define convenience arrays
-            let texture_map_names = ["albedo_map", "normal_map", "roughness_map", "shadow_map"];
-            let programs = [complex_3D, complex_instanced_3D];
 
             //Render into HMD
             match (&xr_session, &mut xr_swapchains, &xr_swapchain_size, &xr_swapchain_images, &mut xr_framewaiter, &mut xr_framestream, &tracking_space) {
@@ -1004,10 +1017,18 @@ fn main() {
                 view_projection: *screen_state.get_clipping_from_world()
             };
             default_framebuffer.bind();
-            render_main_scene(&scene_data, &view_data);
+
+            if hmd_pov {
+                if let Some(size) = xr_swapchain_size {
+                    gl::BindFramebuffer(gl::READ_FRAMEBUFFER, xr_swapchain_framebuffer);
+                    gl::BlitFramebuffer(0, 0, size.x as GLint, size.y as GLint, 0, 0, window_size.x as GLint, window_size.y as GLint, gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT, gl::NEAREST);
+                }
+            } else {
+                render_main_scene(&scene_data, &view_data);
+            }            
 
             //Render 2D elements
-            gl::Disable(gl::DEPTH_TEST);
+            gl::Disable(gl::DEPTH_TEST);        //Disable depth testing for 2D rendering
             ui_state.draw(&screen_state);
         }
 

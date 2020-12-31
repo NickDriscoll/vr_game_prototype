@@ -16,8 +16,10 @@ impl Sphere {
 pub enum Command {
     Quit,
     ToggleMenu(usize, usize),
+    ToggleAllMenus,
     ToggleNormalVis,
     ToggleComplexNormals,
     ToggleWireframe,
-    ToggleOutline
+    ToggleOutline,
+    ToggleHMDPov
 }
