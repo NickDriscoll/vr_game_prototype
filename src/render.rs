@@ -4,6 +4,9 @@ use ozy::render::{Framebuffer, InstancedMesh, SimpleMesh};
 use crate::glutil;
 use gl::types::*;
 
+pub const NEAR_DISTANCE: f32 = 0.5;
+pub const FAR_DISTANCE: f32 = 1000000.0;
+
 pub struct SingleEntity {
     pub mesh: SimpleMesh,
     pub uv_scale: f32,
@@ -25,6 +28,29 @@ pub struct SceneData {
     pub programs: [GLuint; 2],              //non-instanced program followed by instanced program
     pub single_entities: Vec<SingleEntity>,
     pub instanced_entities: Vec<InstancedEntity>,
+}
+
+impl SceneData {
+    //Returns the entity's index
+    pub fn push_single_entity(&mut self, mesh: SimpleMesh) -> usize {
+        let entity = SingleEntity {
+            mesh: mesh,
+            uv_scale: 1.0,
+            model_matrix: glm::identity()
+        };
+        self.single_entities.push(entity);
+        self.single_entities.len() - 1
+    }
+
+    //Returns the entity's index
+    pub fn push_instanced_entity(&mut self, mesh: InstancedMesh) -> usize {
+        let entity = InstancedEntity {
+            mesh: mesh,
+            uv_scale: 1.0
+        };
+        self.instanced_entities.push(entity);
+        self.instanced_entities.len() - 1
+    }
 }
 
 impl Default for SceneData {
@@ -80,11 +106,10 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
         for i in 0..ozy::render::TEXTURE_MAP_COUNT {
             gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
             gl::BindTexture(gl::TEXTURE_2D, entity.mesh.texture_maps[i]);
-        }
+        }        
         glutil::bind_matrix4(scene_data.programs[SINGULAR_PROGRAM_INDEX], "model_matrix", &entity.model_matrix);
         glutil::bind_float(scene_data.programs[SINGULAR_PROGRAM_INDEX], "uv_scale", entity.uv_scale);
-        gl::BindVertexArray(entity.mesh.vao);
-        gl::DrawElements(gl::TRIANGLES, entity.mesh.index_count, gl::UNSIGNED_SHORT, ptr::null());
+        entity.mesh.draw();
     }
 
     //Instanced entity rendering

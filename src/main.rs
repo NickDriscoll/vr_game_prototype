@@ -8,6 +8,7 @@ mod render;
 
 use structs::{Command, Sphere};
 use render::{InstancedEntity, render_main_scene, SceneData, SingleEntity, ViewData};
+use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
 use glfw::{Action, Context, Key, WindowEvent};
 use gl::types::*;
@@ -66,6 +67,12 @@ unsafe extern "system" fn xr_debug_callback(severity_flags: DebugUtilsMessageSev
     Bool32::from(true)
 }
 
+fn xr_pose_to_mat4(pose: &xr::Posef, world_from_tracking: &glm::TMat4<f32>) -> glm::TMat4<f32> {
+    world_from_tracking *
+    glm::quat_cast(&glm::quat(pose.orientation.x, pose.orientation.y, pose.orientation.z, -pose.orientation.w)) *
+    glm::translation(&glm::vec3(-pose.position.x, -pose.position.y, -pose.position.z))
+}
+
 fn main() {
     //Initialize the OpenXR instance
     let xr_instance = {
@@ -90,7 +97,6 @@ fn main() {
         }
 
         if let Ok(layer_properties) = openxr_entry.enumerate_layers() {
-            println!("API layers:");
             for layer in layer_properties.iter() {
                 println!("{}", layer.layer_name);
             }
@@ -210,7 +216,7 @@ fn main() {
     //Create the actionset
     let xr_controller_actionset = match &xr_instance {
         Some(inst) => {
-            match inst.create_action_set("controllers", "Controllers", 0) {
+            match inst.create_action_set("controllers", "Controllers", 1) {
                 Ok(set) => { Some(set) }
                 Err(e) => {
                     println!("Error creating XrActionSet: {}", e);
@@ -226,7 +232,7 @@ fn main() {
         Some(actionset) => {
             match left_hand_path {
                 Some(path) => {
-                    match actionset.create_action::<xr::Posef>("get_pose", "Get pose", &[path]) {
+                    match actionset.create_action::<xr::Posef>("left_hand_pose", "Left hand pose", &[path]) {
                         Ok(action) => { Some(action) }
                         Err(e) => {
                             println!("Error creating XrAction: {}", e);
@@ -351,7 +357,7 @@ fn main() {
     match (&xr_session, &xr_controller_actionset) {
         (Some(session), Some(actionset)) => {
             if let Err(e) = session.attach_action_sets(&[&actionset]) {
-                println!("Unable to sync actions: {}", e);
+                println!("Unable to attach action sets: {}", e);
             }
         }
         _ => {}
@@ -385,10 +391,25 @@ fn main() {
         }
         None => { None }
     };
+    let world_from_tracking: glm::TMat4<f32> = glm::identity();
+
+    //Create left hand action space
+    let left_hand_action_space = match (&xr_session, left_hand_path, &controller_pose_action) {
+        (Some(session), Some(path), Some(action)) => {
+            match action.create_space(session.clone(), path, xr::Posef::IDENTITY) {
+                Ok(space) => { Some(space) }
+                Err(e) => {
+                    println!("Couldn't get left hand space: {}", e);
+                    None
+                }
+            }
+        }
+        _ => { None }
+    };
 
     //Create swapchains
-    let mut xr_swapchains = match (&xr_session, &xr_swapchain_size, &xr_viewconfiguration_views) {
-        (Some(session), Some(size), Some(viewconfig_views)) => {
+    let mut xr_swapchains = match (&xr_session, &xr_viewconfiguration_views) {
+        (Some(session), Some(viewconfig_views)) => {
             let mut failed = false;
             let mut scs = Vec::with_capacity(viewconfig_views.len());
             for viewconfig in viewconfig_views {
@@ -460,7 +481,7 @@ fn main() {
     let shadow_instanced_3D = unsafe { glutil::compile_program_from_files("shaders/shadow_instanced.vert", "shaders/shadow.frag") };
     
     //Initialize default framebuffer
-    let default_framebuffer = ozy::render::Framebuffer {
+    let default_framebuffer = Framebuffer {
         name: 0,
         size: (window_size.x as GLsizei, window_size.y as GLsizei),
         clear_flags: gl::DEPTH_BUFFER_BIT | gl::COLOR_BUFFER_BIT,
@@ -472,13 +493,13 @@ fn main() {
     let mut camera_input: glm::TVec4<f32> = glm::zero();             //This is a unit vector in the xz plane in view space that represents the input camera movement vector
     let mut camera_orientation = glm::vec2(0.0, -glm::half_pi::<f32>() * 0.6);
     let mut camera_speed = 5.0;
-    let camera_hit_sphere_radius = 0.2;
+    let camera_hit_sphere_radius = 0.5;
 
     //Initialize screen state
-    let mut screen_state = ScreenState::new(window_size, glm::identity(), glm::perspective_zo(aspect_ratio, glm::half_pi(), 0.1, 200.0));
+    let mut screen_state = ScreenState::new(window_size, glm::identity(), glm::perspective_zo(aspect_ratio, glm::half_pi(), NEAR_DISTANCE, FAR_DISTANCE));
 
     //Uniform light source
-    let mut uniform_light = glm::normalize(&glm::vec4(-2.0, -3.0, 1.0, 0.0));
+    let mut uniform_light = glm::normalize(&glm::vec4(-1.5, -3.0, 3.0, 0.0));
 
     //Initialize shadow data
     let mut shadow_view;
@@ -521,18 +542,24 @@ fn main() {
         pause_menu_chain_index = state.create_menu_chain();
         graphics_menu_chain_index = state.create_menu_chain();
         
+        let mut graphics_menu = vec![
+            ("Highlight spheres", Some(Command::ToggleOutline)),
+            ("Visualize normals", Some(Command::ToggleNormalVis)),
+            ("Complex normals", Some(Command::ToggleComplexNormals)),
+            ("Wireframe view", Some(Command::ToggleWireframe))
+        ];
+
+        //Only display the HMD perspective button if OpenXR was initialized
+        if let Some(_) = xr_session {
+            graphics_menu.push(("HMD perspective", Some(Command::ToggleHMDPov)))
+        }
+
         let menus = vec![
             ozy::ui::Menu::new(vec![
                 ("Quit", Some(Command::Quit)),
                 ("Graphics options", Some(Command::ToggleMenu(graphics_menu_chain_index, graphics_menu_index)))
             ], ozy::ui::UIAnchor::LeftAligned((20.0, 20.0)), 24.0),
-            ozy::ui::Menu::new(vec![
-                ("Highlight spheres", Some(Command::ToggleOutline)),
-                ("Visualize normals", Some(Command::ToggleNormalVis)),
-                ("Complex normals", Some(Command::ToggleComplexNormals)),
-                ("Wireframe view", Some(Command::ToggleWireframe)),
-                ("HMD view", Some(Command::ToggleHMDPov))
-            ], ozy::ui::UIAnchor::LeftAligned((20.0, window_size.y as f32 / 2.0)), 24.0)
+            ozy::ui::Menu::new(graphics_menu, ozy::ui::UIAnchor::LeftAligned((20.0, window_size.y as f32 / 2.0)), 24.0)
         ];
 
         state.set_menus(menus);
@@ -560,17 +587,13 @@ fn main() {
     let sphere_block_sidelength = 40.0 * sphere_block_scale as f32;
 
     let sphere_count = sphere_block_width * sphere_block_width;
-    let sphere_mesh = SimpleMesh::from_ozy("models/sphere.ozy", &mut texture_keeper, &tex_params);
     let mut sphere_transforms = vec![0.0; sphere_count * 16];
+    let sphere_mesh = SimpleMesh::from_ozy("models/sphere.ozy", &mut texture_keeper, &tex_params);
 
     //Add sphere instanced mesh to list of drawn instanced entities
     let sphere_instanced_mesh = unsafe { InstancedMesh::from_simplemesh(&sphere_mesh, sphere_count, 5) };
-    let entity = InstancedEntity {
-        mesh: sphere_instanced_mesh,
-        uv_scale: 5.0
-    };
-    scene_data.instanced_entities.push(entity);
-    let sphere_entity_index = scene_data.instanced_entities.len() - 1;
+    let sphere_entity_index = scene_data.push_instanced_entity(sphere_instanced_mesh);
+    scene_data.instanced_entities[sphere_entity_index].uv_scale = 5.0;
 
     //Create spheres    
     let mut spheres = Vec::with_capacity(sphere_count);
@@ -591,12 +614,16 @@ fn main() {
     let mut teapot_transforms = vec![0.0; teapot_count * 16];
 
     let teapot_instanced_mesh = unsafe { InstancedMesh::from_simplemesh(&teapot_mesh, teapot_count, 5) };
-    let entity = InstancedEntity {
-        mesh: teapot_instanced_mesh,
-        uv_scale: 1.0
-    };
-    scene_data.instanced_entities.push(entity);
-    let teapot_entity_index = scene_data.instanced_entities.len() - 1;
+    let teapot_entity_index = scene_data.push_instanced_entity(teapot_instanced_mesh);
+
+    //Create dragon
+    let dragon_mesh = SimpleMesh::from_ozy("models/dragon.ozy", &mut texture_keeper, &tex_params);
+    let dragon_entity_index = scene_data.push_single_entity(dragon_mesh);
+
+    //Create controller
+    let wand_mesh = SimpleMesh::from_ozy("models/wand.ozy", &mut texture_keeper, &tex_params);
+    let left_wand_entity_index = scene_data.push_single_entity(wand_mesh.clone());
+    //let right_wand_entity_index = scene_data.push_single_entity(wand_mesh);
 
     let mut wireframe = false;
     let mut hmd_pov = false;
@@ -618,41 +645,27 @@ fn main() {
         mouse_lbutton_pressed_last_frame = mouse_lbutton_pressed;
         frame_count += 1;
 
-        //Get data from the VR hardware
-        /*
-        let left_hand_pose = match (&xr_session, &tracking_space, left_hand_path, &controller_pose_action) {
-            (Some(session), Some(t_space), Some(path), Some(action)) => {
-                match action.create_space(session.clone(), path, xr::Posef::IDENTITY) {
-                    Ok(space) => {
-                        match space.locate(t_space, ) {
-                            Ok(space_location) => {
-                                Some(space_location.pose)
-                            }
-                            Err(e) => {
-                                println!("Couldn't locate space: {}", e);
-                                None
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        println!("Couldn't get left hand space: {}", e);
-                        None
-                    }
+        //Sync OpenXR actions
+        if let (Some(session), Some(controller_actionset)) = (&xr_session, &xr_controller_actionset) {
+            match session.sync_actions(&[xr::ActiveActionSet::new(controller_actionset)]) {
+                Ok(_) => { println!("Sync actions returned ok"); }
+                Err(e) => { println!("Unable to sync actions: {}", e); }
+            }
+        }
+
+        if let (Some(action), Some(session), Some(path)) = (&controller_pose_action, &xr_session, &left_hand_path) {
+            match action.is_active(session, *path) {
+                Ok(result) => {
+                    println!("{}", result);
                 }
-            }
-            _ => { None }
-        };
-        
-        match left_hand_pose {
-            Some(pose) => {
-                println!("Position: ({}, {}, {})", pose.position.x, pose.position.y, pose.position.z);
-            }
-            None => {
-                println!("Pose was none");
+                Err(e) => {
+                    println!("{}", e);
+                }
             }
         }
 
         //Poll for OpenXR events
+        /*
         if let Some(instance) = &xr_instance {
             let mut buffer = xr::EventDataBuffer::new();
             if let Ok(Some(event)) = instance.poll_event(&mut buffer) {
@@ -762,14 +775,7 @@ fn main() {
                 Command::ToggleAllMenus => {
                     ui_state.toggle_hide_all_menus();
                 }
-                Command::ToggleWireframe => unsafe {
-                    wireframe = !wireframe;
-                    if wireframe {
-                        gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
-                    } else {
-                        gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
-                    }
-                }
+                Command::ToggleWireframe => unsafe { wireframe = !wireframe; }
             }
         }
 
@@ -815,6 +821,8 @@ fn main() {
             }
         }
         scene_data.instanced_entities[teapot_entity_index].mesh.update_buffer(&teapot_transforms);
+
+        scene_data.single_entities[dragon_entity_index].model_matrix = glm::translation(&glm::vec3(0.0, -14.0, 0.0)) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
 
         //Collision handling section
 
@@ -865,12 +873,23 @@ fn main() {
             //Shadow map rendering
             shadow_rendertarget.bind();
 
-            //Render instanced meshes
+            //Draw instanced meshes into shadow map
             glutil::bind_matrix4(shadow_instanced_3D, "view_projection", &scene_data.shadow_matrix);
             gl::UseProgram(shadow_instanced_3D);
+            for entity in &scene_data.instanced_entities {
+                entity.mesh.draw();
+            }
 
-            scene_data.instanced_entities[teapot_entity_index].mesh.draw();
-            scene_data.instanced_entities[sphere_entity_index].mesh.draw();
+            //Draw simple meshes into shadow map
+            gl::UseProgram(shadow_3D);
+            for entity in &scene_data.single_entities {
+                glutil::bind_matrix4(shadow_3D, "mvp", &(scene_data.shadow_matrix * entity.model_matrix));
+                entity.mesh.draw();
+            }
+
+            if wireframe {
+                gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
+            }
 
             //Render into HMD
             match (&xr_session, &mut xr_swapchains, &xr_swapchain_size, &xr_swapchain_images, &mut xr_framewaiter, &mut xr_framestream, &tracking_space) {
@@ -880,6 +899,30 @@ fn main() {
                         Ok(wait_info) => {
                             framestream.begin().unwrap();
                             let (viewflags, views) = session.locate_views(xr::ViewConfigurationType::PRIMARY_STEREO, wait_info.predicted_display_time, t_space).unwrap();
+                            println!("viewflags: {:?}", viewflags);
+                            
+                            let left_hand_pose = match (&left_hand_action_space, &tracking_space) {
+                                (Some(action_space), Some(t_space)) => {
+                                    match action_space.locate(t_space, wait_info.predicted_display_time) {
+                                        Ok(space_location) => {
+                                            println!("lefthandflags: {:?}", space_location.location_flags);
+                                            Some(space_location.pose)
+                                        }
+                                        Err(e) => {
+                                            println!("Couldn't locate space: {}", e);
+                                            None
+                                        }
+                                    }
+                                
+                                }
+                                _ => { None }
+                            };
+
+                            //Right here is where we want to update the controller object's model matrix
+                            if let Some(pose) = left_hand_pose {
+                                println!("Left hand position: ({}, {}, {})", pose.position.x, pose.position.y, pose.position.z);
+                                scene_data.single_entities[left_wand_entity_index].model_matrix = xr_pose_to_mat4(&pose, &world_from_tracking);
+                            }
 
                             let mut sc_indices = vec![0; views.len()];
                             for i in 0..views.len() {
@@ -933,19 +976,17 @@ fn main() {
 
                                 //Compute view projection matrix
                                 //We have to translate to right-handed z-up from right-handed y-up
-                                let pose = views[i].pose;
+                                let eye_pose = views[i].pose;
                                 let fov = views[i].fov;
-                                let view_matrix = glm::quat_cast(&glm::quat(pose.orientation.x, pose.orientation.y, pose.orientation.z, -pose.orientation.w)) *
-                                                  glm::translation(&glm::vec3(-pose.position.x, -pose.position.y, -pose.position.z));
+                                let view_matrix = xr_pose_to_mat4(&eye_pose, &world_from_tracking);
 
                                 //Use the fov to get the t, b, l, and r values of the perspective matrix
-                                let near_value = 0.1;
-                                let far_value = 200.0;
+                                let near_value = NEAR_DISTANCE;
+                                let far_value = FAR_DISTANCE;
                                 let l = near_value * f32::tan(fov.angle_left);
                                 let r = near_value * f32::tan(fov.angle_right);
                                 let t = near_value * f32::tan(fov.angle_up);
                                 let b = near_value * f32::tan(fov.angle_down);
-
                                 let perspective = glm::mat4(
                                     2.0 * near_value / (r - l), 0.0, (r + l) / (r - l), 0.0,
                                     0.0, 2.0 * near_value / (t - b), (t + b) / (t - b), 0.0,
@@ -954,13 +995,12 @@ fn main() {
                                 );
 
                                 //Actually rendering
-                                gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
-                                gl::Viewport(0, 0, swapchain_size.x, swapchain_size.y);
-
                                 let view_data = ViewData {
-                                    view_position: glm::vec4(pose.position.x, pose.position.y, pose.position.z, 1.0),
+                                    view_position: glm::vec4(eye_pose.position.x, eye_pose.position.y, eye_pose.position.z, 1.0),
                                     view_projection: perspective * view_matrix
                                 };
+                                gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+                                gl::Viewport(0, 0, swapchain_size.x, swapchain_size.y);
                                 render_main_scene(&scene_data, &view_data);
 
                                 swapchains[i].release_image().unwrap();
@@ -1011,23 +1051,25 @@ fn main() {
                 _ => {}
             }
 
-            //Main scene rendering
-            let view_data = ViewData {
+            //Main window rendering
+            let freecam_viewdata = ViewData {
                 view_position: glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0),
                 view_projection: *screen_state.get_clipping_from_world()
             };
             default_framebuffer.bind();
 
             if hmd_pov {
+                //For displaying the HMD's POV, we just display the right-eye
                 if let Some(size) = xr_swapchain_size {
                     gl::BindFramebuffer(gl::READ_FRAMEBUFFER, xr_swapchain_framebuffer);
-                    gl::BlitFramebuffer(0, 0, size.x as GLint, size.y as GLint, 0, 0, window_size.x as GLint, window_size.y as GLint, gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT, gl::NEAREST);
+                    gl::BlitFramebuffer(0, 0, size.x as GLint, size.y as GLint, 0, 0, window_size.x as GLint, window_size.y as GLint, gl::COLOR_BUFFER_BIT, gl::NEAREST);
                 }
             } else {
-                render_main_scene(&scene_data, &view_data);
-            }            
+                render_main_scene(&scene_data, &freecam_viewdata);
+            }
 
             //Render 2D elements
+            gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
             gl::Disable(gl::DEPTH_TEST);        //Disable depth testing for 2D rendering
             ui_state.draw(&screen_state);
         }

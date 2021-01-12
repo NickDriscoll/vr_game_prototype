@@ -71,7 +71,7 @@ void main() {
     
     vec4 halfway = normalize(view_direction + sun_direction);
     float specular_angle = max(0.0, dot(vec3(halfway), world_space_normal));
-    float shininess = (1.0 - roughness) * (128.0 - 16.0) + 16.0;
+    float shininess = (1.0 - roughness) * (128.0 - 8.0) + 16.0;
     float specular = pow(specular_angle, shininess);
 
     //Calculate edge outline
