@@ -4,7 +4,7 @@ use ozy::render::{Framebuffer, InstancedMesh, SimpleMesh};
 use crate::glutil;
 use gl::types::*;
 
-pub const NEAR_DISTANCE: f32 = 0.5;
+pub const NEAR_DISTANCE: f32 = 0.25;
 pub const FAR_DISTANCE: f32 = 1000000.0;
 
 pub struct SingleEntity {
