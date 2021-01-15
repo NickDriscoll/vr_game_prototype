@@ -1,6 +1,4 @@
-use std::collections::HashMap;
-use std::ptr;
-use ozy::render::{Framebuffer, InstancedMesh, SimpleMesh};
+use ozy::render::{InstancedMesh, SimpleMesh};
 use crate::glutil;
 use gl::types::*;
 

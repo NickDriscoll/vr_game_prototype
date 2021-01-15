@@ -7,7 +7,7 @@ mod structs;
 mod render;
 
 use structs::{Command, Sphere};
-use render::{InstancedEntity, render_main_scene, SceneData, SingleEntity, ViewData};
+use render::{render_main_scene, SceneData, SingleEntity, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
 use glfw::{Action, Context, Key, WindowEvent};
@@ -71,6 +71,10 @@ unsafe extern "system" fn xr_debug_callback(severity_flags: DebugUtilsMessageSev
 
     println!("--------------------------------------------------------------------------");
     Bool32::from(true)
+}
+
+fn xr_print_pose(pose: xr::Posef) {
+    println!("Position: ({}, {}, {})", pose.position.x, pose.position.y, pose.position.z);
 }
 
 fn xr_pose_to_viewmat(pose: &xr::Posef, tracking_from_world: &glm::TMat4<f32>) -> glm::TMat4<f32> {
@@ -176,15 +180,20 @@ fn main() {
 
         //Get the set of OpenXR extentions supported on this system
         let extension_set = match openxr_entry.enumerate_extensions() {
-            Ok(set) => { set }
-            Err(e) => { panic!("Extention enumerations error: {}", e); }
+            Ok(set) => { Some(set) }
+            Err(e) => {
+                println!("Extention enumerations error: {}", e);
+                None
+            }
         };
 
         //Make sure the local OpenXR implementation supports OpenGL
-        if !extension_set.khr_opengl_enable {
-            println!("OpenXR implementation does not support OpenGL!");
-            exit(-1);
-        }
+        if let Some(set) = &extension_set {
+            if !set.khr_opengl_enable {
+                println!("OpenXR implementation does not support OpenGL!");
+                exit(-1);
+            }
+        } 
 
         if let Ok(layer_properties) = openxr_entry.enumerate_layers() {
             for layer in layer_properties.iter() {
@@ -193,38 +202,45 @@ fn main() {
         }
         
         //Create the instance
+        let mut instance = None;
+
         #[cfg(xrdebug)]
         let mut messenger = DebugUtilsMessengerEXT::NULL;
-        match openxr_entry.create_instance(&app_info, &extension_set, &[]) {
-            Ok(inst) => unsafe {
-                //Enable the OpenXR debug extension
-                #[cfg(xrdebug)]
-                {
-                    match xr::raw::DebugUtilsEXT::load(&openxr_entry, inst.as_raw()) {
-                        Ok(debug_utils) => {
-                            let debug_createinfo = DebugUtilsMessengerCreateInfoEXT {
-                                ty: xr::sys::StructureType::DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
-                                next: ptr::null(),
-                                message_severities: DebugUtilsMessageSeverityFlagsEXT::VERBOSE | DebugUtilsMessageSeverityFlagsEXT::WARNING | DebugUtilsMessageSeverityFlagsEXT::INFO | DebugUtilsMessageSeverityFlagsEXT::ERROR,
-                                message_types: DebugUtilsMessageTypeFlagsEXT::GENERAL | DebugUtilsMessageTypeFlagsEXT::VALIDATION | DebugUtilsMessageTypeFlagsEXT::PERFORMANCE | DebugUtilsMessageTypeFlagsEXT::CONFORMANCE,
-                                user_callback: Some(xr_debug_callback),
-                                user_data: ptr::null_mut()
-                            };
-                            
-                            (debug_utils.create_debug_utils_messenger)(inst.as_raw(), &debug_createinfo as *const _, &mut messenger as *mut _);
-                        }
-                        Err(e) => {
-                            println!("Couldn't load OpenXR debug utils: {}", e);
+
+        if let Some(ext_set) = &extension_set {
+            match openxr_entry.create_instance(&app_info, ext_set, &[]) {
+                Ok(inst) => {
+                    //Enable the OpenXR debug extension
+                    #[cfg(xrdebug)]
+                    {
+                        match xr::raw::DebugUtilsEXT::load(&openxr_entry, inst.as_raw()) {
+                            Ok(debug_utils) => {
+                                let debug_createinfo = DebugUtilsMessengerCreateInfoEXT {
+                                    ty: xr::sys::StructureType::DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+                                    next: ptr::null(),
+                                    message_severities: DebugUtilsMessageSeverityFlagsEXT::VERBOSE | DebugUtilsMessageSeverityFlagsEXT::WARNING | DebugUtilsMessageSeverityFlagsEXT::INFO | DebugUtilsMessageSeverityFlagsEXT::ERROR,
+                                    message_types: DebugUtilsMessageTypeFlagsEXT::GENERAL | DebugUtilsMessageTypeFlagsEXT::VALIDATION | DebugUtilsMessageTypeFlagsEXT::PERFORMANCE | DebugUtilsMessageTypeFlagsEXT::CONFORMANCE,
+                                    user_callback: Some(xr_debug_callback),
+                                    user_data: ptr::null_mut()
+                                };
+                                
+                                (debug_utils.create_debug_utils_messenger)(inst.as_raw(), &debug_createinfo as *const _, &mut messenger as *mut _);
+                            }
+                            Err(e) => {
+                                println!("Couldn't load OpenXR debug utils: {}", e);
+                            }
                         }
                     }
+                    instance = Some(inst);
                 }
-                Some(inst)
-            }
-            Err(e) => { 
-                println!("Error creating OpenXR instance: {}", e);
-                None
+                Err(e) => { 
+                    println!("Error creating OpenXR instance: {}", e);
+                    instance = None;
+                }
             }
         }
+        
+        instance
     };
 
     //Get the system id
@@ -366,13 +382,13 @@ fn main() {
         gl::Enable(gl::BLEND);											//Enable alpha blending
         gl::Enable(gl::MULTISAMPLE);                                    //Enable MSAA
 		gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);			//Set blend func to (Cs * alpha + Cd * (1.0 - alpha))
-        gl::ClearColor(0.26, 0.4, 0.46, 1.0);							//Set the clear color to a pleasant blue
+        gl::ClearColor(0.26, 0.4, 0.46, 1.0);							//Set the clear color
 
 		#[cfg(gloutput)]
 		{
-			gl::Enable(gl::DEBUG_OUTPUT);									//Enable verbose debug output
-			gl::Enable(gl::DEBUG_OUTPUT_SYNCHRONOUS);						//Synchronously call the debug callback function
-			gl::DebugMessageCallback(ozy::glutil::gl_debug_callback, ptr::null());		//Register the debug callback
+			gl::Enable(gl::DEBUG_OUTPUT);									                                    //Enable verbose debug output
+			gl::Enable(gl::DEBUG_OUTPUT_SYNCHRONOUS);						                                    //Synchronously call the debug callback function
+			gl::DebugMessageCallback(ozy::glutil::gl_debug_callback, ptr::null());		                        //Register the debug callback
 			gl::DebugMessageControl(gl::DONT_CARE, gl::DONT_CARE, gl::DONT_CARE, 0, ptr::null(), gl::TRUE);
 		}
     }
@@ -451,8 +467,10 @@ fn main() {
     let view_space = xr_make_reference_space(&xr_session, xr::ReferenceSpaceType::VIEW, xr::Posef::IDENTITY);       //Create view space
     
     //Matrices for relating tracking space and world space
-    let world_from_tracking: glm::TMat4<f32> = glm::identity();
-    let tracking_from_world = glm::affine_inverse(world_from_tracking);
+    let mut tracking_space_position = glm::zero();
+    let mut tracking_space_velocity = glm::zero();
+    let mut world_from_tracking: glm::TMat4<f32> = glm::identity();
+    let mut tracking_from_world = glm::affine_inverse(world_from_tracking);
     
     let left_hand_action_space = xr_make_actionspace(&xr_session, left_hand_subaction_path, &left_hand_pose_action, space_pose); //Create left hand action space
     let right_hand_action_space = xr_make_actionspace(&xr_session, right_hand_subaction_path, &right_hand_pose_action, space_pose); //Create right hand action space
@@ -543,7 +561,7 @@ fn main() {
     let mut camera_input: glm::TVec4<f32> = glm::zero();             //This is a unit vector in the xz plane in view space that represents the input camera movement vector
     let mut camera_orientation = glm::vec2(0.0, -glm::half_pi::<f32>() * 0.6);
     let mut camera_speed = 5.0;
-    let camera_hit_sphere_radius = 0.5;
+    let camera_hit_sphere_radius = 0.2;
 
     //Initialize screen state
     let mut screen_state = ScreenState::new(window_size, glm::identity(), glm::perspective_zo(aspect_ratio, glm::half_pi(), NEAR_DISTANCE, FAR_DISTANCE));
@@ -699,19 +717,40 @@ fn main() {
             }
         }
 
-        let xr_move_vector = match (&xr_session, &left_hand_stick_action) {
+        //Handle movement stick action
+        match (&xr_session, &left_hand_stick_action) {
             (Some(session), Some(action)) => {
                 match action.state(session, xr::Path::NULL) {
-                    Ok(state) => { glm::vec2(state.current_state.x, state.current_state.y) }
+                    Ok(state) => {
+                        const MOVEMENT_SPEED: f32 = 5.0;
+                        if state.changed_since_last_sync {                            
+                            match xr_locate_space(&left_hand_action_space, &tracking_space, state.last_change_time) {
+                                Some(pose) => {
+                                    let hand_space_vec = glm::vec4(state.current_state.x, state.current_state.y, 0.0, 0.0);
+
+                                    //Explicit check for zero to avoid divide-by-zero in normalize
+                                    if hand_space_vec == glm::zero() {
+                                        tracking_space_velocity = glm::zero();
+                                    } else {                                        
+                                        let untreated = xr_pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec;
+                                        tracking_space_velocity = glm::normalize(&glm::vec3(untreated.x, untreated.y, 0.0)) * MOVEMENT_SPEED;
+                                    }
+                                }
+                                None => { tracking_space_velocity = glm::zero(); }
+                            }
+                        } else {
+                            tracking_space_velocity = glm::zero();
+                        }
+                    }
                     Err(e) => {
                         println!("Error getting stick state: {}", e);
-                        glm::zero()
+                        tracking_space_velocity = glm::zero();
                     }
                 }
             }
-            _ => { glm::zero() }
+            _ => { tracking_space_velocity = glm::zero(); }
         };
-        println!("Left stick: ({}, {})", xr_move_vector.x, xr_move_vector.y);
+        //println!("Left stick: ({}, {})", xr_move_vector.x, xr_move_vector.y);
 
         //Poll for OpenXR events
         /*
@@ -796,7 +835,7 @@ fn main() {
                     screen_space_mouse = glm::vec2(x as f32, y as f32);
                     if mouselook_enabled {
                         const CAMERA_SENSITIVITY_DAMPENING: f32 = 0.002;
-                        let offset = glm::vec2(x as f32 - window_size.x as f32 / 2.0, y as f32 - window_size.y as f32 / 2.0);
+                        let offset = glm::vec2(screen_space_mouse.x as f32 - window_size.x as f32 / 2.0, screen_space_mouse.y as f32 - window_size.y as f32 / 2.0);
                         camera_orientation += offset * CAMERA_SENSITIVITY_DAMPENING;
                         if camera_orientation.y < -glm::pi::<f32>() {
                             camera_orientation.y = -glm::pi::<f32>();
@@ -824,9 +863,14 @@ fn main() {
                 Command::ToggleAllMenus => {
                     ui_state.toggle_hide_all_menus();
                 }
-                Command::ToggleWireframe => unsafe { wireframe = !wireframe; }
+                Command::ToggleWireframe => { wireframe = !wireframe; }
             }
         }
+
+        //Update tracking space location
+        tracking_space_position += tracking_space_velocity * delta_time;
+        world_from_tracking = glm::translation(&tracking_space_position);
+        tracking_from_world = glm::affine_inverse(world_from_tracking);
 
         //If the user is controlling the camera, force the mouse cursor into the center of the screen
         if mouselook_enabled {
@@ -880,11 +924,9 @@ fn main() {
         }
         
         //Check for camera collision with the floor
-        /*
         if camera_position.z < camera_hit_sphere_radius {
             camera_position.z = camera_hit_sphere_radius;
         }
-        */
 
         //Make the light dance around
         //uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(-0.5 * elapsed_time), 4.0 * f32::sin(-0.5 * elapsed_time), 2.0, 0.0));
@@ -930,8 +972,8 @@ fn main() {
             }
 
             //Render into HMD
-            match (&xr_session, &mut xr_swapchains, &xr_swapchain_size, &xr_swapchain_images, &mut xr_framewaiter, &mut xr_framestream, &tracking_space, &view_space) {
-                (Some(session), Some(swapchains), Some(sc_size), Some(sc_images), Some(framewaiter), Some(framestream), Some(t_space), Some(v_space)) => {
+            match (&xr_session, &mut xr_swapchains, &xr_swapchain_size, &xr_swapchain_images, &mut xr_framewaiter, &mut xr_framestream, &tracking_space) {
+                (Some(session), Some(swapchains), Some(sc_size), Some(sc_images), Some(framewaiter), Some(framestream), Some(t_space)) => {
                     let swapchain_size = glm::vec2(sc_size.x as GLint, sc_size.y as GLint);
                     match framewaiter.wait() {
                         Ok(wait_info) => {
@@ -1035,14 +1077,14 @@ fn main() {
 
                             //Draw the companion view if we're showing HMD POV
                             if hmd_pov {
-                                if let Some(pose) = xr_locate_space(&view_space, &tracking_space, wait_info.predicted_display_time) {                                    
+                                if let Some(pose) = xr_locate_space(&view_space, &tracking_space, wait_info.predicted_display_time) {
                                     let v_mat = xr_pose_to_viewmat(&pose, &tracking_from_world);
                                     let view_state = ViewData {
                                         view_position: glm::vec4(-v_mat[12], -v_mat[13], -v_mat[14], 1.0),
                                         view_projection: screen_state.get_clipping_from_view() * v_mat
                                     };
                                     default_framebuffer.bind();
-                                    render_main_scene(&scene_data, &view_state);                                    
+                                    render_main_scene(&scene_data, &view_state);
                                 }
                             }
 
