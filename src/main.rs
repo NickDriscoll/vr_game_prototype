@@ -27,7 +27,12 @@ use xr::sys::{Bool32, DebugUtilsMessengerEXT, DebugUtilsMessengerCallbackDataEXT
 use winapi::um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext};
 
 const FONT_BYTES: &'static [u8; 212276] = include_bytes!("../fonts/Constantia.ttf");
+
+//XR interaction related paths
 const DEFAULT_INTERACTION_PROFILE: &str = "/interaction_profiles/valve/index_controller";
+const LEFT_GRIP_POSE: &str = "/user/hand/left/input/grip/pose";
+const RIGHT_GRIP_POSE: &str = "/user/hand/right/input/grip/pose";
+const LEFT_STICK_VECTOR2: &str = "/usr/hand/left/input/thumbstick";
 
 unsafe extern "system" fn xr_debug_callback(severity_flags: DebugUtilsMessageSeverityFlagsEXT, type_flags: DebugUtilsMessageTypeFlagsEXT, callback_data: *const DebugUtilsMessengerCallbackDataEXT, user_data: *mut c_void) -> Bool32 {
     println!("---------------------------OpenXR Debug Message---------------------------");
@@ -78,6 +83,69 @@ fn xr_pose_to_mat4(pose: &xr::Posef, world_from_tracking: &glm::TMat4<f32>) -> g
     world_from_tracking *    
     glm::translation(&glm::vec3(pose.position.x, pose.position.y, pose.position.z)) *
     glm::quat_cast(&glm::quat(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w))
+}
+
+fn xr_make_path(instance: &Option<xr::Instance>, path_string: &str) -> Option<xr::Path> {
+    match instance {
+        Some(inst) => {
+            match inst.string_to_path(path_string) {
+                Ok(path) => { Some(path) }
+                Err(e) => {
+                    println!("Error getting XrPath: {}", e);
+                    None
+                }
+            }
+        }
+        None => { None }
+    }    
+}
+
+fn xr_make_pose_action<T: xr::ActionTy>(subaction_path: &Option<xr::Path>, actionset: &Option<xr::ActionSet>, name: &str, localized_name: &str) -> Option<xr::Action<T>> {
+    match (subaction_path, actionset) {
+        (Some(path), Some(actionset)) => {
+            match actionset.create_action::<T>(name, localized_name, &[*path]) {
+                Ok(action) => { Some(action) }
+                Err(e) => {
+                    println!("Error creating XrAction: {}", e);
+                    None
+                }
+            }
+        }
+        _ => { None }
+    }
+}
+
+fn xr_make_actionspace<G: xr::Graphics>(session: &Option<xr::Session<G>>, subaction_path: Option<xr::Path>, pose_action: &Option<xr::Action<xr::Posef>>, reference_pose: xr::Posef) -> Option<xr::Space> {
+    match (session, subaction_path, pose_action) {
+        (Some(session), Some(path), Some(action)) => {
+            match action.create_space(session.clone(), path, reference_pose) {
+                Ok(space) => { Some(space) }
+                Err(e) => {
+                    println!("Couldn't get left hand space: {}", e);
+                    None
+                }
+            }
+        }
+        _ => { None }
+    }
+}
+
+fn xr_locate_space(space: &Option<xr::Space>, tracking_space: &Option<xr::Space>, time: xr::Time) -> Option<xr::Posef> {
+    match (space, &tracking_space) {
+        (Some(space), Some(t_space)) => {
+            match space.locate(t_space, time) {
+                Ok(space_location) => {
+                    Some(space_location.pose)
+                }
+                Err(e) => {
+                    println!("Couldn't locate space: {}", e);
+                    None
+                }
+            }
+        
+        }
+        _ => { None }
+    }
 }
 
 fn main() {
@@ -197,36 +265,12 @@ fn main() {
     };
 
     //Create the paths to appropriate equipment
-    let (left_hand_pose_path, right_hand_path) = match &xr_instance {
-        Some(instance) => {
-            let l_path = match instance.string_to_path("/user/hand/left/input/grip/pose") {
-                Ok(path) => { Some(path) }
-                Err(e) => {
-                    println!("Error getting XrPath: {}", e);
-                    None
-                }
-            };
-
-            let r_path = match instance.string_to_path(xr::USER_HAND_RIGHT) {
-                Ok(path) => { Some(path) }
-                Err(e) => {
-                    println!("Error getting XrPath: {}", e);
-                    None
-                }
-            };
-
-            (l_path, r_path)
-        }
-        None => { (None, None) }
-    };
+    let left_grip_pose_path = xr_make_path(&xr_instance, LEFT_GRIP_POSE);
+    let right_grip_pose_path = xr_make_path(&xr_instance, RIGHT_GRIP_POSE);
 
     //Create the hand subaction paths
-    let left_hand_subaction_path = match &xr_instance {
-        Some(inst) => {
-            Some(inst.string_to_path(xr::USER_HAND_LEFT).unwrap())
-        }
-        None => { None }
-    };
+    let left_hand_subaction_path = xr_make_path(&xr_instance, xr::USER_HAND_LEFT);
+    let right_hand_subaction_path = xr_make_path(&xr_instance, xr::USER_HAND_RIGHT);
 
     //Create the actionset
     let xr_controller_actionset = match &xr_instance {
@@ -243,24 +287,20 @@ fn main() {
     };
 
     //Create the actions for getting pose data
-    let controller_pose_action = match (&left_hand_subaction_path, &xr_controller_actionset) {
-        (Some(path), Some(actionset)) => {
-            match actionset.create_action::<xr::Posef>("left_hand_pose", "Left hand pose", &[*path]) {
-                Ok(action) => { Some(action) }
-                Err(e) => {
-                    println!("Error creating XrAction: {}", e);
-                    None
-                }
-            }
-        }
-        _ => { None }
-    };
+    let left_hand_pose_action = xr_make_pose_action(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_pose", "Left hand pose");
+    let right_hand_pose_action = xr_make_pose_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_pose", "Right hand pose");
 
-    match (&xr_instance, &controller_pose_action, &left_hand_pose_path) {
-        (Some(inst), Some(action), Some(l_path)) => {
+    //let left_stick_vector_action = 
+
+    //Suggest interaction profile bindings 
+    match (&xr_instance, &left_hand_pose_action, &right_hand_pose_action, &left_grip_pose_path, &right_grip_pose_path) {
+        (Some(inst), Some(l_action), Some(r_action), Some(l_path), Some(r_path)) => {
             let profile = inst.string_to_path(DEFAULT_INTERACTION_PROFILE).unwrap();
-            let binding = xr::Binding::new(action, *l_path);
-            if let Err(e) = inst.suggest_interaction_profile_bindings(profile, &[binding]) {
+            let bindings = [
+                xr::Binding::new(l_action, *l_path),
+                xr::Binding::new(r_action, *r_path)
+            ];
+            if let Err(e) = inst.suggest_interaction_profile_bindings(profile, &bindings) {
                 println!("Error setting interaction profile bindings: {}", e);
             }
         }
@@ -285,15 +325,7 @@ fn main() {
 	glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
 
     //Create the window
-    let window_size = match &xr_swapchain_size {
-        Some(size) => { 
-            glm::vec2(
-                size.x / 2,
-                size.y / 2
-            )
-        }
-        None => { glm::vec2(1280, 1024) }
-    };
+    let window_size = glm::vec2(1920, 1080);
 
     let aspect_ratio = window_size.x as f32 / window_size.y as f32;
     let (mut window, events) = match glfw.create_window(window_size.x, window_size.y, "OpenXR yay", glfw::WindowMode::Windowed) {
@@ -412,22 +444,27 @@ fn main() {
         }
         None => { None }
     };
-    let world_from_tracking: glm::TMat4<f32> = glm::translation(&glm::vec3(0.0, 0.0, 3.0));
-    let tracking_from_world = glm::affine_inverse(world_from_tracking);
 
-    //Create left hand action space
-    let left_hand_action_space = match (&xr_session, left_hand_subaction_path, &controller_pose_action) {
-        (Some(session), Some(path), Some(action)) => {
-            match action.create_space(session.clone(), path, space_pose) {
+    //Create view space
+    let view_space = match &xr_session {
+        Some(session) => {
+            match session.create_reference_space(xr::ReferenceSpaceType::VIEW, xr::Posef::IDENTITY) {
                 Ok(space) => { Some(space) }
                 Err(e) => {
-                    println!("Couldn't get left hand space: {}", e);
+                    println!("Couldn't create reference space: {}", e);
                     None
                 }
             }
         }
-        _ => { None }
+        None => { None }
     };
+    
+    //Matrices for relating tracking space and world space
+    let world_from_tracking: glm::TMat4<f32> = glm::identity();
+    let tracking_from_world = glm::affine_inverse(world_from_tracking);
+    
+    let left_hand_action_space = xr_make_actionspace(&xr_session, left_hand_subaction_path, &left_hand_pose_action, space_pose); //Create left hand action space
+    let right_hand_action_space = xr_make_actionspace(&xr_session, right_hand_subaction_path, &right_hand_pose_action, space_pose); //Create right hand action space
 
     //Create swapchains
     let mut xr_swapchains = match (&xr_session, &xr_viewconfiguration_views) {
@@ -635,9 +672,13 @@ fn main() {
     let dragon_entity_index = scene_data.push_single_entity(dragon_mesh);
 
     //Create controller
-    let wand_mesh = SimpleMesh::from_ozy("models/wand.ozy", &mut texture_keeper, &tex_params);
-    let left_wand_entity_index = scene_data.push_single_entity(wand_mesh.clone());
-    //let right_wand_entity_index = scene_data.push_single_entity(wand_mesh);
+    let mut left_wand_entity_index = 0;
+    let mut right_wand_entity_index = 0;
+    if let Some(_) = &xr_instance {
+        let wand_mesh = SimpleMesh::from_ozy("models/wand.ozy", &mut texture_keeper, &tex_params);
+        left_wand_entity_index = scene_data.push_single_entity(wand_mesh.clone());
+        right_wand_entity_index = scene_data.push_single_entity(wand_mesh);
+    }
 
     let mut wireframe = false;
     let mut hmd_pov = false;
@@ -834,9 +875,11 @@ fn main() {
         }
         
         //Check for camera collision with the floor
+        /*
         if camera_position.z < camera_hit_sphere_radius {
             camera_position.z = camera_hit_sphere_radius;
         }
+        */
 
         //Make the light dance around
         //uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(-0.5 * elapsed_time), 4.0 * f32::sin(-0.5 * elapsed_time), 2.0, 0.0));
@@ -882,33 +925,25 @@ fn main() {
             }
 
             //Render into HMD
-            match (&xr_session, &mut xr_swapchains, &xr_swapchain_size, &xr_swapchain_images, &mut xr_framewaiter, &mut xr_framestream, &tracking_space) {
-                (Some(session), Some(swapchains), Some(sc_size), Some(sc_images), Some(framewaiter), Some(framestream), Some(t_space)) => {
+            match (&xr_session, &mut xr_swapchains, &xr_swapchain_size, &xr_swapchain_images, &mut xr_framewaiter, &mut xr_framestream, &tracking_space, &view_space) {
+                (Some(session), Some(swapchains), Some(sc_size), Some(sc_images), Some(framewaiter), Some(framestream), Some(t_space), Some(v_space)) => {
                     let swapchain_size = glm::vec2(sc_size.x as GLint, sc_size.y as GLint);
                     match framewaiter.wait() {
                         Ok(wait_info) => {
                             framestream.begin().unwrap();
                             let (viewflags, views) = session.locate_views(xr::ViewConfigurationType::PRIMARY_STEREO, wait_info.predicted_display_time, t_space).unwrap();
                             
-                            let left_hand_pose = match (&left_hand_action_space, &tracking_space) {
-                                (Some(action_space), Some(t_space)) => {
-                                    match action_space.locate(t_space, wait_info.predicted_display_time) {
-                                        Ok(space_location) => {
-                                            Some(space_location.pose)
-                                        }
-                                        Err(e) => {
-                                            println!("Couldn't locate space: {}", e);
-                                            None
-                                        }
-                                    }
-                                
-                                }
-                                _ => { None }
-                            };
+                            //Fetch the hand poses from the runtime
+                            let left_hand_pose = xr_locate_space(&left_hand_action_space, &tracking_space, wait_info.predicted_display_time);
+                            let right_hand_pose = xr_locate_space(&right_hand_action_space, &tracking_space, wait_info.predicted_display_time);
 
                             //Right here is where we want to update the controller object's model matrix
                             if let Some(pose) = left_hand_pose {
                                 scene_data.single_entities[left_wand_entity_index].model_matrix = xr_pose_to_mat4(&pose, &world_from_tracking);
+                            }
+
+                            if let Some(pose) = right_hand_pose {
+                                scene_data.single_entities[right_wand_entity_index].model_matrix = xr_pose_to_mat4(&pose, &world_from_tracking);
                             }
 
                             let mut sc_indices = vec![0; views.len()];
@@ -993,6 +1028,22 @@ fn main() {
                                 swapchains[i].release_image().unwrap();
                             }
 
+                            //Draw the companion view if we're showing HMD POV
+                            if hmd_pov {
+                                match xr_locate_space(&view_space, &tracking_space, wait_info.predicted_display_time) {
+                                    Some(pose) => {
+                                        let v_mat = xr_pose_to_viewmat(&pose, &tracking_from_world);
+                                        let view_state = ViewData {
+                                            view_position: glm::vec4(-v_mat[12], -v_mat[13], -v_mat[14], 1.0),
+                                            view_projection: screen_state.get_clipping_from_view() * v_mat
+                                        };
+                                        default_framebuffer.bind();
+                                        render_main_scene(&scene_data, &view_state);
+                                    }
+                                    None => {}
+                                }
+                            }
+
                             //End the frame
                             let end_result = framestream.end(wait_info.predicted_display_time, xr::EnvironmentBlendMode::OPAQUE,
                                 &[&xr::CompositionLayerProjection::new()
@@ -1039,19 +1090,12 @@ fn main() {
             }
 
             //Main window rendering
-            let freecam_viewdata = ViewData {
-                view_position: glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0),
-                view_projection: *screen_state.get_clipping_from_world()
-            };
-            default_framebuffer.bind();
-
-            if hmd_pov {
-                //For displaying the HMD's POV, we just display the right-eye
-                if let Some(size) = xr_swapchain_size {
-                    gl::BindFramebuffer(gl::READ_FRAMEBUFFER, xr_swapchain_framebuffer);
-                    gl::BlitFramebuffer(0, 0, size.x as GLint, size.y as GLint, 0, 0, window_size.x as GLint, window_size.y as GLint, gl::COLOR_BUFFER_BIT, gl::NEAREST);
-                }
-            } else {
+            if !hmd_pov {
+                let freecam_viewdata = ViewData {
+                    view_position: glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0),
+                    view_projection: *screen_state.get_clipping_from_world()
+                };
+                default_framebuffer.bind();
                 render_main_scene(&scene_data, &freecam_viewdata);
             }
 
