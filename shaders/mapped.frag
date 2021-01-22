@@ -56,7 +56,7 @@ void main() {
     if (!(adj_shadow_space_pos.z > 1.0 || adj_shadow_space_pos.x < 0.0 || adj_shadow_space_pos.x > 1.0 || adj_shadow_space_pos.y < 0.0 || adj_shadow_space_pos.y > 1.0)) {
         //Do PCF
         //Average the nxn block of shadow texels centered at this pixel
-        float bias = 0.001;
+        float bias = 0.0001;
         int bound = 1;
         for (int x = -bound; x <= bound; x++) {
             for (int y = -bound; y <= bound; y++) {

@@ -5,15 +5,14 @@ extern crate ozy_engine as ozy;
 
 mod structs;
 mod render;
+mod xrutil;
 
 use structs::{Command, Sphere};
-use render::{render_main_scene, SceneData, SingleEntity, ViewData};
+use render::{render_main_scene, SceneData, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
 use glfw::{Action, Context, Key, WindowEvent};
 use gl::types::*;
-use std::ffi::{c_void, CStr};
-use std::os::raw::c_char;
 use std::process::exit;
 use std::ptr;
 use std::time::Instant;
@@ -21,7 +20,6 @@ use rand::random;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use ozy::{glutil};
 use ozy::render::{Framebuffer, InstancedMesh, RenderTarget, ScreenState, SimpleMesh, TextureKeeper};
-use xr::sys::{Bool32, DebugUtilsMessengerEXT, DebugUtilsMessengerCallbackDataEXT, DebugUtilsMessengerCreateInfoEXT, DebugUtilsMessageSeverityFlagsEXT, DebugUtilsMessageTypeFlagsEXT};
 
 #[cfg(windows)]
 use winapi::um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext};
@@ -29,141 +27,15 @@ use winapi::um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext};
 const FONT_BYTES: &'static [u8; 212276] = include_bytes!("../fonts/Constantia.ttf");
 
 //XR interaction related paths
-const DEFAULT_INTERACTION_PROFILE: &str = "/interaction_profiles/valve/index_controller";
-const LEFT_GRIP_POSE: &str = "/user/hand/left/input/grip/pose";
-const RIGHT_GRIP_POSE: &str = "/user/hand/right/input/grip/pose";
-const LEFT_STICK_VECTOR2: &str = "/user/hand/left/input/thumbstick";
+const DEFAULT_INTERACTION_PROFILE: &str =           "/interaction_profiles/valve/index_controller";
+const LEFT_GRIP_POSE: &str =                        "/user/hand/left/input/grip/pose";
+const LEFT_AIM_POSE: &str =                        "/user/hand/left/input/aim/pose";
+const RIGHT_GRIP_POSE: &str =                       "/user/hand/right/input/grip/pose";
+const LEFT_STICK_VECTOR2: &str =                    "/user/hand/left/input/thumbstick";
 
-unsafe extern "system" fn xr_debug_callback(severity_flags: DebugUtilsMessageSeverityFlagsEXT, type_flags: DebugUtilsMessageTypeFlagsEXT, callback_data: *const DebugUtilsMessengerCallbackDataEXT, user_data: *mut c_void) -> Bool32 {
-    println!("---------------------------OpenXR Debug Message---------------------------");
-
-    if severity_flags.contains(DebugUtilsMessageSeverityFlagsEXT::ERROR) {
-        println!("Severity: ERROR");
-    } else if severity_flags.contains(DebugUtilsMessageSeverityFlagsEXT::WARNING) {        
-        println!("Severity: WARNING");
-    } else if severity_flags.contains(DebugUtilsMessageSeverityFlagsEXT::INFO) {        
-        println!("Severity: INFO");
-    } else if severity_flags.contains(DebugUtilsMessageSeverityFlagsEXT::VERBOSE) {        
-        println!("Severity: VERBOSE");
-    }
-
-    if type_flags.contains(DebugUtilsMessageTypeFlagsEXT::GENERAL) {
-        println!("Type: GENERAL");
-    } else if type_flags.contains(DebugUtilsMessageTypeFlagsEXT::VALIDATION) {
-        println!("Type: VALIDATION");
-    } else if type_flags.contains(DebugUtilsMessageTypeFlagsEXT::PERFORMANCE) {
-        println!("Type: PERFORMANCE");
-    } else if type_flags.contains(DebugUtilsMessageTypeFlagsEXT::CONFORMANCE) {
-        println!("Type: CONFORMANCE");
-    }
-
-    let message_id = CStr::from_ptr((*callback_data).message_id);
-    
-    let f_name = CStr::from_ptr((*callback_data).function_name);
-
-    let message = CStr::from_ptr((*callback_data).message);
-
-    println!("Function name: {:?}\nMessage ID: {:?}\nMessage: {:?}", f_name, message_id, message);
-    drop(message_id);
-    drop(f_name);
-    drop(message);
-
-
-    println!("--------------------------------------------------------------------------");
-    Bool32::from(true)
-}
-
-fn xr_print_pose(pose: xr::Posef) {
-    println!("Position: ({}, {}, {})", pose.position.x, pose.position.y, pose.position.z);
-}
-
-fn xr_pose_to_viewmat(pose: &xr::Posef, tracking_from_world: &glm::TMat4<f32>) -> glm::TMat4<f32> {
-    glm::quat_cast(&glm::quat(pose.orientation.x, pose.orientation.y, pose.orientation.z, -pose.orientation.w)) *
-    glm::translation(&glm::vec3(-pose.position.x, -pose.position.y, -pose.position.z)) *
-    tracking_from_world
-}
-
-fn xr_pose_to_mat4(pose: &xr::Posef, world_from_tracking: &glm::TMat4<f32>) -> glm::TMat4<f32> {
-    world_from_tracking *    
-    glm::translation(&glm::vec3(pose.position.x, pose.position.y, pose.position.z)) *
-    glm::quat_cast(&glm::quat(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w))
-}
-
-fn xr_make_path(instance: &Option<xr::Instance>, path_string: &str) -> Option<xr::Path> {
-    match instance {
-        Some(inst) => {
-            match inst.string_to_path(path_string) {
-                Ok(path) => { Some(path) }
-                Err(e) => {
-                    println!("Error getting XrPath: {}", e);
-                    None
-                }
-            }
-        }
-        None => { None }
-    }    
-}
-
-fn xr_make_action<T: xr::ActionTy>(subaction_path: &Option<xr::Path>, actionset: &Option<xr::ActionSet>, name: &str, localized_name: &str) -> Option<xr::Action<T>> {
-    match (subaction_path, actionset) {
-        (Some(path), Some(actionset)) => {
-            match actionset.create_action::<T>(name, localized_name, &[*path]) {
-                Ok(action) => { Some(action) }
-                Err(e) => {
-                    println!("Error creating XrAction: {}", e);
-                    None
-                }
-            }
-        }
-        _ => { None }
-    }
-}
-
-fn xr_make_actionspace<G: xr::Graphics>(session: &Option<xr::Session<G>>, subaction_path: Option<xr::Path>, pose_action: &Option<xr::Action<xr::Posef>>, reference_pose: xr::Posef) -> Option<xr::Space> {
-    match (session, subaction_path, pose_action) {
-        (Some(session), Some(path), Some(action)) => {
-            match action.create_space(session.clone(), path, reference_pose) {
-                Ok(space) => { Some(space) }
-                Err(e) => {
-                    println!("Couldn't get left hand space: {}", e);
-                    None
-                }
-            }
-        }
-        _ => { None }
-    }
-}
-
-fn xr_locate_space(space: &Option<xr::Space>, tracking_space: &Option<xr::Space>, time: xr::Time) -> Option<xr::Posef> {
-    match (space, &tracking_space) {
-        (Some(space), Some(t_space)) => {
-            match space.locate(t_space, time) {
-                Ok(space_location) => {
-                    Some(space_location.pose)
-                }
-                Err(e) => {
-                    println!("Couldn't locate space: {}", e);
-                    None
-                }
-            }
-        
-        }
-        _ => { None }
-    }
-}
-
-fn xr_make_reference_space<G: xr::Graphics>(session: &Option<xr::Session<G>>, ref_type: xr::ReferenceSpaceType, pose_in_ref_space: xr::Posef) -> Option<xr::Space> {
-    match session {
-        Some(sess) => {
-            match sess.create_reference_space(ref_type, pose_in_ref_space) {
-                Ok(space) => { Some(space) }
-                Err(e) => {
-                    println!("Couldn't create reference space: {}", e);
-                    None
-                }
-            }
-        }
-        None => { None }
+fn xr_entity_pose_update(scene_data: &mut SceneData, entity_index: usize, pose: Option<xr::Posef>, world_from_tracking: &glm::TMat4<f32>) {
+    if let Some(p) = pose {
+        scene_data.single_entities[entity_index].model_matrix = xrutil::pose_to_mat4(&p, world_from_tracking);
     }
 }
 
@@ -204,35 +76,9 @@ fn main() {
         //Create the instance
         let mut instance = None;
 
-        #[cfg(xrdebug)]
-        let mut messenger = DebugUtilsMessengerEXT::NULL;
-
         if let Some(ext_set) = &extension_set {
             match openxr_entry.create_instance(&app_info, ext_set, &[]) {
-                Ok(inst) => {
-                    //Enable the OpenXR debug extension
-                    #[cfg(xrdebug)]
-                    {
-                        match xr::raw::DebugUtilsEXT::load(&openxr_entry, inst.as_raw()) {
-                            Ok(debug_utils) => {
-                                let debug_createinfo = DebugUtilsMessengerCreateInfoEXT {
-                                    ty: xr::sys::StructureType::DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
-                                    next: ptr::null(),
-                                    message_severities: DebugUtilsMessageSeverityFlagsEXT::VERBOSE | DebugUtilsMessageSeverityFlagsEXT::WARNING | DebugUtilsMessageSeverityFlagsEXT::INFO | DebugUtilsMessageSeverityFlagsEXT::ERROR,
-                                    message_types: DebugUtilsMessageTypeFlagsEXT::GENERAL | DebugUtilsMessageTypeFlagsEXT::VALIDATION | DebugUtilsMessageTypeFlagsEXT::PERFORMANCE | DebugUtilsMessageTypeFlagsEXT::CONFORMANCE,
-                                    user_callback: Some(xr_debug_callback),
-                                    user_data: ptr::null_mut()
-                                };
-                                
-                                (debug_utils.create_debug_utils_messenger)(inst.as_raw(), &debug_createinfo as *const _, &mut messenger as *mut _);
-                            }
-                            Err(e) => {
-                                println!("Couldn't load OpenXR debug utils: {}", e);
-                            }
-                        }
-                    }
-                    instance = Some(inst);
-                }
+                Ok(inst) => { instance = Some(inst) }
                 Err(e) => { 
                     println!("Error creating OpenXR instance: {}", e);
                     instance = None;
@@ -296,13 +142,14 @@ fn main() {
     };
 
     //Create the paths to appropriate equipment
-    let left_grip_pose_path = xr_make_path(&xr_instance, LEFT_GRIP_POSE);
-    let right_grip_pose_path = xr_make_path(&xr_instance, RIGHT_GRIP_POSE);
-    let left_stick_vector_path = xr_make_path(&xr_instance, LEFT_STICK_VECTOR2);
+    let left_grip_pose_path = xrutil::make_path(&xr_instance, LEFT_GRIP_POSE);
+    let left_aim_pose_path = xrutil::make_path(&xr_instance, LEFT_GRIP_POSE);
+    let right_grip_pose_path = xrutil::make_path(&xr_instance, RIGHT_GRIP_POSE);
+    let left_stick_vector_path = xrutil::make_path(&xr_instance, LEFT_STICK_VECTOR2);
 
     //Create the hand subaction paths
-    let left_hand_subaction_path = xr_make_path(&xr_instance, xr::USER_HAND_LEFT);
-    let right_hand_subaction_path = xr_make_path(&xr_instance, xr::USER_HAND_RIGHT);
+    let left_hand_subaction_path = xrutil::make_path(&xr_instance, xr::USER_HAND_LEFT);
+    let right_hand_subaction_path = xrutil::make_path(&xr_instance, xr::USER_HAND_RIGHT);
 
     //Create the actionset
     let xr_controller_actionset = match &xr_instance {
@@ -319,16 +166,34 @@ fn main() {
     };
 
     //Create the actions for getting pose data
-    let left_hand_pose_action = xr_make_action(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_pose", "Left hand pose");
-    let right_hand_pose_action = xr_make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_pose", "Right hand pose");
-    let left_hand_stick_action = xr_make_action::<xr::Vector2f>(&right_hand_subaction_path, &xr_controller_actionset, "left_hand_vector", "Left hand vector");
+    let left_hand_pose_action = xrutil::make_action(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_pose", "Left hand pose");
+    let left_hand_aim_action = xrutil::make_action::<xr::Posef>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_aim", "Left hand aim");
+    let right_hand_pose_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_pose", "Right hand pose");
+    let left_hand_stick_action = xrutil::make_action::<xr::Vector2f>(&right_hand_subaction_path, &xr_controller_actionset, "left_hand_vector", "Left hand vector");
 
     //Suggest interaction profile bindings 
-    match (&xr_instance, &left_hand_pose_action, &right_hand_pose_action, &left_hand_stick_action, &left_grip_pose_path, &right_grip_pose_path, &left_stick_vector_path) {
-        (Some(inst), Some(l_action), Some(r_action), Some(l_stick_action), Some(l_path), Some(r_path), Some(l_stick_path)) => {
+    match (&xr_instance,
+           &left_hand_pose_action,
+           &left_hand_aim_action,
+           &right_hand_pose_action,
+           &left_hand_stick_action,
+           &left_grip_pose_path,
+           &left_aim_pose_path,
+           &right_grip_pose_path,
+           &left_stick_vector_path) {
+        (Some(inst),
+         Some(l_grip_action),
+         Some(l_aim_action),
+         Some(r_action),
+         Some(l_stick_action),
+         Some(l_grip_path),
+         Some(l_aim_path),
+         Some(r_path),
+         Some(l_stick_path)) => {
             let profile = inst.string_to_path(DEFAULT_INTERACTION_PROFILE).unwrap();
             let bindings = [
-                xr::Binding::new(l_action, *l_path),
+                xr::Binding::new(l_grip_action, *l_grip_path),
+                xr::Binding::new(l_aim_action, *l_aim_path),
                 xr::Binding::new(r_action, *r_path),
                 xr::Binding::new(l_stick_action, *l_stick_path)
             ];
@@ -463,17 +328,17 @@ fn main() {
         }
     };
 
-    let tracking_space = xr_make_reference_space(&xr_session, xr::ReferenceSpaceType::STAGE, space_pose);           //Create tracking space
-    let view_space = xr_make_reference_space(&xr_session, xr::ReferenceSpaceType::VIEW, xr::Posef::IDENTITY);       //Create view space
+    let tracking_space = xrutil::make_reference_space(&xr_session, xr::ReferenceSpaceType::STAGE, space_pose);           //Create tracking space
+    let view_space = xrutil::make_reference_space(&xr_session, xr::ReferenceSpaceType::VIEW, xr::Posef::IDENTITY);       //Create view space
     
     //Matrices for relating tracking space and world space
     let mut tracking_space_position = glm::zero();
-    let mut tracking_space_velocity = glm::zero();
-    let mut world_from_tracking: glm::TMat4<f32> = glm::identity();
+    let mut world_from_tracking = glm::identity();
     let mut tracking_from_world = glm::affine_inverse(world_from_tracking);
     
-    let left_hand_action_space = xr_make_actionspace(&xr_session, left_hand_subaction_path, &left_hand_pose_action, space_pose); //Create left hand action space
-    let right_hand_action_space = xr_make_actionspace(&xr_session, right_hand_subaction_path, &right_hand_pose_action, space_pose); //Create right hand action space
+    let left_hand_grip_space = xrutil::make_actionspace(&xr_session, left_hand_subaction_path, &left_hand_pose_action, space_pose); //Create left hand grip space
+    let left_hand_aim_space = xrutil::make_actionspace(&xr_session, left_hand_subaction_path, &left_hand_aim_action, space_pose); //Create left hand aim space
+    let right_hand_action_space = xrutil::make_actionspace(&xr_session, right_hand_subaction_path, &right_hand_pose_action, space_pose); //Create right hand action space
 
     //Create swapchains
     let mut xr_swapchains = match (&xr_session, &xr_viewconfiguration_views) {
@@ -624,10 +489,10 @@ fn main() {
 
         let menus = vec![
             ozy::ui::Menu::new(vec![
-                ("Quit", Some(Command::Quit)),
-                ("Graphics options", Some(Command::ToggleMenu(graphics_menu_chain_index, graphics_menu_index)))
-            ], ozy::ui::UIAnchor::LeftAligned((20.0, 20.0)), 24.0),
-            ozy::ui::Menu::new(graphics_menu, ozy::ui::UIAnchor::LeftAligned((20.0, window_size.y as f32 / 2.0)), 24.0)
+                ("Graphics options", Some(Command::ToggleMenu(graphics_menu_chain_index, graphics_menu_index))),
+                ("Quit", Some(Command::Quit))
+            ], ozy::ui::UIAnchor::LeftAlignedRow((20.0, 20.0)), 24.0),
+            ozy::ui::Menu::new(graphics_menu, ozy::ui::UIAnchor::RightAlignedColumn((window_size.x as f32 - 20.0, 60.0)), 24.0)
         ];
 
         state.set_menus(menus);
@@ -642,12 +507,14 @@ fn main() {
 
         SimpleMesh::new(plane_vao, plane_index_count as GLint, "tiles", &mut texture_keeper, &tex_params)        
     };
-    let entity = SingleEntity {
-        mesh: plane_mesh,
-        uv_scale: 10.0,
-        model_matrix: ozy::routines::uniform_scale(200.0)
-    };    
-    scene_data.single_entities.push(entity);
+    let plane_entity_index = scene_data.push_single_entity(plane_mesh);
+    scene_data.single_entities[plane_entity_index].uv_scale = 10.0;
+    scene_data.single_entities[plane_entity_index].model_matrix = ozy::routines::uniform_scale(200.0);
+
+    let mesa_mesh = SimpleMesh::from_ozy("models/cube.ozy", &mut texture_keeper, &tex_params);
+    let mesa_entity_index = scene_data.push_single_entity(mesa_mesh);
+    scene_data.single_entities[mesa_entity_index].uv_scale = 2.0;
+    scene_data.single_entities[mesa_entity_index].model_matrix = glm::translation(&glm::vec3(-20.0, -10.0, 0.0));
 
     //Data for the sphere square
     let sphere_block_scale = 1;
@@ -718,39 +585,38 @@ fn main() {
         }
 
         //Handle movement stick action
-        match (&xr_session, &left_hand_stick_action) {
+        let tracking_space_velocity = match (&xr_session, &left_hand_stick_action) {
             (Some(session), Some(action)) => {
                 match action.state(session, xr::Path::NULL) {
                     Ok(state) => {
                         const MOVEMENT_SPEED: f32 = 5.0;
                         if state.changed_since_last_sync {                            
-                            match xr_locate_space(&left_hand_action_space, &tracking_space, state.last_change_time) {
+                            match xrutil::locate_space(&left_hand_aim_space, &tracking_space, state.last_change_time) {
                                 Some(pose) => {
                                     let hand_space_vec = glm::vec4(state.current_state.x, state.current_state.y, 0.0, 0.0);
 
                                     //Explicit check for zero to avoid divide-by-zero in normalize
                                     if hand_space_vec == glm::zero() {
-                                        tracking_space_velocity = glm::zero();
-                                    } else {                                        
-                                        let untreated = xr_pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec;
-                                        tracking_space_velocity = glm::normalize(&glm::vec3(untreated.x, untreated.y, 0.0)) * MOVEMENT_SPEED;
+                                        glm::zero()
+                                    } else {
+                                        let untreated = xrutil::pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec;
+                                        glm::normalize(&glm::vec3(untreated.x, untreated.y, 0.0)) * MOVEMENT_SPEED
                                     }
                                 }
-                                None => { tracking_space_velocity = glm::zero(); }
+                                None => { glm::zero() }
                             }
                         } else {
-                            tracking_space_velocity = glm::zero();
+                            glm::zero()
                         }
                     }
                     Err(e) => {
                         println!("Error getting stick state: {}", e);
-                        tracking_space_velocity = glm::zero();
+                        glm::zero()
                     }
                 }
             }
-            _ => { tracking_space_velocity = glm::zero(); }
+            _ => { glm::zero() }
         };
-        //println!("Left stick: ({}, {})", xr_move_vector.x, xr_move_vector.y);
 
         //Poll for OpenXR events
         /*
@@ -871,6 +737,13 @@ fn main() {
         tracking_space_position += tracking_space_velocity * delta_time;
         world_from_tracking = glm::translation(&tracking_space_position);
         tracking_from_world = glm::affine_inverse(world_from_tracking);
+        
+        let tracked_user_position = match (&view_space, &tracking_space) {
+            (Some(v_space), Some(t_space)) => {
+                
+            }
+            _ => {}
+        };
 
         //If the user is controlling the camera, force the mouse cursor into the center of the screen
         if mouselook_enabled {
@@ -929,7 +802,7 @@ fn main() {
         }
 
         //Make the light dance around
-        //uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(-0.5 * elapsed_time), 4.0 * f32::sin(-0.5 * elapsed_time), 2.0, 0.0));
+        uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(-0.5 * elapsed_time), 4.0 * f32::sin(-0.5 * elapsed_time), 2.0, 0.0));
         //uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(0.5 * elapsed_time), 0.0, 2.0, 0.0));
         shadow_view = glm::look_at(&glm::vec4_to_vec3(&uniform_light), &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
         scene_data.shadow_matrix = shadow_projection * shadow_view;
@@ -981,17 +854,12 @@ fn main() {
                             let (viewflags, views) = session.locate_views(xr::ViewConfigurationType::PRIMARY_STEREO, wait_info.predicted_display_time, t_space).unwrap();
                             
                             //Fetch the hand poses from the runtime
-                            let left_hand_pose = xr_locate_space(&left_hand_action_space, &tracking_space, wait_info.predicted_display_time);
-                            let right_hand_pose = xr_locate_space(&right_hand_action_space, &tracking_space, wait_info.predicted_display_time);
+                            let left_hand_pose = xrutil::locate_space(&left_hand_grip_space, &tracking_space, wait_info.predicted_display_time);
+                            let right_hand_pose = xrutil::locate_space(&right_hand_action_space, &tracking_space, wait_info.predicted_display_time);
 
                             //Right here is where we want to update the controller object's model matrix
-                            if let Some(pose) = left_hand_pose {
-                                scene_data.single_entities[left_wand_entity_index].model_matrix = xr_pose_to_mat4(&pose, &world_from_tracking);
-                            }
-
-                            if let Some(pose) = right_hand_pose {
-                                scene_data.single_entities[right_wand_entity_index].model_matrix = xr_pose_to_mat4(&pose, &world_from_tracking);
-                            }
+                            xr_entity_pose_update(&mut scene_data, left_wand_entity_index, left_hand_pose, &world_from_tracking);
+                            xr_entity_pose_update(&mut scene_data, right_wand_entity_index, right_hand_pose, &world_from_tracking);
 
                             let mut sc_indices = vec![0; views.len()];
                             for i in 0..views.len() {
@@ -1047,7 +915,7 @@ fn main() {
                                 //We have to translate to right-handed z-up from right-handed y-up
                                 let eye_pose = views[i].pose;
                                 let fov = views[i].fov;
-                                let view_matrix = xr_pose_to_viewmat(&eye_pose, &tracking_from_world);
+                                let view_matrix = xrutil::pose_to_viewmat(&eye_pose, &tracking_from_world);
 
                                 //Use the fov to get the t, b, l, and r values of the perspective matrix
                                 let near_value = NEAR_DISTANCE;
@@ -1077,8 +945,8 @@ fn main() {
 
                             //Draw the companion view if we're showing HMD POV
                             if hmd_pov {
-                                if let Some(pose) = xr_locate_space(&view_space, &tracking_space, wait_info.predicted_display_time) {
-                                    let v_mat = xr_pose_to_viewmat(&pose, &tracking_from_world);
+                                if let Some(pose) = xrutil::locate_space(&view_space, &tracking_space, wait_info.predicted_display_time) {
+                                    let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);
                                     let view_state = ViewData {
                                         view_position: glm::vec4(-v_mat[12], -v_mat[13], -v_mat[14], 1.0),
                                         view_projection: screen_state.get_clipping_from_view() * v_mat
