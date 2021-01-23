@@ -10,8 +10,9 @@ pub fn pose_to_viewmat(pose: &xr::Posef, tracking_from_world: &glm::TMat4<f32>) 
     tracking_from_world
 }
 
+//Creates a 4x4 homogenous matrix in world space from a pose expressed in tracking space
 pub fn pose_to_mat4(pose: &xr::Posef, world_from_tracking: &glm::TMat4<f32>) -> glm::TMat4<f32> {
-    world_from_tracking *    
+    world_from_tracking *
     glm::translation(&glm::vec3(pose.position.x, pose.position.y, pose.position.z)) *
     glm::quat_cast(&glm::quat(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w))
 }
@@ -38,6 +39,21 @@ pub fn make_action<T: xr::ActionTy>(subaction_path: &Option<xr::Path>, actionset
                 Ok(action) => { Some(action) }
                 Err(e) => {
                     println!("Error creating XrAction: {}", e);
+                    None
+                }
+            }
+        }
+        _ => { None }
+    }
+}
+
+pub fn get_actionstate<G: xr::Graphics, T: xr::ActionInput>(xr_session: &Option<xr::Session<G>>, xr_action: &Option<xr::Action<T>>) -> Option<xr::ActionState<T>> {
+    match (xr_session, xr_action) {
+        (Some(session), Some(action)) => {
+            match action.state(session, xr::Path::NULL) {
+                Ok(state) => { Some(state) }
+                Err(e) => {
+                    println!("{}", e);
                     None
                 }
             }

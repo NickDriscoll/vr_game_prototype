@@ -26,10 +26,12 @@ use winapi::um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext};
 
 const FONT_BYTES: &'static [u8; 212276] = include_bytes!("../fonts/Constantia.ttf");
 
-//XR interaction related paths
+//XR interaction paths
 const DEFAULT_INTERACTION_PROFILE: &str =           "/interaction_profiles/valve/index_controller";
 const LEFT_GRIP_POSE: &str =                        "/user/hand/left/input/grip/pose";
-const LEFT_AIM_POSE: &str =                        "/user/hand/left/input/aim/pose";
+const LEFT_AIM_POSE: &str =                         "/user/hand/left/input/aim/pose";
+const LEFT_TRIGGER_FLOAT: &str =                    "/user/hand/left/input/trigger/value";
+const RIGHT_TRIGGER_FLOAT: &str =                   "/user/hand/right/input/trigger/value";
 const RIGHT_GRIP_POSE: &str =                       "/user/hand/right/input/grip/pose";
 const LEFT_STICK_VECTOR2: &str =                    "/user/hand/left/input/thumbstick";
 
@@ -143,7 +145,9 @@ fn main() {
 
     //Create the paths to appropriate equipment
     let left_grip_pose_path = xrutil::make_path(&xr_instance, LEFT_GRIP_POSE);
-    let left_aim_pose_path = xrutil::make_path(&xr_instance, LEFT_GRIP_POSE);
+    let left_aim_pose_path = xrutil::make_path(&xr_instance, LEFT_AIM_POSE);
+    let left_trigger_float_path = xrutil::make_path(&xr_instance, LEFT_TRIGGER_FLOAT);
+    let right_trigger_float_path = xrutil::make_path(&xr_instance, RIGHT_TRIGGER_FLOAT);
     let right_grip_pose_path = xrutil::make_path(&xr_instance, RIGHT_GRIP_POSE);
     let left_stick_vector_path = xrutil::make_path(&xr_instance, LEFT_STICK_VECTOR2);
 
@@ -168,6 +172,8 @@ fn main() {
     //Create the actions for getting pose data
     let left_hand_pose_action = xrutil::make_action(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_pose", "Left hand pose");
     let left_hand_aim_action = xrutil::make_action::<xr::Posef>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_aim", "Left hand aim");
+    let left_trigger_action = xrutil::make_action::<f32>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_trigger", "Left hand trigger");
+    let right_trigger_action = xrutil::make_action::<f32>(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_trigger", "Right hand trigger");
     let right_hand_pose_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_pose", "Right hand pose");
     let left_hand_stick_action = xrutil::make_action::<xr::Vector2f>(&right_hand_subaction_path, &xr_controller_actionset, "left_hand_vector", "Left hand vector");
 
@@ -175,25 +181,35 @@ fn main() {
     match (&xr_instance,
            &left_hand_pose_action,
            &left_hand_aim_action,
+           &left_trigger_action,
+           &right_trigger_action,
            &right_hand_pose_action,
            &left_hand_stick_action,
            &left_grip_pose_path,
            &left_aim_pose_path,
+           &left_trigger_float_path,
+           &right_trigger_float_path,
            &right_grip_pose_path,
            &left_stick_vector_path) {
         (Some(inst),
          Some(l_grip_action),
          Some(l_aim_action),
+         Some(l_trigger_action),
+         Some(r_trigger_action),
          Some(r_action),
          Some(l_stick_action),
          Some(l_grip_path),
          Some(l_aim_path),
+         Some(l_trigger_path),
+         Some(r_trigger_path),
          Some(r_path),
          Some(l_stick_path)) => {
             let profile = inst.string_to_path(DEFAULT_INTERACTION_PROFILE).unwrap();
             let bindings = [
                 xr::Binding::new(l_grip_action, *l_grip_path),
                 xr::Binding::new(l_aim_action, *l_aim_path),
+                xr::Binding::new(l_trigger_action, *l_trigger_path),
+                xr::Binding::new(r_trigger_action, *r_trigger_path),
                 xr::Binding::new(r_action, *r_path),
                 xr::Binding::new(l_stick_action, *l_stick_path)
             ];
@@ -557,11 +573,12 @@ fn main() {
     }
 
     let mut wireframe = false;
-    let mut hmd_pov = false;
+    let mut hmd_pov = true;
 
     //Main loop
     let mut frame_count = 0;
     let mut last_frame_instant = Instant::now();
+    let mut last_xr_render_time = xr::Time::from_nanos(0);
     let mut elapsed_time = 0.0;
     let mut command_buffer = Vec::new();
     while !window.should_close() {
@@ -584,38 +601,49 @@ fn main() {
             }
         }
 
-        //Handle movement stick action
-        let tracking_space_velocity = match (&xr_session, &left_hand_stick_action) {
-            (Some(session), Some(action)) => {
-                match action.state(session, xr::Path::NULL) {
-                    Ok(state) => {
-                        const MOVEMENT_SPEED: f32 = 5.0;
-                        if state.changed_since_last_sync {                            
-                            match xrutil::locate_space(&left_hand_aim_space, &tracking_space, state.last_change_time) {
-                                Some(pose) => {
-                                    let hand_space_vec = glm::vec4(state.current_state.x, state.current_state.y, 0.0, 0.0);
+        //Get action states
+        let left_stick_state = xrutil::get_actionstate(&xr_session, &left_hand_stick_action);
+        let left_trigger_state = xrutil::get_actionstate(&xr_session, &left_trigger_action);
+        let right_trigger_state = xrutil::get_actionstate(&xr_session, &right_trigger_action);
 
-                                    //Explicit check for zero to avoid divide-by-zero in normalize
-                                    if hand_space_vec == glm::zero() {
-                                        glm::zero()
-                                    } else {
-                                        let untreated = xrutil::pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec;
-                                        glm::normalize(&glm::vec3(untreated.x, untreated.y, 0.0)) * MOVEMENT_SPEED
-                                    }
+        let tracking_space_velocity = {
+            const MOVEMENT_SPEED: f32 = 5.0;
+            let mut velocity = match &left_stick_state {
+                Some(stick_state) => {
+                    if stick_state.changed_since_last_sync {                            
+                        match xrutil::locate_space(&left_hand_aim_space, &tracking_space, stick_state.last_change_time) {
+                            Some(pose) => {
+                                let hand_space_vec = glm::vec4(stick_state.current_state.x, stick_state.current_state.y, 0.0, 0.0);
+                                let magnitude = glm::length(&hand_space_vec);
+                                //Explicit check for zero to avoid divide-by-zero in normalize
+                                if hand_space_vec == glm::zero() {
+                                    glm::zero()
+                                } else {
+                                    //World space untreated vector
+                                    let untreated = xrutil::pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec;
+                                    glm::normalize(&glm::vec3(untreated.x, untreated.y, 0.0)) * MOVEMENT_SPEED * magnitude
                                 }
-                                None => { glm::zero() }
                             }
-                        } else {
-                            glm::zero()
+                            None => { glm::zero() }
                         }
-                    }
-                    Err(e) => {
-                        println!("Error getting stick state: {}", e);
+                    } else {
                         glm::zero()
                     }
                 }
+                _ => { glm::zero() }
+            };
+
+            if let Some(state) = &left_trigger_state {
+                let down_force = MOVEMENT_SPEED * state.current_state;
+                velocity += glm::vec3(0.0, 0.0, -down_force);
             }
-            _ => { glm::zero() }
+
+            if let Some(state) = &right_trigger_state {
+                let up_force = MOVEMENT_SPEED * state.current_state;
+                velocity += glm::vec3(0.0, 0.0, up_force);
+            }
+
+            velocity
         };
 
         //Poll for OpenXR events
@@ -737,12 +765,14 @@ fn main() {
         tracking_space_position += tracking_space_velocity * delta_time;
         world_from_tracking = glm::translation(&tracking_space_position);
         tracking_from_world = glm::affine_inverse(world_from_tracking);
-        
-        let tracked_user_position = match (&view_space, &tracking_space) {
-            (Some(v_space), Some(t_space)) => {
-                
-            }
-            _ => {}
+
+        //The user is considered to be always standing on the ground in tracking space
+        let tracked_user_position = {
+            let tracking_space_position = match xrutil::locate_space(&view_space, &tracking_space, last_xr_render_time) {
+                Some(pose) => { glm::vec4(pose.position.x, pose.position.y, 0.0, 1.0) }
+                None => { glm::zero() }
+            };
+            world_from_tracking * tracking_space_position
         };
 
         //If the user is controlling the camera, force the mouse cursor into the center of the screen
@@ -802,7 +832,7 @@ fn main() {
         }
 
         //Make the light dance around
-        uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(-0.5 * elapsed_time), 4.0 * f32::sin(-0.5 * elapsed_time), 2.0, 0.0));
+        //uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(-0.5 * elapsed_time), 4.0 * f32::sin(-0.5 * elapsed_time), 2.0, 0.0));
         //uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(0.5 * elapsed_time), 0.0, 2.0, 0.0));
         shadow_view = glm::look_at(&glm::vec4_to_vec3(&uniform_light), &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
         scene_data.shadow_matrix = shadow_projection * shadow_view;
@@ -850,6 +880,7 @@ fn main() {
                     let swapchain_size = glm::vec2(sc_size.x as GLint, sc_size.y as GLint);
                     match framewaiter.wait() {
                         Ok(wait_info) => {
+                            last_xr_render_time = wait_info.predicted_display_time;
                             framestream.begin().unwrap();
                             let (viewflags, views) = session.locate_views(xr::ViewConfigurationType::PRIMARY_STEREO, wait_info.predicted_display_time, t_space).unwrap();
                             
