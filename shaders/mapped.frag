@@ -16,7 +16,7 @@ uniform sampler2D roughness_map;
 //Shadow map
 uniform sampler2D shadow_map;
 
-uniform vec4 sun_direction;
+uniform vec4 sun_direction; //TODO(Nick): Change to tangent space
 uniform vec4 view_position;
 uniform float uv_scale = 1.0;
 
@@ -27,14 +27,13 @@ uniform bool outlining = false;
 const float AMBIENT = 0.1;
 
 void main() {
-    //Affine texture mapping
-    //vec2 scaled_uvs = f_uvs / f_view_depth;
     vec2 scaled_uvs = f_uvs * uv_scale;
 
     //vec2 scaled_uvs = f_uvs * uv_scale;
     vec3 albedo = texture(albedo_map, scaled_uvs).xyz;
     float roughness = texture(roughness_map, scaled_uvs).x;
 
+    //TODO(Nick): Can compute this in vertex shader
     vec4 view_direction = normalize(view_position - world_space_pos);
     vec3 world_space_geometry_normal = tangent_matrix[2];
 
@@ -42,12 +41,15 @@ void main() {
     if (complex_normals) {
         vec3 sampled_normal = texture(normal_map, scaled_uvs).xyz;
         vec3 tangent_normal = sampled_normal * 2.0 - 1.0;
+
+        //TODO(Nick): Move this matrix multiply into the vertex shader
+        //by doing lighting calculations in tangent space instead of world space
         world_space_normal = normalize(tangent_matrix * tangent_normal);
     } else {
         world_space_normal = normalize(tangent_matrix[2]);
     }
 
-    //Determine if the fragment is shadowed
+    //Determine how shadowed the fragment is
     float shadow = 0.0; 
     vec4 adj_shadow_space_pos = shadow_space_pos * 0.5 + 0.5;
     vec2 texel_size = 1.0 / textureSize(shadow_map, 0);

@@ -35,9 +35,31 @@ const RIGHT_TRIGGER_FLOAT: &str =                   "/user/hand/right/input/trig
 const RIGHT_GRIP_POSE: &str =                       "/user/hand/right/input/grip/pose";
 const LEFT_STICK_VECTOR2: &str =                    "/user/hand/left/input/thumbstick";
 
+#[derive(PartialEq, Eq)]
+enum MoveState {
+    Walking,
+    Falling
+}
+
 fn xr_entity_pose_update(scene_data: &mut SceneData, entity_index: usize, pose: Option<xr::Posef>, world_from_tracking: &glm::TMat4<f32>) {
     if let Some(p) = pose {
         scene_data.single_entities[entity_index].model_matrix = xrutil::pose_to_mat4(&p, world_from_tracking);
+    }
+}
+
+fn segment_intersect_plane(plane_point: &glm::TVec4<f32>, plane_normal: &glm::TVec4<f32>, point0: &glm::TVec4<f32>, point1: &glm::TVec4<f32>) -> Option<glm::TVec4<f32>> {
+    let denominator = glm::dot(plane_normal, &(point1 - point0));
+
+    //Check for divide-by-zero
+    if denominator != 0.0 {
+        let x = glm::dot(plane_normal, &(plane_point - point1)) / denominator;
+        if x > 0.0 && x <= 1.0 {
+            Some((1.0 - x) * point1 + x * point0)
+        } else {
+            None
+        }        
+    } else {
+        None
     }
 }
 
@@ -238,7 +260,7 @@ fn main() {
 	glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
 
     //Create the window
-    let window_size = glm::vec2(1920, 1080);
+    let window_size = glm::vec2(1280, 1024);
 
     let aspect_ratio = window_size.x as f32 / window_size.y as f32;
     let (mut window, events) = match glfw.create_window(window_size.x, window_size.y, "OpenXR yay", glfw::WindowMode::Windowed) {
@@ -347,11 +369,6 @@ fn main() {
     let tracking_space = xrutil::make_reference_space(&xr_session, xr::ReferenceSpaceType::STAGE, space_pose);           //Create tracking space
     let view_space = xrutil::make_reference_space(&xr_session, xr::ReferenceSpaceType::VIEW, xr::Posef::IDENTITY);       //Create view space
     
-    //Matrices for relating tracking space and world space
-    let mut tracking_space_position = glm::zero();
-    let mut world_from_tracking = glm::identity();
-    let mut tracking_from_world = glm::affine_inverse(world_from_tracking);
-    
     let left_hand_grip_space = xrutil::make_actionspace(&xr_session, left_hand_subaction_path, &left_hand_pose_action, space_pose); //Create left hand grip space
     let left_hand_aim_space = xrutil::make_actionspace(&xr_session, left_hand_subaction_path, &left_hand_aim_action, space_pose); //Create left hand aim space
     let right_hand_action_space = xrutil::make_actionspace(&xr_session, right_hand_subaction_path, &right_hand_pose_action, space_pose); //Create right hand action space
@@ -450,6 +467,9 @@ fn main() {
     //Uniform light source
     let mut uniform_light = glm::normalize(&glm::vec4(-1.5, -3.0, 3.0, 0.0));
 
+    //Acceleration due to gravity
+    let acceleration_gravity = 20.0;
+
     //Initialize shadow data
     let mut shadow_view;
     let shadow_proj_size = 30.0;
@@ -516,6 +536,10 @@ fn main() {
         state
     };
 
+    //Initialize floor plane
+    let floor_plane_point = glm::vec4(0.0, 0.0, 0.0, 1.0);
+    let floor_plane_normal = glm::vec4(0.0, 0.0, 1.0, 0.0);
+    let floor_plane_scale = 100.0;
     let plane_mesh = {
         let plane_vertex_width = 2;
         let plane_index_count = (plane_vertex_width - 1) * (plane_vertex_width - 1) * 6;
@@ -525,7 +549,7 @@ fn main() {
     };
     let plane_entity_index = scene_data.push_single_entity(plane_mesh);
     scene_data.single_entities[plane_entity_index].uv_scale = 10.0;
-    scene_data.single_entities[plane_entity_index].model_matrix = ozy::routines::uniform_scale(200.0);
+    scene_data.single_entities[plane_entity_index].model_matrix = ozy::routines::uniform_scale(floor_plane_scale);
 
     let mesa_mesh = SimpleMesh::from_ozy("models/cube.ozy", &mut texture_keeper, &tex_params);
     let mesa_entity_index = scene_data.push_single_entity(mesa_mesh);
@@ -573,7 +597,20 @@ fn main() {
     }
 
     let mut wireframe = false;
-    let mut hmd_pov = true;
+    let mut hmd_pov = false;
+    if let Some(_) = &xr_instance {
+        hmd_pov = true;
+    }
+
+    //Player state
+    let mut player_movement_state = MoveState::Walking;
+    let mut last_tracked_user_position = glm::vec4(0.0, 0.0, 0.0, 1.0);
+    
+    //Matrices for relating tracking space and world space
+    let mut tracking_space_position = glm::vec3(0.0, 0.0, 0.0);
+    let mut tracking_space_velocity = glm::vec3(0.0, 0.0, 0.0);
+    let mut world_from_tracking = glm::identity();
+    let mut tracking_from_world = glm::affine_inverse(world_from_tracking);
 
     //Main loop
     let mut frame_count = 0;
@@ -606,8 +643,9 @@ fn main() {
         let left_trigger_state = xrutil::get_actionstate(&xr_session, &left_trigger_action);
         let right_trigger_state = xrutil::get_actionstate(&xr_session, &right_trigger_action);
 
-        let tracking_space_velocity = {
+        tracking_space_velocity = {
             const MOVEMENT_SPEED: f32 = 5.0;
+            const DEADZONE_MAGNITUDE: f32 = 0.1;
             let mut velocity = match &left_stick_state {
                 Some(stick_state) => {
                     if stick_state.changed_since_last_sync {                            
@@ -615,32 +653,32 @@ fn main() {
                             Some(pose) => {
                                 let hand_space_vec = glm::vec4(stick_state.current_state.x, stick_state.current_state.y, 0.0, 0.0);
                                 let magnitude = glm::length(&hand_space_vec);
-                                //Explicit check for zero to avoid divide-by-zero in normalize
-                                if hand_space_vec == glm::zero() {
-                                    glm::zero()
+                                if magnitude < DEADZONE_MAGNITUDE {
+                                    glm::vec3(0.0, 0.0, tracking_space_velocity.z)
                                 } else {
-                                    //World space untreated vector
-                                    let untreated = xrutil::pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec;
-                                    glm::normalize(&glm::vec3(untreated.x, untreated.y, 0.0)) * MOVEMENT_SPEED * magnitude
+                                    //Explicit check for zero to avoid divide-by-zero in normalize
+                                    if hand_space_vec == glm::zero() {
+                                        tracking_space_velocity
+                                    } else {
+                                        //World space untreated vector
+                                        let untreated = xrutil::pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec;
+                                        let ugh = glm::normalize(&glm::vec3(untreated.x, untreated.y, 0.0)) * MOVEMENT_SPEED * magnitude;
+                                        glm::vec3(ugh.x, ugh.y, tracking_space_velocity.z)
+                                    }
                                 }
                             }
-                            None => { glm::zero() }
+                            None => { tracking_space_velocity }
                         }
-                    } else {
-                        glm::zero()
-                    }
+                    } else { tracking_space_velocity }
                 }
-                _ => { glm::zero() }
+                _ => { tracking_space_velocity }
             };
 
             if let Some(state) = &left_trigger_state {
-                let down_force = MOVEMENT_SPEED * state.current_state;
-                velocity += glm::vec3(0.0, 0.0, -down_force);
-            }
-
-            if let Some(state) = &right_trigger_state {
-                let up_force = MOVEMENT_SPEED * state.current_state;
-                velocity += glm::vec3(0.0, 0.0, up_force);
+                if state.current_state == 1.0 && player_movement_state != MoveState::Falling {
+                    velocity += glm::vec3(0.0, 0.0, 10.0);
+                    player_movement_state = MoveState::Falling;
+                }
             }
 
             velocity
@@ -761,19 +799,14 @@ fn main() {
             }
         }
 
+        //Gravity the player if they're falling
+        if let MoveState::Falling = player_movement_state {
+            tracking_space_velocity.z -= acceleration_gravity * delta_time;
+        }
+
         //Update tracking space location
         tracking_space_position += tracking_space_velocity * delta_time;
         world_from_tracking = glm::translation(&tracking_space_position);
-        tracking_from_world = glm::affine_inverse(world_from_tracking);
-
-        //The user is considered to be always standing on the ground in tracking space
-        let tracked_user_position = {
-            let tracking_space_position = match xrutil::locate_space(&view_space, &tracking_space, last_xr_render_time) {
-                Some(pose) => { glm::vec4(pose.position.x, pose.position.y, 0.0, 1.0) }
-                None => { glm::zero() }
-            };
-            world_from_tracking * tracking_space_position
-        };
 
         //If the user is controlling the camera, force the mouse cursor into the center of the screen
         if mouselook_enabled {
@@ -831,19 +864,69 @@ fn main() {
             camera_position.z = camera_hit_sphere_radius;
         }
 
+        //The user is considered to be always standing on the ground in tracking space
+        let tracked_user_position = {
+            match xrutil::locate_space(&view_space, &tracking_space, last_xr_render_time) {
+                Some(pose) => { world_from_tracking * glm::vec4(pose.position.x, pose.position.y, 0.0, 1.0) }
+                None => { glm::zero() }
+            }
+        };
+
+        //Checking if the user has collided with the floor plane
+        match player_movement_state {
+            MoveState::Falling => {
+                let collision_point = segment_intersect_plane(&floor_plane_point, &floor_plane_normal, &last_tracked_user_position, &tracked_user_position);
+                if let Some(point) = collision_point {
+                    let in_the_plane = point.x > -floor_plane_scale &&
+                                       point.x < floor_plane_scale &&
+                                       point.y > -floor_plane_scale && 
+                                       point.y < floor_plane_scale;
+
+                    if in_the_plane {
+                        println!("Landed on the ground.");
+                        tracking_space_velocity.z = 0.0;
+                        tracking_space_position += glm::vec4_to_vec3(&(point - tracked_user_position));
+                        player_movement_state = MoveState::Walking;
+                    }
+                }
+            }
+            MoveState::Walking => {
+                let down_point = tracked_user_position - glm::vec4(0.0, 0.0, 0.2, 1.0);
+                let collision_point = segment_intersect_plane(&floor_plane_point, &floor_plane_normal, &tracked_user_position, &down_point);
+                if let Some(point) = collision_point {
+                    let in_the_plane = point.x > -floor_plane_scale &&
+                                       point.x < floor_plane_scale &&
+                                       point.y > -floor_plane_scale && 
+                                       point.y < floor_plane_scale;
+
+                    if !in_the_plane {
+                        println!("Fell off a ledge");
+                        player_movement_state = MoveState::Falling;
+                    }
+                }
+            }
+        }
+
+        //After all collision processing has been completed, update the tracking space matrices once more
+        world_from_tracking = glm::translation(&tracking_space_position);
+        tracking_from_world = glm::affine_inverse(world_from_tracking);
+
         //Make the light dance around
         //uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(-0.5 * elapsed_time), 4.0 * f32::sin(-0.5 * elapsed_time), 2.0, 0.0));
         //uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(0.5 * elapsed_time), 0.0, 2.0, 0.0));
         shadow_view = glm::look_at(&glm::vec4_to_vec3(&uniform_light), &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
         scene_data.shadow_matrix = shadow_projection * shadow_view;
 
+        last_tracked_user_position = tracked_user_position;
         //Pre-render phase
 
         //Create a view matrix from the camera state
-        let new_view_matrix = glm::rotation(camera_orientation.y, &glm::vec3(1.0, 0.0, 0.0)) *
-                      glm::rotation(camera_orientation.x, &glm::vec3(0.0, 0.0, 1.0)) *
-                      glm::translation(&(-camera_position));
-        screen_state.update_view(new_view_matrix);
+        {
+            let new_view_matrix = glm::rotation(camera_orientation.y, &glm::vec3(1.0, 0.0, 0.0)) *
+                        glm::rotation(camera_orientation.x, &glm::vec3(0.0, 0.0, 1.0)) *
+                        glm::translation(&(-camera_position));
+            screen_state.update_view(new_view_matrix);
+        }
 
         //Synchronize ui_state before rendering
         ui_state.synchronize();
@@ -964,7 +1047,7 @@ fn main() {
 
                                 //Actually rendering
                                 let view_data = ViewData {
-                                    view_position: glm::vec4(eye_pose.position.x, eye_pose.position.y, eye_pose.position.z, 1.0),
+                                    view_position: glm::vec4(view_matrix[12], view_matrix[13], view_matrix[14], 1.0),
                                     view_projection: perspective * view_matrix
                                 };
                                 gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);

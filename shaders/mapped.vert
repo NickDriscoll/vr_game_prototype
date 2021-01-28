@@ -28,12 +28,8 @@ void main() {
 
     world_space_pos = model_matrix * vec4(position, 1.0);
     shadow_space_pos = shadow_matrix * world_space_pos;
-
-    gl_Position = view_projection * model_matrix * vec4(position, 1.0);
-
+    
     f_uvs = uv;
-    //Setup affine texture mapping
-    //vec2 touched_uvs = uv * gl_Position.z;
-    //f_uvs = touched_uvs;
-    //f_view_depth = gl_Position.z;
+    
+    gl_Position = view_projection * model_matrix * vec4(position, 1.0);
 }
