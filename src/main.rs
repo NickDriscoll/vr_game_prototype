@@ -3,6 +3,7 @@ extern crate nalgebra_glm as glm;
 extern crate openxr as xr;
 extern crate ozy_engine as ozy;
 
+mod collision;
 mod structs;
 mod render;
 mod xrutil;
@@ -19,7 +20,10 @@ use std::time::Instant;
 use rand::random;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use ozy::{glutil};
+use ozy::routines::uniform_scale;
 use ozy::render::{Framebuffer, InstancedMesh, RenderTarget, ScreenState, SimpleMesh, TextureKeeper};
+use ozy::structs::OptionVec;
+use crate::collision::{AABB, Plane};
 
 #[cfg(windows)]
 use winapi::um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext};
@@ -47,14 +51,15 @@ fn xr_entity_pose_update(scene_data: &mut SceneData, entity_index: usize, pose: 
     }
 }
 
-fn segment_intersect_plane(plane_point: &glm::TVec4<f32>, plane_normal: &glm::TVec4<f32>, point0: &glm::TVec4<f32>, point1: &glm::TVec4<f32>) -> Option<glm::TVec4<f32>> {
-    let denominator = glm::dot(plane_normal, &(point1 - point0));
+fn segment_intersect_plane(plane: &Plane, point0: &glm::TVec4<f32>, point1: &glm::TVec4<f32>) -> Option<glm::TVec4<f32>> {
+    let denominator = glm::dot(&plane.normal, &(point1 - point0));
 
     //Check for divide-by-zero
     if denominator != 0.0 {
-        let x = glm::dot(plane_normal, &(plane_point - point1)) / denominator;
+        let x = glm::dot(&plane.normal, &(plane.point - point0)) / denominator;
         if x > 0.0 && x <= 1.0 {
-            Some((1.0 - x) * point1 + x * point0)
+            let result = (1.0 - x) * point0 + x * point1;
+            Some(glm::vec4(result.x, result.y, result.z, 1.0))
         } else {
             None
         }        
@@ -468,7 +473,7 @@ fn main() {
     let mut uniform_light = glm::normalize(&glm::vec4(-1.5, -3.0, 3.0, 0.0));
 
     //Acceleration due to gravity
-    let acceleration_gravity = 20.0;
+    let acceleration_gravity = 20.0;        //20.0 m/s
 
     //Initialize shadow data
     let mut shadow_view;
@@ -520,7 +525,7 @@ fn main() {
 
         //Only display the HMD perspective button if OpenXR was initialized
         if let Some(_) = xr_session {
-            graphics_menu.push(("HMD perspective", Some(Command::ToggleHMDPov)))
+            graphics_menu.push(("Toggle HMD perspective", Some(Command::ToggleHMDPov)))
         }
 
         let menus = vec![
@@ -537,8 +542,7 @@ fn main() {
     };
 
     //Initialize floor plane
-    let floor_plane_point = glm::vec4(0.0, 0.0, 0.0, 1.0);
-    let floor_plane_normal = glm::vec4(0.0, 0.0, 1.0, 0.0);
+    let floor_plane = Plane::new(glm::vec4(0.0, 0.0, 0.0, 1.0), glm::vec4(0.0, 0.0, 1.0, 0.0));
     let floor_plane_scale = 100.0;
     let plane_mesh = {
         let plane_vertex_width = 2;
@@ -551,10 +555,19 @@ fn main() {
     scene_data.single_entities[plane_entity_index].uv_scale = 10.0;
     scene_data.single_entities[plane_entity_index].model_matrix = ozy::routines::uniform_scale(floor_plane_scale);
 
+    //Create cube
+    let mesa_position = glm::vec3(-20.0, -10.0, 0.0);
+    let mesa_scale = 0.75;
+    let mesa_aabb = AABB {
+        position: glm::vec4(mesa_position.x, mesa_position.y, mesa_position.z, 1.0),
+        width: mesa_scale,
+        depth: mesa_scale,
+        height: mesa_scale * 2.0
+    };
     let mesa_mesh = SimpleMesh::from_ozy("models/cube.ozy", &mut texture_keeper, &tex_params);
     let mesa_entity_index = scene_data.push_single_entity(mesa_mesh);
     scene_data.single_entities[mesa_entity_index].uv_scale = 2.0;
-    scene_data.single_entities[mesa_entity_index].model_matrix = glm::translation(&glm::vec3(-20.0, -10.0, 0.0));
+    scene_data.single_entities[mesa_entity_index].model_matrix = glm::translation(&mesa_position) * uniform_scale(mesa_scale);
 
     //Data for the sphere square
     let sphere_block_scale = 1;
@@ -603,6 +616,7 @@ fn main() {
     }
 
     //Player state
+    let mut last_left_trigger = false;
     let mut player_movement_state = MoveState::Walking;
     let mut last_tracked_user_position = glm::vec4(0.0, 0.0, 0.0, 1.0);
     
@@ -873,36 +887,95 @@ fn main() {
         };
 
         //Checking if the user has collided with the floor plane
+        let up_point = tracked_user_position + glm::vec4(0.0, 0.0, 0.5, 1.0);
+        let down_point = tracked_user_position - glm::vec4(0.0, 0.0, 0.5, 1.0);
         match player_movement_state {
             MoveState::Falling => {
-                let collision_point = segment_intersect_plane(&floor_plane_point, &floor_plane_normal, &last_tracked_user_position, &tracked_user_position);
-                if let Some(point) = collision_point {
-                    let in_the_plane = point.x > -floor_plane_scale &&
-                                       point.x < floor_plane_scale &&
-                                       point.y > -floor_plane_scale && 
-                                       point.y < floor_plane_scale;
+                let mut standing_on = None;
 
-                    if in_the_plane {
-                        println!("Landed on the ground.");
-                        tracking_space_velocity.z = 0.0;
-                        tracking_space_position += glm::vec4_to_vec3(&(point - tracked_user_position));
-                        player_movement_state = MoveState::Walking;
+                if let None = standing_on {
+                    let collision_point = segment_intersect_plane(&floor_plane, &last_tracked_user_position, &tracked_user_position);
+                    if let Some(point) = collision_point {
+                        let on_plane = point.x > -floor_plane_scale &&
+                                        point.x < floor_plane_scale &&
+                                        point.y > -floor_plane_scale && 
+                                        point.y < floor_plane_scale;
+
+                        
+                        if on_plane {
+                            standing_on = Some(point);
+                        }
                     }
+                }
+
+                //Check for AABB collision
+                if let None = standing_on {
+                    let mut pos = mesa_aabb.position;
+                    pos.z += mesa_aabb.height;
+                    let plane = Plane::new(pos, glm::vec4(0.0, 0.0, 1.0, 0.0));
+                    let collision_point = segment_intersect_plane(&plane, &last_tracked_user_position, &tracked_user_position);
+                    if let Some(point) = collision_point {
+                        let on_aabb = point.x > -mesa_aabb.width + mesa_aabb.position.x &&
+                                       point.x < mesa_aabb.width + mesa_aabb.position.x &&
+                                       point.y > -mesa_aabb.depth + mesa_aabb.position.y &&
+                                       point.y < mesa_aabb.depth + mesa_aabb.position.y;
+
+                        if on_aabb {
+                            standing_on = Some(point);
+                        }
+                    }
+                }
+
+                if let Some(point) = standing_on {
+                    tracking_space_velocity.z = 0.0;
+                    tracking_space_position += glm::vec4_to_vec3(&(point - tracked_user_position));
+                    player_movement_state = MoveState::Walking;
                 }
             }
             MoveState::Walking => {
-                let down_point = tracked_user_position - glm::vec4(0.0, 0.0, 0.2, 1.0);
-                let collision_point = segment_intersect_plane(&floor_plane_point, &floor_plane_normal, &tracked_user_position, &down_point);
-                if let Some(point) = collision_point {
-                    let in_the_plane = point.x > -floor_plane_scale &&
-                                       point.x < floor_plane_scale &&
-                                       point.y > -floor_plane_scale && 
-                                       point.y < floor_plane_scale;
+                let mut standing_on = None;
 
-                    if !in_the_plane {
-                        println!("Fell off a ledge");
-                        player_movement_state = MoveState::Falling;
+                if let None = standing_on {
+                    let collision_point = segment_intersect_plane(&floor_plane, &up_point, &down_point);
+                    if let Some(point) = collision_point {
+                        let on_plane = point.x > -floor_plane_scale &&
+                                        point.x < floor_plane_scale &&
+                                        point.y > -floor_plane_scale &&
+                                        point.y < floor_plane_scale;
+
+                        //Adjust tracking space based on where the player should be standing
+                        tracking_space_position += glm::vec4_to_vec3(&(point - tracked_user_position));
+                        if on_plane {
+                            standing_on = Some(point);
+                        }
                     }
+                }
+
+                //Check the AABB if we aren't standing on the ground
+                if let None = standing_on {
+                    let mut pos = mesa_aabb.position;
+                    pos.z += mesa_aabb.height;
+                    let plane = Plane::new(pos, glm::vec4(0.0, 0.0, 1.0, 0.0));
+                    let collision_point = segment_intersect_plane(&plane, &up_point, &down_point);
+                    if let Some(point) = collision_point {
+                        let on_plane = point.x > -mesa_aabb.width + mesa_aabb.position.x &&
+                                       point.x < mesa_aabb.width + mesa_aabb.position.x &&
+                                       point.y > -mesa_aabb.depth + mesa_aabb.position.y &&
+                                       point.y < mesa_aabb.depth + mesa_aabb.position.y;
+
+                        //Adjust tracking space based on where the player should be standing
+                        tracking_space_position += glm::vec4_to_vec3(&(point - tracked_user_position));
+                        if on_plane {
+                            standing_on = Some(point);
+                        }
+                    }
+                }
+
+                if let Some(point) = standing_on {
+                    tracking_space_velocity.z = 0.0;
+                    tracking_space_position += glm::vec4_to_vec3(&(point - tracked_user_position));
+                } else {
+                    player_movement_state = MoveState::Falling;
                 }
             }
         }
