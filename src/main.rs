@@ -23,7 +23,7 @@ use ozy::{glutil};
 use ozy::routines::uniform_scale;
 use ozy::render::{Framebuffer, InstancedMesh, RenderTarget, ScreenState, SimpleMesh, TextureKeeper};
 use ozy::structs::OptionVec;
-use crate::collision::{AABB, Plane};
+use crate::collision::{AABB, Plane, segment_intersect_plane, point_plane_distance};
 
 #[cfg(windows)]
 use winapi::um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext};
@@ -51,20 +51,10 @@ fn xr_entity_pose_update(scene_data: &mut SceneData, entity_index: usize, pose: 
     }
 }
 
-fn segment_intersect_plane(plane: &Plane, point0: &glm::TVec4<f32>, point1: &glm::TVec4<f32>) -> Option<glm::TVec4<f32>> {
-    let denominator = glm::dot(&plane.normal, &(point1 - point0));
-
-    //Check for divide-by-zero
-    if denominator != 0.0 {
-        let x = glm::dot(&plane.normal, &(plane.point - point0)) / denominator;
-        if x > 0.0 && x <= 1.0 {
-            let result = (1.0 - x) * point0 + x * point1;
-            Some(glm::vec4(result.x, result.y, result.z, 1.0))
-        } else {
-            None
-        }        
-    } else {
-        None
+fn xr_tracked_player_position(view_space: &Option<xr::Space>, tracking_space: &Option<xr::Space>, time: xr::Time, world_from_tracking: &glm::TMat4<f32>) -> glm::TVec4<f32> {
+    match xrutil::locate_space(&view_space, &tracking_space, time) {
+        Some(pose) => { world_from_tracking * glm::vec4(pose.position.x, pose.position.y, 0.0, 1.0) }
+        None => { glm::zero() }
     }
 }
 
@@ -618,7 +608,7 @@ fn main() {
     //Player state
     let mut last_left_trigger = false;
     let mut player_movement_state = MoveState::Walking;
-    let player_radius = 0.25;                               //The player's radius as a circle in the xy plane
+    let player_radius = 0.15;                               //The player's radius as a circle in the xy plane
     let mut last_tracked_user_position = glm::vec4(0.0, 0.0, 0.0, 1.0);
     
     //Matrices for relating tracking space and world space
@@ -880,12 +870,7 @@ fn main() {
         }
 
         //The user is considered to be always standing on the ground in tracking space
-        let tracked_user_position = {
-            match xrutil::locate_space(&view_space, &tracking_space, last_xr_render_time) {
-                Some(pose) => { world_from_tracking * glm::vec4(pose.position.x, pose.position.y, 0.0, 1.0) }
-                None => { glm::zero() }
-            }
-        };
+        let tracked_user_position = xr_tracked_player_position(&view_space, &tracking_space, last_xr_render_time, &world_from_tracking);
 
         //Checking if the user has collided with the floor plane
         match player_movement_state {
@@ -982,12 +967,46 @@ fn main() {
         }
 
         //Check side collision with AABB
-        {
+        if tracking_space_position.z < mesa_aabb.position.z + mesa_aabb.height {
             let dist = glm::abs(&glm::vec2(mesa_aabb.position.x - tracked_user_position.x, mesa_aabb.position.y - tracked_user_position.y));
+
             if dist.x < mesa_aabb.width + player_radius && dist.y < mesa_aabb.depth + player_radius {
-                //Using tracking space for comparison because at this point it has the most accurate z value
-                if tracking_space_position.z < mesa_aabb.height {
-                    tracking_space_position = glm::vec3(0.0, 0.0, 150.0);
+                if dist.x < mesa_aabb.width || dist.y < mesa_aabb.depth {
+                    let planes = [
+                        Plane::new(glm::vec4(mesa_aabb.position.x + mesa_aabb.width, mesa_aabb.position.y, mesa_aabb.position.z + mesa_aabb.height / 2.0, 1.0), glm::vec4(1.0, 0.0, 0.0, 0.0)),
+                        Plane::new(glm::vec4(mesa_aabb.position.x - mesa_aabb.width, mesa_aabb.position.y, mesa_aabb.position.z + mesa_aabb.height / 2.0, 1.0), glm::vec4(-1.0, 0.0, 0.0, 0.0)),
+                        Plane::new(glm::vec4(mesa_aabb.position.x, mesa_aabb.position.y + mesa_aabb.depth, mesa_aabb.position.z + mesa_aabb.height / 2.0, 1.0), glm::vec4(0.0, 1.0, 0.0, 0.0)),
+                        Plane::new(glm::vec4(mesa_aabb.position.x, mesa_aabb.position.y - mesa_aabb.depth, mesa_aabb.position.z + mesa_aabb.height / 2.0, 1.0), glm::vec4(0.0, -1.0, 0.0, 0.0))
+                    ];
+
+                    let mut smallest_dist = f32::INFINITY;
+                    let mut smallest_normal = glm::zero();
+                    for plane in &planes {
+                        let candidate = f32::abs(point_plane_distance(&tracked_user_position, plane));
+                        if candidate < smallest_dist {
+                            smallest_dist = candidate;
+                            smallest_normal = plane.normal;
+                        }
+                    }
+
+                    tracking_space_position += glm::vec4_to_vec3(&((player_radius - smallest_dist) * smallest_normal));
+                } else {
+                    let corners = [
+                        glm::vec2(mesa_aabb.position.x - mesa_aabb.width, mesa_aabb.position.y - mesa_aabb.depth),
+                        glm::vec2(mesa_aabb.position.x - mesa_aabb.width, mesa_aabb.position.y + mesa_aabb.depth),
+                        glm::vec2(mesa_aabb.position.x + mesa_aabb.width, mesa_aabb.position.y - mesa_aabb.depth),
+                        glm::vec2(mesa_aabb.position.x + mesa_aabb.width, mesa_aabb.position.y + mesa_aabb.depth)
+                    ];
+
+                    for corner in &corners {
+                        let me = glm::vec2(tracked_user_position.x, tracked_user_position.y);
+                        let d = glm::distance(corner, &me);
+                        if d <= player_radius {
+                            let push = me - corner;
+                            tracking_space_position += d * glm::vec3(push.x, push.y, 0.0);
+                            break;
+                        }
+                    }
                 }
             }
         }
