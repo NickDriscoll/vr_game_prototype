@@ -58,6 +58,16 @@ fn xr_tracked_player_position(view_space: &Option<xr::Space>, tracking_space: &O
     }
 }
 
+fn clamp<T: PartialOrd>(x: T, min: T, max: T) -> T {
+    if x < min {
+        min
+    } else if x > max {
+        max
+    } else {
+        x
+    }
+}
+
 fn main() {
     //Initialize the OpenXR instance
     let xr_instance = {
@@ -980,46 +990,16 @@ fn main() {
         for opt_aabb in collision_aabbs.iter() {
             if let Some(aabb) = opt_aabb {
                 if tracking_space_position.z + glm::epsilon::<f32>() < aabb.position.z + aabb.height {
-                    let dist = glm::abs(&glm::vec2(aabb.position.x - tracked_user_position.x, aabb.position.y - tracked_user_position.y));
-        
-                    if dist.x < aabb.width + player_radius && dist.y < aabb.depth + player_radius {
-                        if dist.x < aabb.width || dist.y < aabb.depth {
-                            let planes = [
-                                Plane::new(glm::vec4(aabb.position.x + aabb.width, aabb.position.y, aabb.position.z + aabb.height / 2.0, 1.0), glm::vec4(1.0, 0.0, 0.0, 0.0)),
-                                Plane::new(glm::vec4(aabb.position.x - aabb.width, aabb.position.y, aabb.position.z + aabb.height / 2.0, 1.0), glm::vec4(-1.0, 0.0, 0.0, 0.0)),
-                                Plane::new(glm::vec4(aabb.position.x, aabb.position.y + aabb.depth, aabb.position.z + aabb.height / 2.0, 1.0), glm::vec4(0.0, 1.0, 0.0, 0.0)),
-                                Plane::new(glm::vec4(aabb.position.x, aabb.position.y - aabb.depth, aabb.position.z + aabb.height / 2.0, 1.0), glm::vec4(0.0, -1.0, 0.0, 0.0))
-                            ];
-        
-                            let mut smallest_dist = f32::INFINITY;
-                            let mut smallest_normal = glm::zero();
-                            for plane in &planes {
-                                let candidate = f32::abs(point_plane_distance(&tracked_user_position, plane));
-                                if candidate < smallest_dist {
-                                    smallest_dist = candidate;
-                                    smallest_normal = plane.normal;
-                                }
-                            }
-        
-                            tracking_space_position += glm::vec4_to_vec3(&((player_radius - smallest_dist) * smallest_normal));
-                        } else {
-                            let corners = [
-                                glm::vec2(aabb.position.x - aabb.width, aabb.position.y - aabb.depth),
-                                glm::vec2(aabb.position.x - aabb.width, aabb.position.y + aabb.depth),
-                                glm::vec2(aabb.position.x + aabb.width, aabb.position.y - aabb.depth),
-                                glm::vec2(aabb.position.x + aabb.width, aabb.position.y + aabb.depth)
-                            ];
-        
-                            for corner in &corners {
-                                let me = glm::vec2(tracked_user_position.x, tracked_user_position.y);
-                                let d = glm::distance(corner, &me);
-                                if d <= player_radius {
-                                    let push = me - corner;
-                                    tracking_space_position += d * glm::vec3(push.x, push.y, 0.0);
-                                    break;
-                                }
-                            }
-                        }
+                    let closest_point_on_aabb = glm::vec3(
+                        clamp(tracked_user_position.x, aabb.position.x - aabb.width, aabb.position.x + aabb.width),
+                        clamp(tracked_user_position.y, aabb.position.y - aabb.depth, aabb.position.y + aabb.depth),
+                        0.0
+                    );
+                    let focus = glm::vec3(tracked_user_position.x, tracked_user_position.y, 0.0);
+
+                    let distance = glm::distance(&closest_point_on_aabb, &focus);
+                    if distance < player_radius {
+                        tracking_space_position += (player_radius - distance) * glm::normalize(&(focus - closest_point_on_aabb));
                     }
                 }
             }
