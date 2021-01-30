@@ -532,8 +532,8 @@ fn main() {
             ozy::ui::Menu::new(vec![
                 ("Graphics options", Some(Command::ToggleMenu(graphics_menu_chain_index, graphics_menu_index))),
                 ("Quit", Some(Command::Quit))
-            ], ozy::ui::UIAnchor::LeftAlignedRow((20.0, 20.0)), 24.0),
-            ozy::ui::Menu::new(graphics_menu, ozy::ui::UIAnchor::RightAlignedColumn((window_size.x as f32 - 20.0, 60.0)), 24.0)
+            ], ozy::ui::UIAnchor::LeftAlignedRow((0.0, 0.0)), 24.0),
+            ozy::ui::Menu::new(graphics_menu, ozy::ui::UIAnchor::RightAlignedColumn((window_size.x as f32, 0.0)), 24.0)
         ];
 
         state.set_menus(menus);
@@ -618,6 +618,7 @@ fn main() {
     //Player state
     let mut last_left_trigger = false;
     let mut player_movement_state = MoveState::Walking;
+    let player_radius = 0.25;                               //The player's radius as a circle in the xy plane
     let mut last_tracked_user_position = glm::vec4(0.0, 0.0, 0.0, 1.0);
     
     //Matrices for relating tracking space and world space
@@ -887,8 +888,6 @@ fn main() {
         };
 
         //Checking if the user has collided with the floor plane
-        let up_point = tracked_user_position + glm::vec4(0.0, 0.0, 0.5, 1.0);
-        let down_point = tracked_user_position - glm::vec4(0.0, 0.0, 0.5, 1.0);
         match player_movement_state {
             MoveState::Falling => {
                 let mut standing_on = None;
@@ -933,6 +932,8 @@ fn main() {
                 }
             }
             MoveState::Walking => {
+                let up_point = tracked_user_position + glm::vec4(0.0, 0.0, 0.5, 1.0);
+                let down_point = tracked_user_position - glm::vec4(0.0, 0.0, 0.5, 1.0);
                 let mut standing_on = None;
 
                 if let None = standing_on {
@@ -976,6 +977,17 @@ fn main() {
                     tracking_space_position += glm::vec4_to_vec3(&(point - tracked_user_position));
                 } else {
                     player_movement_state = MoveState::Falling;
+                }
+            }
+        }
+
+        //Check side collision with AABB
+        {
+            let dist = glm::abs(&glm::vec2(mesa_aabb.position.x - tracked_user_position.x, mesa_aabb.position.y - tracked_user_position.y));
+            if dist.x < mesa_aabb.width + player_radius && dist.y < mesa_aabb.depth + player_radius {
+                //Using tracking space for comparison because at this point it has the most accurate z value
+                if tracking_space_position.z < mesa_aabb.height {
+                    tracking_space_position = glm::vec3(0.0, 0.0, 150.0);
                 }
             }
         }
@@ -1120,7 +1132,7 @@ fn main() {
 
                                 //Actually rendering
                                 let view_data = ViewData {
-                                    view_position: glm::vec4(view_matrix[12], view_matrix[13], view_matrix[14], 1.0),
+                                    view_position: glm::vec4(-view_matrix[12], -view_matrix[13], -view_matrix[14], 1.0),
                                     view_projection: perspective * view_matrix
                                 };
                                 gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
@@ -1135,7 +1147,7 @@ fn main() {
                                 if let Some(pose) = xrutil::locate_space(&view_space, &tracking_space, wait_info.predicted_display_time) {
                                     let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);
                                     let view_state = ViewData {
-                                        view_position: glm::vec4(-v_mat[12], -v_mat[13], -v_mat[14], 1.0),
+                                        view_position: glm::vec4(pose.position.x, pose.position.y, pose.position.z, 1.0),
                                         view_projection: screen_state.get_clipping_from_view() * v_mat
                                     };
                                     default_framebuffer.bind();
