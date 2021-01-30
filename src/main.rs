@@ -489,6 +489,9 @@ fn main() {
 	    (gl::TEXTURE_MAG_FILTER, gl::LINEAR)
     ];
 
+    //OptionVec to hold all AABBs used for collision
+    let mut collision_aabbs = OptionVec::new();
+
     let mut mouse_lbutton_pressed = false;
     let mut mouse_lbutton_pressed_last_frame = false;
     let mut screen_space_mouse = glm::zero();
@@ -545,19 +548,22 @@ fn main() {
     scene_data.single_entities[plane_entity_index].uv_scale = 10.0;
     scene_data.single_entities[plane_entity_index].model_matrix = ozy::routines::uniform_scale(floor_plane_scale);
 
-    //Create cube
-    let mesa_position = glm::vec3(-20.0, -10.0, 0.0);
-    let mesa_scale = 0.75;
-    let mesa_aabb = AABB {
-        position: glm::vec4(mesa_position.x, mesa_position.y, mesa_position.z, 1.0),
-        width: mesa_scale,
-        depth: mesa_scale,
-        height: mesa_scale * 2.0
-    };
+    //Create aabbs
     let mesa_mesh = SimpleMesh::from_ozy("models/cube.ozy", &mut texture_keeper, &tex_params);
-    let mesa_entity_index = scene_data.push_single_entity(mesa_mesh);
-    scene_data.single_entities[mesa_entity_index].uv_scale = 2.0;
-    scene_data.single_entities[mesa_entity_index].model_matrix = glm::translation(&mesa_position) * uniform_scale(mesa_scale);
+    for i in 0..5 {
+        let mesa_position = glm::vec3(20.0 + 5.0 * i as f32, -10.0, 0.0);
+        let mesa_scale = glm::vec3(0.5, 0.75, 0.5) * i as f32;
+        let mesa_aabb = AABB {
+            position: glm::vec4(mesa_position.x, mesa_position.y, mesa_position.z, 1.0),
+            width: mesa_scale.x,
+            depth: mesa_scale.y,
+            height: mesa_scale.z * 2.0
+        };
+        collision_aabbs.insert(mesa_aabb);
+        let mesa_entity_index = scene_data.push_single_entity(mesa_mesh.clone());
+        scene_data.single_entities[mesa_entity_index].uv_scale = 2.0;
+        scene_data.single_entities[mesa_entity_index].model_matrix = glm::translation(&mesa_position) * glm::scaling(&mesa_scale);
+    }
 
     //Data for the sphere square
     let sphere_block_scale = 1;
@@ -872,7 +878,7 @@ fn main() {
         //The user is considered to be always standing on the ground in tracking space
         let tracked_user_position = xr_tracked_player_position(&view_space, &tracking_space, last_xr_render_time, &world_from_tracking);
 
-        //Checking if the user has collided with the floor plane
+        //Checking if the user has collided with a floor
         match player_movement_state {
             MoveState::Falling => {
                 let mut standing_on = None;
@@ -893,19 +899,22 @@ fn main() {
                 }
 
                 //Check for AABB collision
-                if let None = standing_on {
-                    let mut pos = mesa_aabb.position;
-                    pos.z += mesa_aabb.height;
-                    let plane = Plane::new(pos, glm::vec4(0.0, 0.0, 1.0, 0.0));
-                    let collision_point = segment_intersect_plane(&plane, &last_tracked_user_position, &tracked_user_position);
-                    if let Some(point) = collision_point {
-                        let on_aabb = point.x > -mesa_aabb.width + mesa_aabb.position.x &&
-                                       point.x < mesa_aabb.width + mesa_aabb.position.x &&
-                                       point.y > -mesa_aabb.depth + mesa_aabb.position.y &&
-                                       point.y < mesa_aabb.depth + mesa_aabb.position.y;
+                for opt_aabb in collision_aabbs.iter() {
+                    if let (None, Some(aabb)) = (standing_on, opt_aabb) {
+                        let mut pos = aabb.position;
+                        pos.z += aabb.height;
+                        let plane = Plane::new(pos, glm::vec4(0.0, 0.0, 1.0, 0.0));
+                        let collision_point = segment_intersect_plane(&plane, &last_tracked_user_position, &tracked_user_position);
+                        if let Some(point) = collision_point {
+                            let on_aabb = point.x > -aabb.width + aabb.position.x &&
+                                        point.x < aabb.width + aabb.position.x &&
+                                        point.y > -aabb.depth + aabb.position.y &&
+                                        point.y < aabb.depth + aabb.position.y;
 
-                        if on_aabb {
-                            standing_on = Some(point);
+                            if on_aabb {
+                                standing_on = Some(point);
+                                break;
+                            }
                         }
                     }
                 }
@@ -930,29 +939,30 @@ fn main() {
                                         point.y < floor_plane_scale;
 
                         //Adjust tracking space based on where the player should be standing
-                        tracking_space_position += glm::vec4_to_vec3(&(point - tracked_user_position));
                         if on_plane {
                             standing_on = Some(point);
                         }
                     }
                 }
 
-                //Check the AABB if we aren't standing on the ground
-                if let None = standing_on {
-                    let mut pos = mesa_aabb.position;
-                    pos.z += mesa_aabb.height;
-                    let plane = Plane::new(pos, glm::vec4(0.0, 0.0, 1.0, 0.0));
-                    let collision_point = segment_intersect_plane(&plane, &up_point, &down_point);
-                    if let Some(point) = collision_point {
-                        let on_plane = point.x > -mesa_aabb.width + mesa_aabb.position.x &&
-                                       point.x < mesa_aabb.width + mesa_aabb.position.x &&
-                                       point.y > -mesa_aabb.depth + mesa_aabb.position.y &&
-                                       point.y < mesa_aabb.depth + mesa_aabb.position.y;
+                //Check the AABBs if we aren't standing on the ground
+                for opt_aabb in collision_aabbs.iter() {
+                    if let (None, Some(aabb)) = (standing_on, opt_aabb) {
+                        let mut pos = aabb.position;
+                        pos.z += aabb.height;
+                        let plane = Plane::new(pos, glm::vec4(0.0, 0.0, 1.0, 0.0));
+                        let collision_point = segment_intersect_plane(&plane, &up_point, &down_point);
+                        if let Some(point) = collision_point {
+                            let on_plane = point.x > -aabb.width + aabb.position.x &&
+                                        point.x < aabb.width + aabb.position.x &&
+                                        point.y > -aabb.depth + aabb.position.y &&
+                                        point.y < aabb.depth + aabb.position.y;
 
-                        //Adjust tracking space based on where the player should be standing
-                        tracking_space_position += glm::vec4_to_vec3(&(point - tracked_user_position));
-                        if on_plane {
-                            standing_on = Some(point);
+                            //Adjust tracking space based on where the player should be standing
+                            if on_plane {
+                                standing_on = Some(point);
+                                break;
+                            }
                         }
                     }
                 }
@@ -966,50 +976,55 @@ fn main() {
             }
         }
 
-        //Check side collision with AABB
-        if tracking_space_position.z < mesa_aabb.position.z + mesa_aabb.height {
-            let dist = glm::abs(&glm::vec2(mesa_aabb.position.x - tracked_user_position.x, mesa_aabb.position.y - tracked_user_position.y));
-
-            if dist.x < mesa_aabb.width + player_radius && dist.y < mesa_aabb.depth + player_radius {
-                if dist.x < mesa_aabb.width || dist.y < mesa_aabb.depth {
-                    let planes = [
-                        Plane::new(glm::vec4(mesa_aabb.position.x + mesa_aabb.width, mesa_aabb.position.y, mesa_aabb.position.z + mesa_aabb.height / 2.0, 1.0), glm::vec4(1.0, 0.0, 0.0, 0.0)),
-                        Plane::new(glm::vec4(mesa_aabb.position.x - mesa_aabb.width, mesa_aabb.position.y, mesa_aabb.position.z + mesa_aabb.height / 2.0, 1.0), glm::vec4(-1.0, 0.0, 0.0, 0.0)),
-                        Plane::new(glm::vec4(mesa_aabb.position.x, mesa_aabb.position.y + mesa_aabb.depth, mesa_aabb.position.z + mesa_aabb.height / 2.0, 1.0), glm::vec4(0.0, 1.0, 0.0, 0.0)),
-                        Plane::new(glm::vec4(mesa_aabb.position.x, mesa_aabb.position.y - mesa_aabb.depth, mesa_aabb.position.z + mesa_aabb.height / 2.0, 1.0), glm::vec4(0.0, -1.0, 0.0, 0.0))
-                    ];
-
-                    let mut smallest_dist = f32::INFINITY;
-                    let mut smallest_normal = glm::zero();
-                    for plane in &planes {
-                        let candidate = f32::abs(point_plane_distance(&tracked_user_position, plane));
-                        if candidate < smallest_dist {
-                            smallest_dist = candidate;
-                            smallest_normal = plane.normal;
-                        }
-                    }
-
-                    tracking_space_position += glm::vec4_to_vec3(&((player_radius - smallest_dist) * smallest_normal));
-                } else {
-                    let corners = [
-                        glm::vec2(mesa_aabb.position.x - mesa_aabb.width, mesa_aabb.position.y - mesa_aabb.depth),
-                        glm::vec2(mesa_aabb.position.x - mesa_aabb.width, mesa_aabb.position.y + mesa_aabb.depth),
-                        glm::vec2(mesa_aabb.position.x + mesa_aabb.width, mesa_aabb.position.y - mesa_aabb.depth),
-                        glm::vec2(mesa_aabb.position.x + mesa_aabb.width, mesa_aabb.position.y + mesa_aabb.depth)
-                    ];
-
-                    for corner in &corners {
-                        let me = glm::vec2(tracked_user_position.x, tracked_user_position.y);
-                        let d = glm::distance(corner, &me);
-                        if d <= player_radius {
-                            let push = me - corner;
-                            tracking_space_position += d * glm::vec3(push.x, push.y, 0.0);
-                            break;
+        //Check side collision with AABBs
+        for opt_aabb in collision_aabbs.iter() {
+            if let Some(aabb) = opt_aabb {
+                if tracking_space_position.z + glm::epsilon::<f32>() < aabb.position.z + aabb.height {
+                    let dist = glm::abs(&glm::vec2(aabb.position.x - tracked_user_position.x, aabb.position.y - tracked_user_position.y));
+        
+                    if dist.x < aabb.width + player_radius && dist.y < aabb.depth + player_radius {
+                        if dist.x < aabb.width || dist.y < aabb.depth {
+                            let planes = [
+                                Plane::new(glm::vec4(aabb.position.x + aabb.width, aabb.position.y, aabb.position.z + aabb.height / 2.0, 1.0), glm::vec4(1.0, 0.0, 0.0, 0.0)),
+                                Plane::new(glm::vec4(aabb.position.x - aabb.width, aabb.position.y, aabb.position.z + aabb.height / 2.0, 1.0), glm::vec4(-1.0, 0.0, 0.0, 0.0)),
+                                Plane::new(glm::vec4(aabb.position.x, aabb.position.y + aabb.depth, aabb.position.z + aabb.height / 2.0, 1.0), glm::vec4(0.0, 1.0, 0.0, 0.0)),
+                                Plane::new(glm::vec4(aabb.position.x, aabb.position.y - aabb.depth, aabb.position.z + aabb.height / 2.0, 1.0), glm::vec4(0.0, -1.0, 0.0, 0.0))
+                            ];
+        
+                            let mut smallest_dist = f32::INFINITY;
+                            let mut smallest_normal = glm::zero();
+                            for plane in &planes {
+                                let candidate = f32::abs(point_plane_distance(&tracked_user_position, plane));
+                                if candidate < smallest_dist {
+                                    smallest_dist = candidate;
+                                    smallest_normal = plane.normal;
+                                }
+                            }
+        
+                            tracking_space_position += glm::vec4_to_vec3(&((player_radius - smallest_dist) * smallest_normal));
+                        } else {
+                            let corners = [
+                                glm::vec2(aabb.position.x - aabb.width, aabb.position.y - aabb.depth),
+                                glm::vec2(aabb.position.x - aabb.width, aabb.position.y + aabb.depth),
+                                glm::vec2(aabb.position.x + aabb.width, aabb.position.y - aabb.depth),
+                                glm::vec2(aabb.position.x + aabb.width, aabb.position.y + aabb.depth)
+                            ];
+        
+                            for corner in &corners {
+                                let me = glm::vec2(tracked_user_position.x, tracked_user_position.y);
+                                let d = glm::distance(corner, &me);
+                                if d <= player_radius {
+                                    let push = me - corner;
+                                    tracking_space_position += d * glm::vec3(push.x, push.y, 0.0);
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
             }
         }
+        
 
         //After all collision processing has been completed, update the tracking space matrices once more
         world_from_tracking = glm::translation(&tracking_space_position);
@@ -1151,7 +1166,7 @@ fn main() {
 
                                 //Actually rendering
                                 let view_data = ViewData {
-                                    view_position: glm::vec4(-view_matrix[12], -view_matrix[13], -view_matrix[14], 1.0),
+                                    view_position: glm::vec4(view_matrix[12], view_matrix[13], view_matrix[14], 1.0),
                                     view_projection: perspective * view_matrix
                                 };
                                 gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
