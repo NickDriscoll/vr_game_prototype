@@ -560,17 +560,25 @@ fn main() {
 
     //Create aabbs
     let mesa_mesh = SimpleMesh::from_ozy("models/cube.ozy", &mut texture_keeper, &tex_params);
+    let mesa_block_width = 12;
+    let mesa_block_depth = 10;
+    let mesa_instanced_mesh = unsafe { InstancedMesh::from_simplemesh(&mesa_mesh, mesa_block_width * mesa_block_depth, 5) };
+    let mut mesa_transforms = vec![0.0; 16 * mesa_block_width * mesa_block_depth];
     let mesa_spacing = 7.5;
-    for i in 0..10 {
-        let ypos = i as f32 * mesa_spacing - 60.0;
+    for i in 0..mesa_block_width {
+        let ypos = i as f32 * mesa_spacing - 40.0;
 
-        for j in 0..10 {
+        for j in 0..mesa_block_depth {
             let xpos = j as f32 * mesa_spacing + 40.0;
             let height_scale = i + j;
 
             let mesa_position = glm::vec3(xpos, ypos, 0.0);
-            let mesa_scale = glm::vec3(1.5, 2.5, 0.5 * (height_scale as f32 + 1.0));
+            let mesa_scale = glm::vec3(2.5, 2.5, 0.5 * (height_scale as f32 + 1.0));
 
+            let matrix = glm::translation(&mesa_position) * glm::scaling(&mesa_scale);
+            for k in 0..16 {
+                mesa_transforms[16 * (i * mesa_block_depth + j) + k] = matrix[k];
+            }
 
             let mesa_aabb = AABB {
                 position: glm::vec4(mesa_position.x, mesa_position.y, mesa_position.z, 1.0),
@@ -579,28 +587,13 @@ fn main() {
                 height: mesa_scale.z * 2.0
             };
             collision_aabbs.insert(mesa_aabb);
-            let mesa_entity_index = scene_data.push_single_entity(mesa_mesh.clone());
-            scene_data.single_entities[mesa_entity_index].uv_scale = 2.0;
-            scene_data.single_entities[mesa_entity_index].model_matrix = glm::translation(&mesa_position) * glm::scaling(&mesa_scale);
         }
     }
 
-    /*
-    for i in 0..20 {
-        let mesa_position = glm::vec3(5.0 * i as f32 - 30.0, -30.0, 0.0);
-        let mesa_scale = glm::vec3(1.5, 2.5, 0.5 * (i as f32 + 1.0));
-        let mesa_aabb = AABB {
-            position: glm::vec4(mesa_position.x, mesa_position.y, mesa_position.z, 1.0),
-            width: mesa_scale.x,
-            depth: mesa_scale.y,
-            height: mesa_scale.z * 2.0
-        };
-        collision_aabbs.insert(mesa_aabb);
-        let mesa_entity_index = scene_data.push_single_entity(mesa_mesh.clone());
-        scene_data.single_entities[mesa_entity_index].uv_scale = 2.0;
-        scene_data.single_entities[mesa_entity_index].model_matrix = glm::translation(&mesa_position) * glm::scaling(&mesa_scale);
-    }
-    */
+    //Create graphics data for the mesas
+    let mesa_entity_index = scene_data.push_instanced_entity(mesa_instanced_mesh);
+    scene_data.single_entities[mesa_entity_index].uv_scale = 2.0;
+    scene_data.instanced_entities[mesa_entity_index].mesh.update_buffer(&mesa_transforms);
 
     //Data for the sphere square
     let sphere_block_scale = 1;
@@ -983,22 +976,24 @@ fn main() {
                 }
 
                 //Check the AABBs if we aren't standing on the ground
-                for opt_aabb in collision_aabbs.iter() {
-                    if let (None, Some(aabb)) = (standing_on, opt_aabb) {
-                        let mut pos = aabb.position;
-                        pos.z += aabb.height;
-                        let plane = Plane::new(pos, glm::vec4(0.0, 0.0, 1.0, 0.0));
-                        let collision_point = segment_intersect_plane(&plane, &up_point, &down_point);
-                        if let Some(point) = collision_point {
-                            let on_plane = point.x > -aabb.width + aabb.position.x &&
-                                        point.x < aabb.width + aabb.position.x &&
-                                        point.y > -aabb.depth + aabb.position.y &&
-                                        point.y < aabb.depth + aabb.position.y;
+                if let None = standing_on {
+                    for opt_aabb in collision_aabbs.iter() {
+                        if let Some(aabb) = opt_aabb {
+                            let mut pos = aabb.position;
+                            pos.z += aabb.height;
+                            let plane = Plane::new(pos, glm::vec4(0.0, 0.0, 1.0, 0.0));
+                            let collision_point = segment_intersect_plane(&plane, &up_point, &down_point);
+                            if let Some(point) = collision_point {
+                                let on_plane = point.x > -aabb.width + aabb.position.x &&
+                                            point.x < aabb.width + aabb.position.x &&
+                                            point.y > -aabb.depth + aabb.position.y &&
+                                            point.y < aabb.depth + aabb.position.y;
 
-                            //Adjust tracking space based on where the player should be standing
-                            if on_plane {
-                                standing_on = Some(point);
-                                break;
+                                //Adjust tracking space based on where the player should be standing
+                                if on_plane {
+                                    standing_on = Some(point);
+                                    break;
+                                }
                             }
                         }
                     }
@@ -1027,7 +1022,10 @@ fn main() {
 
                     let distance = glm::distance(&closest_point_on_aabb, &focus);
                     if distance < player_radius {
-                        tracking_space_position += (player_radius - distance) * glm::normalize(&(focus - closest_point_on_aabb));
+                        let vec = focus - closest_point_on_aabb;
+                        if vec != glm::zero() {
+                            tracking_space_position += (player_radius - distance) * glm::normalize(&(focus - closest_point_on_aabb));
+                        }
                     }
                 }
             }
@@ -1173,7 +1171,7 @@ fn main() {
 
                                 //Actually rendering
                                 let view_data = ViewData {
-                                    view_position: glm::vec4(view_matrix[12], view_matrix[13], view_matrix[14], 1.0),
+                                    view_position: glm::vec4(-view_matrix[12], -view_matrix[13], -view_matrix[14], 1.0),
                                     view_projection: perspective * view_matrix
                                 };
                                 gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
