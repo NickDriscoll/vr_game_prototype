@@ -23,7 +23,7 @@ use ozy::{glutil};
 use ozy::routines::uniform_scale;
 use ozy::render::{Framebuffer, InstancedMesh, RenderTarget, ScreenState, SimpleMesh, TextureKeeper};
 use ozy::structs::OptionVec;
-use crate::collision::{AABB, Plane, segment_intersect_plane, point_plane_distance};
+use crate::collision::{AABB, LineSegment, Plane, PlaneBoundaries, segment_intersect_plane, point_plane_distance};
 
 #[cfg(windows)]
 use winapi::um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext};
@@ -65,6 +65,24 @@ fn clamp<T: PartialOrd>(x: T, min: T, max: T) -> T {
         max
     } else {
         x
+    }
+}
+
+fn standing_on_plane(plane: &Plane, segment: &LineSegment, boundaries: &PlaneBoundaries) -> Option<glm::TVec4<f32>> {
+    let collision_point = segment_intersect_plane(&plane, &segment.p0, &segment.p1);
+    if let Some(point) = collision_point {
+        let on_aabb = point.x > boundaries.xmin &&
+                      point.x < boundaries.xmax &&
+                      point.y > boundaries.ymin &&
+                      point.y < boundaries.ymax;
+
+        if on_aabb {
+            Some(point)
+        } else {
+            None
+        }
+    } else {
+        None
     }
 }
 
@@ -545,8 +563,14 @@ fn main() {
     };
 
     //Initialize floor plane
-    let floor_plane = Plane::new(glm::vec4(0.0, 0.0, 0.0, 1.0), glm::vec4(0.0, 0.0, 1.0, 0.0));
     let floor_plane_scale = 160.0;
+    let floor_plane = Plane::new(glm::vec4(0.0, 0.0, 0.0, 1.0), glm::vec4(0.0, 0.0, 1.0, 0.0));
+    let floor_boundaries = PlaneBoundaries {
+        xmin: -floor_plane_scale,
+        xmax: floor_plane_scale,
+        ymin: -floor_plane_scale,
+        ymax: floor_plane_scale
+    };
     let plane_mesh = {
         let plane_vertex_width = 2;
         let plane_index_count = (plane_vertex_width - 1) * (plane_vertex_width - 1) * 6;
@@ -912,20 +936,13 @@ fn main() {
         match player_movement_state {
             MoveState::Falling => {
                 let mut standing_on = None;
+                let standing_segment = LineSegment {
+                    p0: last_tracked_user_position,
+                    p1: tracked_user_position
+                };
 
                 if let None = standing_on {
-                    let collision_point = segment_intersect_plane(&floor_plane, &last_tracked_user_position, &tracked_user_position);
-                    if let Some(point) = collision_point {
-                        let on_plane = point.x > -floor_plane_scale &&
-                                        point.x < floor_plane_scale &&
-                                        point.y > -floor_plane_scale && 
-                                        point.y < floor_plane_scale;
-
-                        
-                        if on_plane {
-                            standing_on = Some(point);
-                        }
-                    }
+                    standing_on = standing_on_plane(&floor_plane, &standing_segment, &floor_boundaries);
                 }
 
                 //Check for AABB collision
@@ -934,18 +951,14 @@ fn main() {
                         let mut pos = aabb.position;
                         pos.z += aabb.height;
                         let plane = Plane::new(pos, glm::vec4(0.0, 0.0, 1.0, 0.0));
-                        let collision_point = segment_intersect_plane(&plane, &last_tracked_user_position, &tracked_user_position);
-                        if let Some(point) = collision_point {
-                            let on_aabb = point.x > -aabb.width + aabb.position.x &&
-                                        point.x < aabb.width + aabb.position.x &&
-                                        point.y > -aabb.depth + aabb.position.y &&
-                                        point.y < aabb.depth + aabb.position.y;
+                        let aabb_boundaries = PlaneBoundaries {
+                            xmin: -aabb.width + aabb.position.x,
+                            xmax: aabb.width + aabb.position.x,
+                            ymin: -aabb.depth + aabb.position.y,
+                            ymax: aabb.depth + aabb.position.y
+                        };
 
-                            if on_aabb {
-                                standing_on = Some(point);
-                                break;
-                            }
-                        }
+                        standing_on = standing_on_plane(&plane, &standing_segment, &aabb_boundaries);
                     }
                 }
 
@@ -958,21 +971,14 @@ fn main() {
             MoveState::Walking => {
                 let up_point = tracked_user_position + glm::vec4(0.0, 0.0, 0.5, 1.0);
                 let down_point = tracked_user_position - glm::vec4(0.0, 0.0, 0.5, 1.0);
+                let standing_segment = LineSegment {
+                    p0: up_point,
+                    p1: down_point
+                };
                 let mut standing_on = None;
 
                 if let None = standing_on {
-                    let collision_point = segment_intersect_plane(&floor_plane, &up_point, &down_point);
-                    if let Some(point) = collision_point {
-                        let on_plane = point.x > -floor_plane_scale &&
-                                        point.x < floor_plane_scale &&
-                                        point.y > -floor_plane_scale &&
-                                        point.y < floor_plane_scale;
-
-                        //Adjust tracking space based on where the player should be standing
-                        if on_plane {
-                            standing_on = Some(point);
-                        }
-                    }
+                    standing_on = standing_on_plane(&floor_plane, &standing_segment, &floor_boundaries);
                 }
 
                 //Check the AABBs if we aren't standing on the ground
@@ -982,19 +988,13 @@ fn main() {
                             let mut pos = aabb.position;
                             pos.z += aabb.height;
                             let plane = Plane::new(pos, glm::vec4(0.0, 0.0, 1.0, 0.0));
-                            let collision_point = segment_intersect_plane(&plane, &up_point, &down_point);
-                            if let Some(point) = collision_point {
-                                let on_plane = point.x > -aabb.width + aabb.position.x &&
-                                            point.x < aabb.width + aabb.position.x &&
-                                            point.y > -aabb.depth + aabb.position.y &&
-                                            point.y < aabb.depth + aabb.position.y;
-
-                                //Adjust tracking space based on where the player should be standing
-                                if on_plane {
-                                    standing_on = Some(point);
-                                    break;
-                                }
-                            }
+                            let aabb_boundaries = PlaneBoundaries {
+                                xmin: -aabb.width + aabb.position.x,
+                                xmax: aabb.width + aabb.position.x,
+                                ymin: -aabb.depth + aabb.position.y,
+                                ymax: aabb.depth + aabb.position.y
+                            };
+                            standing_on = standing_on_plane(&plane, &standing_segment, &aabb_boundaries);
                         }
                     }
                 }
@@ -1003,6 +1003,7 @@ fn main() {
                     tracking_space_velocity.z = 0.0;
                     tracking_space_position += glm::vec4_to_vec3(&(point - tracked_user_position));
                 } else {
+                    println!("Falling!");
                     player_movement_state = MoveState::Falling;
                 }
             }
@@ -1029,7 +1030,7 @@ fn main() {
                     }
                 }
             }
-        }        
+        }
 
         //After all collision processing has been completed, update the tracking space matrices once more
         world_from_tracking = glm::translation(&tracking_space_position);
@@ -1154,6 +1155,7 @@ fn main() {
                                 let eye_pose = views[i].pose;
                                 let fov = views[i].fov;
                                 let view_matrix = xrutil::pose_to_viewmat(&eye_pose, &tracking_from_world);
+                                let eye_world_matrix = xrutil::pose_to_mat4(&eye_pose, &world_from_tracking);
 
                                 //Use the fov to get the t, b, l, and r values of the perspective matrix
                                 let near_value = NEAR_DISTANCE;
@@ -1171,7 +1173,7 @@ fn main() {
 
                                 //Actually rendering
                                 let view_data = ViewData {
-                                    view_position: glm::vec4(-view_matrix[12], -view_matrix[13], -view_matrix[14], 1.0),
+                                    view_position: glm::vec4(eye_world_matrix[12], eye_world_matrix[13], eye_world_matrix[14], 1.0),
                                     view_projection: perspective * view_matrix
                                 };
                                 gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
@@ -1185,8 +1187,9 @@ fn main() {
                             if hmd_pov {
                                 if let Some(pose) = xrutil::locate_space(&view_space, &tracking_space, wait_info.predicted_display_time) {
                                     let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);
+                                    let v_world_pos = xrutil::pose_to_mat4(&pose, &world_from_tracking);
                                     let view_state = ViewData {
-                                        view_position: glm::vec4(pose.position.x, pose.position.y, pose.position.z, 1.0),
+                                        view_position: glm::vec4(v_world_pos[12], v_world_pos[13], v_world_pos[14], 1.0),
                                         view_projection: screen_state.get_clipping_from_view() * v_mat
                                     };
                                     default_framebuffer.bind();

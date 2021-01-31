@@ -1,3 +1,8 @@
+pub struct LineSegment {
+    pub p0: glm::TVec4<f32>,
+    pub p1: glm::TVec4<f32>
+}
+
 //An infinite plane as defined by a point on the plane and a vector normal to the plane
 pub struct Plane {
     pub point: glm::TVec4<f32>,
@@ -13,6 +18,13 @@ impl Plane {
     }
 }
 
+pub struct PlaneBoundaries {
+    pub xmin: f32,
+    pub xmax: f32,
+    pub ymin: f32,
+    pub ymax: f32
+}
+
 //Axis-aligned bounding box
 pub struct AABB {
     pub position: glm::TVec4<f32>,
@@ -20,8 +32,6 @@ pub struct AABB {
     pub depth: f32,
     pub height: f32
 }
-
-
 
 pub fn segment_intersect_plane(plane: &Plane, point0: &glm::TVec4<f32>, point1: &glm::TVec4<f32>) -> Option<glm::TVec4<f32>> {
     let denominator = glm::dot(&plane.normal, &(point1 - point0));
