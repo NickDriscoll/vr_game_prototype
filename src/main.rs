@@ -995,6 +995,9 @@ fn main() {
                                 ymax: aabb.depth + aabb.position.y
                             };
                             standing_on = standing_on_plane(&plane, &standing_segment, &aabb_boundaries);
+                            if let Some(_) = standing_on {
+                                break;
+                            }
                         }
                     }
                 }
@@ -1003,7 +1006,6 @@ fn main() {
                     tracking_space_velocity.z = 0.0;
                     tracking_space_position += glm::vec4_to_vec3(&(point - tracked_user_position));
                 } else {
-                    println!("Falling!");
                     player_movement_state = MoveState::Falling;
                 }
             }
