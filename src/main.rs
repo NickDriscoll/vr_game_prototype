@@ -546,7 +546,7 @@ fn main() {
 
     //Initialize floor plane
     let floor_plane = Plane::new(glm::vec4(0.0, 0.0, 0.0, 1.0), glm::vec4(0.0, 0.0, 1.0, 0.0));
-    let floor_plane_scale = 100.0;
+    let floor_plane_scale = 160.0;
     let plane_mesh = {
         let plane_vertex_width = 2;
         let plane_index_count = (plane_vertex_width - 1) * (plane_vertex_width - 1) * 6;
@@ -560,9 +560,35 @@ fn main() {
 
     //Create aabbs
     let mesa_mesh = SimpleMesh::from_ozy("models/cube.ozy", &mut texture_keeper, &tex_params);
-    for i in 0..5 {
-        let mesa_position = glm::vec3(20.0 + 5.0 * i as f32, -10.0, 0.0);
-        let mesa_scale = glm::vec3(0.5, 0.75, 0.5) * i as f32;
+    let mesa_spacing = 7.5;
+    for i in 0..10 {
+        let ypos = i as f32 * mesa_spacing - 60.0;
+
+        for j in 0..10 {
+            let xpos = j as f32 * mesa_spacing + 40.0;
+            let height_scale = i + j;
+
+            let mesa_position = glm::vec3(xpos, ypos, 0.0);
+            let mesa_scale = glm::vec3(1.5, 2.5, 0.5 * (height_scale as f32 + 1.0));
+
+
+            let mesa_aabb = AABB {
+                position: glm::vec4(mesa_position.x, mesa_position.y, mesa_position.z, 1.0),
+                width: mesa_scale.x,
+                depth: mesa_scale.y,
+                height: mesa_scale.z * 2.0
+            };
+            collision_aabbs.insert(mesa_aabb);
+            let mesa_entity_index = scene_data.push_single_entity(mesa_mesh.clone());
+            scene_data.single_entities[mesa_entity_index].uv_scale = 2.0;
+            scene_data.single_entities[mesa_entity_index].model_matrix = glm::translation(&mesa_position) * glm::scaling(&mesa_scale);
+        }
+    }
+
+    /*
+    for i in 0..20 {
+        let mesa_position = glm::vec3(5.0 * i as f32 - 30.0, -30.0, 0.0);
+        let mesa_scale = glm::vec3(1.5, 2.5, 0.5 * (i as f32 + 1.0));
         let mesa_aabb = AABB {
             position: glm::vec4(mesa_position.x, mesa_position.y, mesa_position.z, 1.0),
             width: mesa_scale.x,
@@ -574,6 +600,7 @@ fn main() {
         scene_data.single_entities[mesa_entity_index].uv_scale = 2.0;
         scene_data.single_entities[mesa_entity_index].model_matrix = glm::translation(&mesa_position) * glm::scaling(&mesa_scale);
     }
+    */
 
     //Data for the sphere square
     let sphere_block_scale = 1;
@@ -987,6 +1014,7 @@ fn main() {
         }
 
         //Check side collision with AABBs
+        //We reduce this to a circle vs rectangle in 2D
         for opt_aabb in collision_aabbs.iter() {
             if let Some(aabb) = opt_aabb {
                 if tracking_space_position.z + glm::epsilon::<f32>() < aabb.position.z + aabb.height {
@@ -1003,8 +1031,7 @@ fn main() {
                     }
                 }
             }
-        }
-        
+        }        
 
         //After all collision processing has been completed, update the tracking space matrices once more
         world_from_tracking = glm::translation(&tracking_space_position);
