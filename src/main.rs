@@ -16,11 +16,13 @@ use glfw::{Action, Context, Key, WindowEvent};
 use gl::types::*;
 use std::process::exit;
 use std::ptr;
+use std::os::raw::c_void;
 use std::time::Instant;
 use rand::random;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use ozy::{glutil};
 use ozy::routines::uniform_scale;
+use ozy::glutil::ColorSpace;
 use ozy::render::{Framebuffer, InstancedMesh, RenderTarget, ScreenState, SimpleMesh, TextureKeeper};
 use ozy::structs::OptionVec;
 use crate::collision::{AABB, LineSegment, Plane, PlaneBoundaries, segment_intersect_plane, point_plane_distance};
@@ -45,27 +47,10 @@ enum MoveState {
     Falling
 }
 
-fn xr_entity_pose_update(scene_data: &mut SceneData, entity_index: usize, pose: Option<xr::Posef>, world_from_tracking: &glm::TMat4<f32>) {
-    if let Some(p) = pose {
-        scene_data.single_entities[entity_index].model_matrix = xrutil::pose_to_mat4(&p, world_from_tracking);
-    }
-}
-
-fn xr_tracked_player_position(view_space: &Option<xr::Space>, tracking_space: &Option<xr::Space>, time: xr::Time, world_from_tracking: &glm::TMat4<f32>) -> glm::TVec4<f32> {
-    match xrutil::locate_space(&view_space, &tracking_space, time) {
-        Some(pose) => { world_from_tracking * glm::vec4(pose.position.x, pose.position.y, 0.0, 1.0) }
-        None => { glm::zero() }
-    }
-}
-
 fn clamp<T: PartialOrd>(x: T, min: T, max: T) -> T {
-    if x < min {
-        min
-    } else if x > max {
-        max
-    } else {
-        x
-    }
+    if x < min { min }
+    else if x > max { max }
+    else { x }
 }
 
 fn standing_on_plane(plane: &Plane, segment: &LineSegment, boundaries: &PlaneBoundaries) -> Option<glm::TVec4<f32>> {
@@ -84,6 +69,26 @@ fn standing_on_plane(plane: &Plane, segment: &LineSegment, boundaries: &PlaneBou
     } else {
         None
     }
+}
+
+fn write_matrix_to_buffer(buffer: &mut [f32], index: usize, matrix: glm::TMat4<f32>) {    
+    for k in 0..16 {
+        buffer[16 * index + k] = matrix[k];
+    }
+}
+
+fn aabb_get_top_plane(aabb: &AABB) -> (Plane, PlaneBoundaries) {    
+    let mut pos = aabb.position;
+    pos.z += aabb.height;
+    let plane = Plane::new(pos, glm::vec4(0.0, 0.0, 1.0, 0.0));
+    let aabb_boundaries = PlaneBoundaries {
+        xmin: -aabb.width + aabb.position.x,
+        xmax: aabb.width + aabb.position.x,
+        ymin: -aabb.depth + aabb.position.y,
+        ymax: aabb.depth + aabb.position.y
+    };
+
+    (plane, aabb_boundaries)
 }
 
 fn main() {
@@ -283,10 +288,10 @@ fn main() {
 	glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
 
     //Create the window
-    let window_size = glm::vec2(1280, 1024);
+    let window_size = glm::vec2(1920, 1080);
 
     let aspect_ratio = window_size.x as f32 / window_size.y as f32;
-    let (mut window, events) = match glfw.create_window(window_size.x, window_size.y, "OpenXR yay", glfw::WindowMode::Windowed) {
+    let (mut window, events) = match glfw.create_window(window_size.x, window_size.y, "THCATO", glfw::WindowMode::Windowed) {
         Some(stuff) => { stuff }
         None => {
             panic!("Unable to create a window!");
@@ -303,7 +308,7 @@ fn main() {
     //OpenGL static configuration
 	unsafe {
         gl::Enable(gl::CULL_FACE);										//Enable face culling
-        gl::DepthFunc(gl::LESS);										//Pass the fragment with the smallest z-value.
+        gl::DepthFunc(gl::LEQUAL);										//Pass the fragment with the smallest z-value.
 		gl::Enable(gl::FRAMEBUFFER_SRGB); 								//Enable automatic linear->SRGB space conversion
         gl::Enable(gl::BLEND);											//Enable alpha blending
         gl::Enable(gl::MULTISAMPLE);                                    //Enable MSAA
@@ -468,6 +473,7 @@ fn main() {
     let complex_instanced_3D = unsafe { glutil::compile_program_from_files("shaders/mapped_instanced.vert", "shaders/mapped.frag") };
     let shadow_3D = unsafe { glutil::compile_program_from_files("shaders/shadow.vert", "shaders/shadow.frag") };
     let shadow_instanced_3D = unsafe { glutil::compile_program_from_files("shaders/shadow_instanced.vert", "shaders/shadow.frag") };
+    let skybox_program = unsafe { glutil::compile_program_from_files("shaders/skybox.vert", "shaders/skybox.frag") };
     
     //Initialize default framebuffer
     let default_framebuffer = Framebuffer {
@@ -503,7 +509,7 @@ fn main() {
     //Initialize scene data struct
     let mut scene_data = SceneData {
         shadow_texture: shadow_rendertarget.texture,
-        programs: [complex_3D, complex_instanced_3D],
+        programs: [complex_3D, complex_instanced_3D, skybox_program],
         uniform_light,
         ..Default::default()
     };
@@ -579,7 +585,7 @@ fn main() {
         SimpleMesh::new(plane_vao, plane_index_count as GLint, "tiles", &mut texture_keeper, &tex_params)        
     };
     let plane_entity_index = scene_data.push_single_entity(plane_mesh);
-    scene_data.single_entities[plane_entity_index].uv_scale = 10.0;
+    scene_data.single_entities[plane_entity_index].uv_scale = 20.0;
     scene_data.single_entities[plane_entity_index].model_matrix = ozy::routines::uniform_scale(floor_plane_scale);
 
     //Create aabbs
@@ -600,9 +606,7 @@ fn main() {
             let mesa_scale = glm::vec3(2.5, 2.5, 0.5 * (height_scale as f32 + 1.0));
 
             let matrix = glm::translation(&mesa_position) * glm::scaling(&mesa_scale);
-            for k in 0..16 {
-                mesa_transforms[16 * (i * mesa_block_depth + j) + k] = matrix[k];
-            }
+            write_matrix_to_buffer(&mut mesa_transforms, i * mesa_block_depth + j, matrix);
 
             let mesa_aabb = AABB {
                 position: glm::vec4(mesa_position.x, mesa_position.y, mesa_position.z, 1.0),
@@ -649,6 +653,46 @@ fn main() {
     //Create dragon
     let dragon_mesh = SimpleMesh::from_ozy("models/dragon.ozy", &mut texture_keeper, &tex_params);
     let dragon_entity_index = scene_data.push_single_entity(dragon_mesh);
+
+    //Create the cube that will be user to render the skybox
+	scene_data.skybox_vao = ozy::prims::skybox_cube_vao();
+
+	//Create the skybox cubemap
+	scene_data.skybox_cubemap = unsafe {
+		let name = "totality";
+		let paths = [
+			&format!("skyboxes/{}_rt.tga", name),		//Right side
+			&format!("skyboxes/{}_lf.tga", name),		//Left side
+			&format!("skyboxes/{}_up.tga", name),		//Up side
+			&format!("skyboxes/{}_dn.tga", name),		//Down side
+			&format!("skyboxes/{}_bk.tga", name),		//Back side
+			&format!("skyboxes/{}_ft.tga", name)		//Front side
+		];
+
+		let mut cubemap = 0;
+		gl::GenTextures(1, &mut cubemap);
+		gl::BindTexture(gl::TEXTURE_CUBE_MAP, cubemap);
+		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_WRAP_R, gl::CLAMP_TO_EDGE as i32);
+		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+
+		//Place each piece of the skybox on the correct face
+		for i in 0..6 {
+			let image_data = glutil::image_data_from_path(paths[i], ColorSpace::Gamma);
+			gl::TexImage2D(gl::TEXTURE_CUBE_MAP_POSITIVE_X + i as u32,
+						   0,
+						   image_data.internal_format as i32,
+						   image_data.width as i32,
+						   image_data.height as i32,
+						   0,
+						   image_data.format,
+						   gl::UNSIGNED_BYTE,
+				  		   &image_data.data[0] as *const u8 as *const c_void);
+		}
+		cubemap
+	};
 
     //Create controller entities
     let mut left_wand_entity_index = 0;
@@ -884,7 +928,6 @@ fn main() {
         //Update sphere transforms
         for i in 0..sphere_block_width {
             let ypos = sphere_block_sidelength * i as f32 / (sphere_block_width as f32 - 1.0) - sphere_block_sidelength / 2.0 + 20.0;
-
             for j in 0..sphere_block_width {
                 let xpos = sphere_block_sidelength * j as f32 / (sphere_block_width as f32 - 1.0) - sphere_block_sidelength / 2.0;
                 
@@ -895,9 +938,7 @@ fn main() {
                                 glm::rotation(elapsed_time * rotation, &glm::vec3(0.0, 0.0, 1.0));
 
                 //Write the transform to the buffer
-                for k in 0..16 {
-                    sphere_transforms[16 * sphere_index + k] = transform[k];
-                }
+                write_matrix_to_buffer(&mut sphere_transforms, sphere_index, transform);
             }
         }
         scene_data.instanced_entities[sphere_entity_index].mesh.update_buffer(&sphere_transforms);
@@ -919,7 +960,6 @@ fn main() {
             let min_distance = sphere_radius + camera_hit_sphere_radius;
             if distance < min_distance {
                 let direction = camera_position - sphere_pos;
-
                 camera_position = sphere_pos + glm::normalize(&direction) * min_distance;
             }
         }
@@ -929,8 +969,25 @@ fn main() {
             camera_position.z = camera_hit_sphere_radius;
         }
 
+        //Check for camera collision with aabbs
+        for opt_aabb in collision_aabbs.iter() {
+            if let Some(aabb) = opt_aabb {
+                let closest_point = glm::vec3(
+                    clamp(camera_position.x, aabb.position.x - aabb.width, aabb.position.x + aabb.width),
+                    clamp(camera_position.y, aabb.position.y - aabb.depth, aabb.position.y + aabb.depth),
+                    clamp(camera_position.z, aabb.position.z - aabb.height, aabb.position.z + aabb.height)
+                );
+
+                let distance = glm::distance(&camera_position, &closest_point);
+                if distance > 0.0 && distance < camera_hit_sphere_radius {
+                    let vec = glm::normalize(&(camera_position - closest_point));
+                    camera_position += (camera_hit_sphere_radius - distance) * vec;
+                }
+            }
+        }
+
         //The user is considered to be always standing on the ground in tracking space
-        let tracked_user_position = xr_tracked_player_position(&view_space, &tracking_space, last_xr_render_time, &world_from_tracking);
+        let tracked_user_position = xrutil::tracked_player_position(&view_space, &tracking_space, last_xr_render_time, &world_from_tracking);
 
         //Checking if the user has collided with a floor
         match player_movement_state {
@@ -948,16 +1005,7 @@ fn main() {
                 //Check for AABB collision
                 for opt_aabb in collision_aabbs.iter() {
                     if let (None, Some(aabb)) = (standing_on, opt_aabb) {
-                        let mut pos = aabb.position;
-                        pos.z += aabb.height;
-                        let plane = Plane::new(pos, glm::vec4(0.0, 0.0, 1.0, 0.0));
-                        let aabb_boundaries = PlaneBoundaries {
-                            xmin: -aabb.width + aabb.position.x,
-                            xmax: aabb.width + aabb.position.x,
-                            ymin: -aabb.depth + aabb.position.y,
-                            ymax: aabb.depth + aabb.position.y
-                        };
-
+                        let (plane, aabb_boundaries) = aabb_get_top_plane(&aabb);
                         standing_on = standing_on_plane(&plane, &standing_segment, &aabb_boundaries);
                     }
                 }
@@ -985,15 +1033,7 @@ fn main() {
                 if let None = standing_on {
                     for opt_aabb in collision_aabbs.iter() {
                         if let Some(aabb) = opt_aabb {
-                            let mut pos = aabb.position;
-                            pos.z += aabb.height;
-                            let plane = Plane::new(pos, glm::vec4(0.0, 0.0, 1.0, 0.0));
-                            let aabb_boundaries = PlaneBoundaries {
-                                xmin: -aabb.width + aabb.position.x,
-                                xmax: aabb.width + aabb.position.x,
-                                ymin: -aabb.depth + aabb.position.y,
-                                ymax: aabb.depth + aabb.position.y
-                            };
+                            let (plane, aabb_boundaries) = aabb_get_top_plane(&aabb);
                             standing_on = standing_on_plane(&plane, &standing_segment, &aabb_boundaries);
                             if let Some(_) = standing_on {
                                 break;
@@ -1024,11 +1064,9 @@ fn main() {
                     let focus = glm::vec3(tracked_user_position.x, tracked_user_position.y, 0.0);
 
                     let distance = glm::distance(&closest_point_on_aabb, &focus);
-                    if distance < player_radius {
-                        let vec = focus - closest_point_on_aabb;
-                        if vec != glm::zero() {
-                            tracking_space_position += (player_radius - distance) * glm::normalize(&(focus - closest_point_on_aabb));
-                        }
+                    if distance > 0.0 && distance < player_radius {
+                        let vec = glm::normalize(&(focus - closest_point_on_aabb));
+                        tracking_space_position += (player_radius - distance) * vec;
                     }
                 }
             }
@@ -1099,8 +1137,8 @@ fn main() {
                             let right_hand_pose = xrutil::locate_space(&right_hand_action_space, &tracking_space, wait_info.predicted_display_time);
 
                             //Right here is where we want to update the controller object's model matrix
-                            xr_entity_pose_update(&mut scene_data, left_wand_entity_index, left_hand_pose, &world_from_tracking);
-                            xr_entity_pose_update(&mut scene_data, right_wand_entity_index, right_hand_pose, &world_from_tracking);
+                            xrutil::entity_pose_update(&mut scene_data, left_wand_entity_index, left_hand_pose, &world_from_tracking);
+                            xrutil::entity_pose_update(&mut scene_data, right_wand_entity_index, right_hand_pose, &world_from_tracking);
 
                             let mut sc_indices = vec![0; views.len()];
                             for i in 0..views.len() {
@@ -1174,10 +1212,11 @@ fn main() {
                                 );
 
                                 //Actually rendering
-                                let view_data = ViewData {
-                                    view_position: glm::vec4(eye_world_matrix[12], eye_world_matrix[13], eye_world_matrix[14], 1.0),
-                                    view_projection: perspective * view_matrix
-                                };
+                                let view_data = ViewData::new(
+                                    glm::vec4(eye_world_matrix[12], eye_world_matrix[13], eye_world_matrix[14], 1.0),
+                                    view_matrix,
+                                    perspective
+                                );
                                 gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
                                 gl::Viewport(0, 0, swapchain_size.x, swapchain_size.y);
                                 render_main_scene(&scene_data, &view_data);
@@ -1190,10 +1229,11 @@ fn main() {
                                 if let Some(pose) = xrutil::locate_space(&view_space, &tracking_space, wait_info.predicted_display_time) {
                                     let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);
                                     let v_world_pos = xrutil::pose_to_mat4(&pose, &world_from_tracking);
-                                    let view_state = ViewData {
-                                        view_position: glm::vec4(v_world_pos[12], v_world_pos[13], v_world_pos[14], 1.0),
-                                        view_projection: screen_state.get_clipping_from_view() * v_mat
-                                    };
+                                    let view_state = ViewData::new(
+                                        glm::vec4(v_world_pos[12], v_world_pos[13], v_world_pos[14], 1.0),
+                                        v_mat,
+                                        *screen_state.get_clipping_from_view()
+                                    );
                                     default_framebuffer.bind();
                                     render_main_scene(&scene_data, &view_state);
                                 }
@@ -1246,10 +1286,11 @@ fn main() {
 
             //Main window rendering
             if !hmd_pov {
-                let freecam_viewdata = ViewData {
-                    view_position: glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0),
-                    view_projection: *screen_state.get_clipping_from_world()
-                };
+                let freecam_viewdata = ViewData::new(
+                    glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0),
+                    *screen_state.get_view_from_world(),
+                    *screen_state.get_clipping_from_view()
+                );
                 default_framebuffer.bind();
                 render_main_scene(&scene_data, &freecam_viewdata);
             }

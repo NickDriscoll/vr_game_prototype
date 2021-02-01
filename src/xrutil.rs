@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+use crate::render::SceneData;
 
 pub fn print_pose(pose: xr::Posef) {
     println!("Position: ({}, {}, {})", pose.position.x, pose.position.y, pose.position.z);
@@ -110,6 +111,19 @@ pub fn make_reference_space<G: xr::Graphics>(session: &Option<xr::Session<G>>, r
     }
 }
 
+
+pub fn entity_pose_update(scene_data: &mut SceneData, entity_index: usize, pose: Option<xr::Posef>, world_from_tracking: &glm::TMat4<f32>) {
+    if let Some(p) = pose {
+        scene_data.single_entities[entity_index].model_matrix = pose_to_mat4(&p, world_from_tracking);
+    }
+}
+
+pub fn tracked_player_position(view_space: &Option<xr::Space>, tracking_space: &Option<xr::Space>, time: xr::Time, world_from_tracking: &glm::TMat4<f32>) -> glm::TVec4<f32> {
+    match locate_space(&view_space, &tracking_space, time) {
+        Some(pose) => { world_from_tracking * glm::vec4(pose.position.x, pose.position.y, 0.0, 1.0) }
+        None => { glm::zero() }
+    }
+}
 
 /*
 unsafe extern "system" fn debug_callback(severity_flags: DebugUtilsMessageSeverityFlagsEXT, type_flags: DebugUtilsMessageTypeFlagsEXT, callback_data: *const DebugUtilsMessengerCallbackDataEXT, user_data: *mut c_void) -> Bool32 {

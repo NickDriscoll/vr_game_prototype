@@ -1,3 +1,4 @@
+use std::ptr;
 use ozy::render::{InstancedMesh, SimpleMesh};
 use crate::glutil;
 use gl::types::*;
@@ -21,9 +22,11 @@ pub struct SceneData {
     pub complex_normals: bool,
     pub outlining: bool,
     pub shadow_texture: GLuint,
+    pub skybox_cubemap: GLuint,
+    pub skybox_vao: GLuint,
     pub uniform_light: glm::TVec4<f32>,
     pub shadow_matrix: glm::TMat4<f32>,
-    pub programs: [GLuint; 2],              //non-instanced program followed by instanced program
+    pub programs: [GLuint; 3],              //non-instanced program followed by instanced program followed by skybox program
     pub single_entities: Vec<SingleEntity>,
     pub instanced_entities: Vec<InstancedEntity>,
 }
@@ -58,9 +61,11 @@ impl Default for SceneData {
             complex_normals: true,
             outlining: false,
             shadow_texture: 0,
+            skybox_cubemap: 0,
+            skybox_vao: 0,
             uniform_light: glm::vec4(0.0, 0.0, 1.0, 0.0),
             shadow_matrix: glm::identity(),
-            programs: [0, 0],
+            programs: [0, 0, 0],
             single_entities: Vec::new(),
             instanced_entities: Vec::new()
         }
@@ -69,12 +74,27 @@ impl Default for SceneData {
 
 pub struct ViewData {
     pub view_position: glm::TVec4<f32>,
+    pub view_matrix: glm::TMat4<f32>,
+    pub projection_matrix: glm::TMat4<f32>,
     pub view_projection: glm::TMat4<f32>
+}
+
+impl ViewData {
+    pub fn new(view_position: glm::TVec4<f32>, view_matrix: glm::TMat4<f32>, projection_matrix: glm::TMat4<f32>) -> Self {
+        Self {
+            view_position,
+            view_matrix,
+            projection_matrix,
+            view_projection: projection_matrix * view_matrix
+        }
+    }
 }
 
 pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
     const SINGULAR_PROGRAM_INDEX: usize = 0;
     const INSTANCED_PROGRAM_INDEX: usize = 1;
+    const SKYBOX_PROGRAM_INDEX: usize = 2;
+
     let texture_map_names = ["albedo_map", "normal_map", "roughness_map", "shadow_map"];
 
     //Main scene rendering
@@ -120,4 +140,18 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
         glutil::bind_float(scene_data.programs[INSTANCED_PROGRAM_INDEX], "uv_scale", entity.uv_scale);
         entity.mesh.draw();
     }
+
+    //Skybox rendering
+    
+	//Compute the view-projection matrix for the skybox (the conversion functions are just there to nullify the translation component of the view matrix)
+	//The skybox vertices should obviously be rotated along with the camera, but they shouldn't be translated in order to maintain the illusion
+	//that the sky is infinitely far away
+    let skybox_view_projection = view_data.projection_matrix * glm::mat3_to_mat4(&glm::mat4_to_mat3(&view_data.view_matrix));
+
+    //Render the skybox
+    gl::UseProgram(scene_data.programs[SKYBOX_PROGRAM_INDEX]);
+    glutil::bind_matrix4(scene_data.programs[SKYBOX_PROGRAM_INDEX], "view_projection", &skybox_view_projection);
+    gl::BindTexture(gl::TEXTURE_CUBE_MAP, scene_data.skybox_cubemap);
+    gl::BindVertexArray(scene_data.skybox_vao);
+    gl::DrawElements(gl::TRIANGLES, 36, gl::UNSIGNED_SHORT, ptr::null());
 }
