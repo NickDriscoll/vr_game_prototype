@@ -54,7 +54,7 @@ fn clamp<T: PartialOrd>(x: T, min: T, max: T) -> T {
 }
 
 fn standing_on_plane(plane: &Plane, segment: &LineSegment, boundaries: &PlaneBoundaries) -> Option<glm::TVec4<f32>> {
-    let collision_point = segment_intersect_plane(&plane, &segment.p0, &segment.p1);
+    let collision_point = segment_intersect_plane(&plane, &segment);
     if let Some(point) = collision_point {
         let on_aabb = point.x > boundaries.xmin &&
                       point.x < boundaries.xmax &&
@@ -288,7 +288,7 @@ fn main() {
 	glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
 
     //Create the window
-    let window_size = glm::vec2(1920, 1080);
+    let window_size = glm::vec2(1280, 720);
 
     let aspect_ratio = window_size.x as f32 / window_size.y as f32;
     let (mut window, events) = match glfw.create_window(window_size.x, window_size.y, "THCATO", glfw::WindowMode::Windowed) {
@@ -485,6 +485,7 @@ fn main() {
 
     let mut mouselook_enabled = false;
     let mut camera_position = glm::vec3(0.0, -8.0, 5.5);
+    let mut last_camera_position = camera_position;
     let mut camera_input: glm::TVec4<f32> = glm::zero();             //This is a unit vector in the xz plane in view space that represents the input camera movement vector
     let mut camera_orientation = glm::vec2(0.0, -glm::half_pi::<f32>() * 0.6);
     let mut camera_speed = 5.0;
@@ -982,6 +983,32 @@ fn main() {
                 if distance > 0.0 && distance < camera_hit_sphere_radius {
                     let vec = glm::normalize(&(camera_position - closest_point));
                     camera_position += (camera_hit_sphere_radius - distance) * vec;
+                } else if distance == 0.0 {
+                    //Prevent the camera from breaking into AABBs by moving fast enough
+                    let segment = LineSegment {
+                        p0: glm::vec4(last_camera_position.x, last_camera_position.y, last_camera_position.z, 1.0),
+                        p1: glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0),
+                    };
+
+                    let planes = [
+                        Plane::new(aabb.position + glm::vec4(aabb.width, 0.0, 0.0, 0.0), glm::vec4(1.0, 0.0, 0.0, 0.0)),
+                        Plane::new(aabb.position + glm::vec4(-aabb.width, 0.0, 0.0, 0.0), glm::vec4(-1.0, 0.0, 0.0, 0.0)),
+                        Plane::new(aabb.position + glm::vec4(0.0, aabb.depth, 0.0, 0.0), glm::vec4(0.0, 1.0, 0.0, 0.0)),
+                        Plane::new(aabb.position + glm::vec4(0.0, -aabb.depth, 0.0, 0.0), glm::vec4(0.0, -1.0, 0.0, 0.0)),
+                        Plane::new(aabb.position + glm::vec4(0.0, 0.0, aabb.height, 0.0), glm::vec4(0.0, 0.0, 1.0, 0.0)),
+                        Plane::new(aabb.position + glm::vec4(0.0, 0.0, -aabb.height, 0.0), glm::vec4(0.0, 0.0, -1.0, 0.0)),
+                    ];
+
+                    let mut intersection_point;
+                    for plane in &planes {
+                        intersection_point = segment_intersect_plane(plane, &segment);
+                        if let Some(point) = intersection_point {
+                            let dist = point_plane_distance(&glm::vec3_to_vec4(&camera_position), plane);
+                            camera_position += (camera_hit_sphere_radius - dist) * glm::vec4_to_vec3(&plane.normal);
+
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -1083,6 +1110,7 @@ fn main() {
         scene_data.shadow_matrix = shadow_projection * shadow_view;
 
         last_tracked_user_position = tracked_user_position;
+        last_camera_position = camera_position;
         //Pre-render phase
 
         //Create a view matrix from the camera state

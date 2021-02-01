@@ -33,14 +33,14 @@ pub struct AABB {
     pub height: f32
 }
 
-pub fn segment_intersect_plane(plane: &Plane, point0: &glm::TVec4<f32>, point1: &glm::TVec4<f32>) -> Option<glm::TVec4<f32>> {
-    let denominator = glm::dot(&plane.normal, &(point1 - point0));
+pub fn segment_intersect_plane(plane: &Plane, segment: &LineSegment) -> Option<glm::TVec4<f32>> {
+    let denominator = glm::dot(&plane.normal, &(segment.p1 - segment.p0));
 
     //Check for divide-by-zero
     if denominator != 0.0 {
-        let x = glm::dot(&plane.normal, &(plane.point - point0)) / denominator;
+        let x = glm::dot(&plane.normal, &(plane.point - segment.p0)) / denominator;
         if x > 0.0 && x <= 1.0 {
-            let result = (1.0 - x) * point0 + x * point1;
+            let result = (1.0 - x) * segment.p0 + x * segment.p1;
             Some(glm::vec4(result.x, result.y, result.z, 1.0))
         } else {
             None
