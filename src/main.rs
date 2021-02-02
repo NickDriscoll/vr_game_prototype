@@ -12,7 +12,7 @@ use structs::{Command, Sphere};
 use render::{render_main_scene, SceneData, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
-use glfw::{Action, Context, Key, WindowEvent};
+use glfw::{Action, Context, Key, WindowEvent, WindowMode};
 use gl::types::*;
 use std::process::exit;
 use std::ptr;
@@ -288,7 +288,7 @@ fn main() {
 	glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
 
     //Create the window
-    let window_size = glm::vec2(1280, 720);
+    let mut window_size = glm::vec2(1920, 1080);
 
     let aspect_ratio = window_size.x as f32 / window_size.y as f32;
     let (mut window, events) = match glfw.create_window(window_size.x, window_size.y, "THCATO", glfw::WindowMode::Windowed) {
@@ -476,7 +476,7 @@ fn main() {
     let skybox_program = unsafe { glutil::compile_program_from_files("shaders/skybox.vert", "shaders/skybox.frag") };
     
     //Initialize default framebuffer
-    let default_framebuffer = Framebuffer {
+    let mut default_framebuffer = Framebuffer {
         name: 0,
         size: (window_size.x as GLsizei, window_size.y as GLsizei),
         clear_flags: gl::DEPTH_BUFFER_BIT | gl::COLOR_BUFFER_BIT,
@@ -494,8 +494,23 @@ fn main() {
     //Initialize screen state
     let mut screen_state = ScreenState::new(window_size, glm::identity(), glm::perspective_zo(aspect_ratio, glm::half_pi(), NEAR_DISTANCE, FAR_DISTANCE));
 
+    //Fullscreen the window
+    /*
+    glfw.with_primary_monitor_mut(|_, opt_monitor| {
+        if let Some(monitor) = opt_monitor {
+            let pos = monitor.get_pos();
+            if let Some(mode) = monitor.get_video_mode() {
+                window_size = glm::vec2(mode.width, mode.height);
+                default_framebuffer.size = (window_size.x as GLsizei, window_size.y as GLsizei);
+                screen_state = ScreenState::new(window_size, glm::identity(), glm::perspective_zo(aspect_ratio, glm::half_pi(), NEAR_DISTANCE, FAR_DISTANCE));
+                window.set_monitor(WindowMode::FullScreen(monitor), pos.0, pos.1, mode.width, mode.height, Some(144));
+            }
+        }
+    });
+    */
+
     //Uniform light source
-    let mut uniform_light = glm::normalize(&glm::vec4(-1.5, -3.0, 3.0, 0.0));
+    let mut uniform_light = glm::normalize(&glm::vec4(1.0, 0.0, 1.0, 0.0));
 
     //Acceleration due to gravity
     let acceleration_gravity = 20.0;        //20.0 m/s
@@ -715,6 +730,9 @@ fn main() {
     let mut player_movement_state = MoveState::Walking;
     let player_radius = 0.15;                               //The player's radius as a circle in the xy plane
     let mut last_tracked_user_position = glm::vec4(0.0, 0.0, 0.0, 1.0);
+    let mut was_holding_left_trigger = false;
+    const MAX_JUMPS: usize = 2;
+    let mut player_jumps_remaining = MAX_JUMPS;
     
     //Matrices for relating tracking space and world space
     let mut tracking_space_position = glm::vec3(0.0, 0.0, 0.0);
@@ -729,7 +747,7 @@ fn main() {
     let mut elapsed_time = 0.0;
     let mut command_buffer = Vec::new();
     while !window.should_close() {
-        //Compute the number of seconds since the start of the last frame (i.e at 60fps, delta_time == 0.016667)
+        //Compute the number of seconds since the start of the last frame (i.e at 60fps, delta_time ~= 0.016667)
         let delta_time = {
 			let frame_instant = Instant::now();
 			let dur = frame_instant.duration_since(last_frame_instant);
@@ -753,6 +771,7 @@ fn main() {
         let left_trigger_state = xrutil::get_actionstate(&xr_session, &left_trigger_action);
         let right_trigger_state = xrutil::get_actionstate(&xr_session, &right_trigger_action);
 
+        //Calculate the velocity of tracking space
         tracking_space_velocity = {
             const MOVEMENT_SPEED: f32 = 5.0;
             const DEADZONE_MAGNITUDE: f32 = 0.1;
@@ -785,10 +804,17 @@ fn main() {
             };
 
             if let Some(state) = &left_trigger_state {
-                if state.current_state == 1.0 && player_movement_state != MoveState::Falling {
-                    velocity += glm::vec3(0.0, 0.0, 10.0);
+                let holding = state.current_state == 1.0;
+
+                if holding && !was_holding_left_trigger && player_jumps_remaining > 0 {
+                    player_jumps_remaining -= 1;
+                    velocity = glm::vec3(velocity.x, velocity.y, 10.0);
                     player_movement_state = MoveState::Falling;
+                } else if state.current_state < 1.0 && was_holding_left_trigger && velocity.z > 0.0 {
+                    velocity.z /= 2.0;
                 }
+
+                was_holding_left_trigger = holding;
             }
 
             velocity
@@ -1038,6 +1064,7 @@ fn main() {
                 }
 
                 if let Some(point) = standing_on {
+                    player_jumps_remaining = MAX_JUMPS;
                     tracking_space_velocity.z = 0.0;
                     tracking_space_position += glm::vec4_to_vec3(&(point - tracked_user_position));
                     player_movement_state = MoveState::Walking;
@@ -1073,13 +1100,14 @@ fn main() {
                     tracking_space_velocity.z = 0.0;
                     tracking_space_position += glm::vec4_to_vec3(&(point - tracked_user_position));
                 } else {
+                    player_jumps_remaining -= 1;
                     player_movement_state = MoveState::Falling;
                 }
             }
         }
 
         //Check side collision with AABBs
-        //We reduce this to a circle vs rectangle in 2D
+        //We reduce this to a circle vs rectangle in the xy plane
         for opt_aabb in collision_aabbs.iter() {
             if let Some(aabb) = opt_aabb {
                 if tracking_space_position.z + glm::epsilon::<f32>() < aabb.position.z + aabb.height {
