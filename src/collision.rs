@@ -50,6 +50,24 @@ pub fn segment_intersect_plane(plane: &Plane, segment: &LineSegment) -> Option<g
     }
 }
 
+pub fn standing_on_plane(plane: &Plane, segment: &LineSegment, boundaries: &PlaneBoundaries) -> Option<glm::TVec4<f32>> {
+    let collision_point = segment_intersect_plane(&plane, &segment);
+    if let Some(point) = collision_point {
+        let on_aabb = point.x > boundaries.xmin &&
+                      point.x < boundaries.xmax &&
+                      point.y > boundaries.ymin &&
+                      point.y < boundaries.ymax;
+
+        if on_aabb {
+            Some(point)
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
 pub fn point_plane_distance(point: &glm::TVec4<f32>, plane: &Plane) -> f32 {
     glm::dot(&plane.normal, &(point - plane.point))
 }

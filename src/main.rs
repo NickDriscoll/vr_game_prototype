@@ -25,7 +25,7 @@ use ozy::routines::uniform_scale;
 use ozy::glutil::ColorSpace;
 use ozy::render::{Framebuffer, InstancedMesh, RenderTarget, ScreenState, SimpleMesh, TextureKeeper};
 use ozy::structs::OptionVec;
-use crate::collision::{AABB, LineSegment, Plane, PlaneBoundaries, segment_intersect_plane, point_plane_distance};
+use crate::collision::{AABB, LineSegment, Plane, PlaneBoundaries, segment_intersect_plane, standing_on_plane, point_plane_distance};
 
 #[cfg(windows)]
 use winapi::um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext};
@@ -51,24 +51,6 @@ fn clamp<T: PartialOrd>(x: T, min: T, max: T) -> T {
     if x < min { min }
     else if x > max { max }
     else { x }
-}
-
-fn standing_on_plane(plane: &Plane, segment: &LineSegment, boundaries: &PlaneBoundaries) -> Option<glm::TVec4<f32>> {
-    let collision_point = segment_intersect_plane(&plane, &segment);
-    if let Some(point) = collision_point {
-        let on_aabb = point.x > boundaries.xmin &&
-                      point.x < boundaries.xmax &&
-                      point.y > boundaries.ymin &&
-                      point.y < boundaries.ymax;
-
-        if on_aabb {
-            Some(point)
-        } else {
-            None
-        }
-    } else {
-        None
-    }
 }
 
 fn write_matrix_to_buffer(buffer: &mut [f32], index: usize, matrix: glm::TMat4<f32>) {    
@@ -225,7 +207,7 @@ fn main() {
     let left_trigger_action = xrutil::make_action::<f32>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_trigger", "Left hand trigger");
     let right_trigger_action = xrutil::make_action::<f32>(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_trigger", "Right hand trigger");
     let right_hand_pose_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_pose", "Right hand pose");
-    let left_hand_stick_action = xrutil::make_action::<xr::Vector2f>(&right_hand_subaction_path, &xr_controller_actionset, "left_hand_vector", "Left hand vector");
+    let player_move_action = xrutil::make_action::<xr::Vector2f>(&left_hand_subaction_path, &xr_controller_actionset, "player_move", "Player movement");
 
     //Suggest interaction profile bindings 
     match (&xr_instance,
@@ -234,7 +216,7 @@ fn main() {
            &left_trigger_action,
            &right_trigger_action,
            &right_hand_pose_action,
-           &left_hand_stick_action,
+           &player_move_action,
            &left_grip_pose_path,
            &left_aim_pose_path,
            &left_trigger_float_path,
@@ -613,7 +595,6 @@ fn main() {
     let mesa_spacing = 7.5;
     for i in 0..mesa_block_width {
         let ypos = i as f32 * mesa_spacing - 40.0;
-
         for j in 0..mesa_block_depth {
             let xpos = j as f32 * mesa_spacing + 40.0;
             let height_scale = i + j;
@@ -767,7 +748,7 @@ fn main() {
         }
 
         //Get action states
-        let left_stick_state = xrutil::get_actionstate(&xr_session, &left_hand_stick_action);
+        let left_stick_state = xrutil::get_actionstate(&xr_session, &player_move_action);
         let left_trigger_state = xrutil::get_actionstate(&xr_session, &left_trigger_action);
         let right_trigger_state = xrutil::get_actionstate(&xr_session, &right_trigger_action);
 
