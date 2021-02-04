@@ -1,3 +1,7 @@
+use std::fs::File;
+use std::io::Read;
+use ozy::io;
+
 pub struct LineSegment {
     pub p0: glm::TVec4<f32>,
     pub p1: glm::TVec4<f32>
@@ -31,6 +35,97 @@ pub struct AABB {
     pub width: f32,
     pub depth: f32,
     pub height: f32
+}
+
+#[derive(Debug)]
+pub struct Terrain {
+    pub vertices: Vec<glm::TVec3<f32>>,
+    pub indices: Vec<u16>,
+    pub face_normals: Vec<glm::TVec3<f32>>
+}
+
+impl Terrain {
+    pub fn from_ozt(path: &str) -> Self {
+        let mut terrain_file = match File::open(path) {
+            Ok(file) => { file }
+            Err(e) => {
+                panic!("Error reading terrain file: {}", e);
+            }
+        };
+
+        let vertices = {            
+            let byte_count = match io::read_u32(&mut terrain_file, "Error reading byte_count.") {
+                Some(count) => { count as usize }
+                None => { panic!("Couldn't read byte count"); }
+            };
+
+            let mut bytes = vec![0; byte_count];
+            if let Err(e) = terrain_file.read_exact(bytes.as_mut_slice()) {
+                panic!("Error reading vertex data from file: {}", e);
+            }
+
+            let byte_step = 12;
+            let mut vertices = Vec::with_capacity(byte_count / byte_step);            
+            for i in (0..bytes.len()).step_by(byte_step) {
+                let x_bytes = [bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]];
+                let y_bytes = [bytes[i + 4], bytes[i + 5], bytes[i + 6], bytes[i + 7]];
+                let z_bytes = [bytes[i + 8], bytes[i + 9], bytes[i + 10], bytes[i + 11]];
+
+                let x = f32::from_le_bytes(x_bytes);
+                let y = f32::from_le_bytes(y_bytes);
+                let z = f32::from_le_bytes(z_bytes);
+
+                vertices.push(glm::vec3(x, y, z));
+            }
+            vertices
+        };
+        
+        let indices = {
+            let index_count = match io::read_u32(&mut terrain_file, "Error reading index_count") {
+                Some(n) => { (n / 2) as usize }
+                None => { panic!("Couldn't read byte count"); }
+            };
+            
+            let indices = match io::read_u16_data(&mut terrain_file, index_count) {
+                Some(n) => { n }
+                None => { panic!("Couldn't read byte count"); }
+            };
+            indices
+        };
+
+        let face_normals = {
+            let byte_count = match io::read_u32(&mut terrain_file, "Error reading byte_count") {
+                Some(n) => { n as usize }
+                None => { panic!("Couldn't read byte count"); }
+            };
+
+            let mut bytes = vec![0; byte_count];
+            if let Err(e) = terrain_file.read_exact(bytes.as_mut_slice()) {
+                panic!("Error reading face normal data from file: {}", e);
+            }
+
+            let byte_step = 12;
+            let mut normals = Vec::with_capacity(byte_count / byte_step);            
+            for i in (0..bytes.len()).step_by(byte_step) {
+                let x_bytes = [bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]];
+                let y_bytes = [bytes[i + 4], bytes[i + 5], bytes[i + 6], bytes[i + 7]];
+                let z_bytes = [bytes[i + 8], bytes[i + 9], bytes[i + 10], bytes[i + 11]];
+
+                let x = f32::from_le_bytes(x_bytes);
+                let y = f32::from_le_bytes(y_bytes);
+                let z = f32::from_le_bytes(z_bytes);
+
+                normals.push(glm::vec3(x, y, z));
+            }
+            normals
+        };
+
+        Self {
+            vertices,
+            indices,
+            face_normals
+        }
+    }
 }
 
 pub fn segment_intersect_plane(plane: &Plane, segment: &LineSegment) -> Option<glm::TVec4<f32>> {

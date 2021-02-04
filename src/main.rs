@@ -25,7 +25,8 @@ use ozy::routines::uniform_scale;
 use ozy::glutil::ColorSpace;
 use ozy::render::{Framebuffer, InstancedMesh, RenderTarget, ScreenState, SimpleMesh, TextureKeeper};
 use ozy::structs::OptionVec;
-use crate::collision::{AABB, LineSegment, Plane, PlaneBoundaries, segment_intersect_plane, standing_on_plane, point_plane_distance};
+use ozy::io;
+use crate::collision::{AABB, LineSegment, Plane, PlaneBoundaries, Terrain, segment_intersect_plane, standing_on_plane, point_plane_distance};
 
 #[cfg(windows)]
 use winapi::um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext};
@@ -492,7 +493,7 @@ fn main() {
     */
 
     //Uniform light source
-    let mut uniform_light = glm::normalize(&glm::vec4(1.0, 0.0, 1.0, 0.0));
+    let mut uniform_light = glm::normalize(&glm::vec4(1.0, 0.3, 1.0, 0.0));
 
     //Acceleration due to gravity
     let acceleration_gravity = 20.0;        //20.0 m/s
@@ -566,6 +567,10 @@ fn main() {
         state
     };
 
+    //Load terrain data
+    let terrain = Terrain::from_ozt("models/terrain.ozt");
+    println!("Verts: {:?}\nIndices: {:?}\nFace normals: {:?}", terrain.vertices.len(), terrain.indices.len(), terrain.face_normals.len());
+
     //Initialize floor plane
     let floor_plane_scale = 160.0;
     let floor_plane = Plane::new(glm::vec4(0.0, 0.0, 0.0, 1.0), glm::vec4(0.0, 0.0, 1.0, 0.0));
@@ -575,6 +580,7 @@ fn main() {
         ymin: -floor_plane_scale,
         ymax: floor_plane_scale
     };
+    /*
     let plane_mesh = {
         let plane_vertex_width = 2;
         let plane_index_count = (plane_vertex_width - 1) * (plane_vertex_width - 1) * 6;
@@ -582,9 +588,11 @@ fn main() {
 
         SimpleMesh::new(plane_vao, plane_index_count as GLint, "tiles", &mut texture_keeper, &tex_params)        
     };
+    */
+    let plane_mesh = SimpleMesh::from_ozy("models/terrain.ozy", &mut texture_keeper, &tex_params);
     let plane_entity_index = scene_data.push_single_entity(plane_mesh);
     scene_data.single_entities[plane_entity_index].uv_scale = 20.0;
-    scene_data.single_entities[plane_entity_index].model_matrix = ozy::routines::uniform_scale(floor_plane_scale);
+    scene_data.single_entities[plane_entity_index].model_matrix = ozy::routines::uniform_scale(1.0);
 
     //Create aabbs
     let mesa_mesh = SimpleMesh::from_ozy("models/cube.ozy", &mut texture_keeper, &tex_params);
@@ -620,33 +628,6 @@ fn main() {
     scene_data.single_entities[mesa_entity_index].uv_scale = 2.0;
     scene_data.instanced_entities[mesa_entity_index].mesh.update_buffer(&mesa_transforms);
 
-    //Data for the sphere square
-    let sphere_block_scale = 1;
-    let sphere_block_width = 8 * sphere_block_scale;
-    let sphere_block_sidelength = 40.0 * sphere_block_scale as f32;
-
-    let sphere_count = sphere_block_width * sphere_block_width;
-    let mut sphere_transforms = vec![0.0; sphere_count * 16];
-    let sphere_mesh = SimpleMesh::from_ozy("models/sphere.ozy", &mut texture_keeper, &tex_params);
-
-    //Add sphere instanced mesh to list of drawn instanced entities
-    let sphere_instanced_mesh = unsafe { InstancedMesh::from_simplemesh(&sphere_mesh, sphere_count, 5) };
-    let sphere_entity_index = scene_data.push_instanced_entity(sphere_instanced_mesh);
-    scene_data.instanced_entities[sphere_entity_index].uv_scale = 5.0;
-
-    //Create spheres    
-    let mut spheres = Vec::with_capacity(sphere_count);
-    for i in 0..sphere_count {
-        let randomness_multiplier = 4.0;
-        let (rotation, hover) = if i == 0 {
-            (0.0, 0.0)
-        } else {
-            (2.0 * randomness_multiplier * random::<f32>(), randomness_multiplier * random::<f32>())
-        };
-        let sphere = Sphere::new(rotation, hover);
-        spheres.push(sphere)
-    }
-
     //Create dragon
     let dragon_mesh = SimpleMesh::from_ozy("models/dragon.ozy", &mut texture_keeper, &tex_params);
     let dragon_entity_index = scene_data.push_single_entity(dragon_mesh);
@@ -656,7 +637,7 @@ fn main() {
 
 	//Create the skybox cubemap
 	scene_data.skybox_cubemap = unsafe {
-		let name = "totality";
+		let name = "siege";
 		let paths = [
 			&format!("skyboxes/{}_rt.tga", name),		//Right side
 			&format!("skyboxes/{}_lf.tga", name),		//Left side
@@ -933,44 +914,10 @@ fn main() {
         let camera_velocity = camera_speed * glm::vec4_to_vec3(&(glm::affine_inverse(*screen_state.get_view_from_world()) * camera_input));
         camera_position += camera_velocity * delta_time;
 
-        //Update sphere transforms
-        for i in 0..sphere_block_width {
-            let ypos = sphere_block_sidelength * i as f32 / (sphere_block_width as f32 - 1.0) - sphere_block_sidelength / 2.0 + 20.0;
-            for j in 0..sphere_block_width {
-                let xpos = sphere_block_sidelength * j as f32 / (sphere_block_width as f32 - 1.0) - sphere_block_sidelength / 2.0;
-                
-                let sphere_index = i * sphere_block_width + j;
-                let rotation = spheres[sphere_index].rotation_multiplier;
-                let hover = spheres[sphere_index].hover_multiplier;
-                let transform = glm::translation(&glm::vec3(xpos, ypos, 2.0 + f32::sin(hover * elapsed_time))) * 
-                                glm::rotation(elapsed_time * rotation, &glm::vec3(0.0, 0.0, 1.0));
-
-                //Write the transform to the buffer
-                write_matrix_to_buffer(&mut sphere_transforms, sphere_index, transform);
-            }
-        }
-        scene_data.instanced_entities[sphere_entity_index].mesh.update_buffer(&sphere_transforms);
-
         //Spin the dragon
         scene_data.single_entities[dragon_entity_index].model_matrix = glm::translation(&glm::vec3(0.0, -14.0, 0.0)) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
 
         //Collision handling section
-
-        for i in 0..sphere_count {
-            let sphere_pos = glm::vec3(
-                sphere_transforms[16 * i + 12],
-                sphere_transforms[16 * i + 13],
-                sphere_transforms[16 * i + 14]
-            );            
-            let sphere_radius = 1.0;
-
-            let distance = glm::distance(&sphere_pos, &camera_position);
-            let min_distance = sphere_radius + camera_hit_sphere_radius;
-            if distance < min_distance {
-                let direction = camera_position - sphere_pos;
-                camera_position = sphere_pos + glm::normalize(&direction) * min_distance;
-            }
-        }
         
         //Check for camera collision with the floor
         if camera_position.z < camera_hit_sphere_radius {
