@@ -21,5 +21,6 @@ pub enum Command {
     ToggleComplexNormals,
     ToggleWireframe,
     ToggleOutline,
-    ToggleHMDPov
+    ToggleHMDPov,
+    ResetPlayerPosition
 }

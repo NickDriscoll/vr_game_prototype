@@ -53,7 +53,7 @@ impl Terrain {
             }
         };
 
-        let vertices = {            
+        let vertices = {
             let byte_count = match io::read_u32(&mut terrain_file, "Error reading byte_count.") {
                 Some(count) => { count as usize }
                 None => { panic!("Couldn't read byte count"); }
@@ -64,7 +64,7 @@ impl Terrain {
                 panic!("Error reading vertex data from file: {}", e);
             }
 
-            let byte_step = 12;
+            let byte_step = 12; // One f32 for each of x,y,z
             let mut vertices = Vec::with_capacity(byte_count / byte_step);            
             for i in (0..bytes.len()).step_by(byte_step) {
                 let x_bytes = [bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]];
