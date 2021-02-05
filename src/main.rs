@@ -959,6 +959,10 @@ fn main() {
         //Spin the dragon
         scene_data.single_entities[dragon_entity_index].model_matrix = glm::translation(&glm::vec3(0.0, -14.0, 0.0)) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
 
+        //Update tracking space location
+        tracking_space_position += tracking_space_velocity * delta_time;
+        world_from_tracking = glm::translation(&tracking_space_position);
+
         //Collision handling section
         
         //Check for camera collision with the floor
@@ -1107,7 +1111,7 @@ fn main() {
                     player_jumps_remaining = MAX_JUMPS;
                     player_movement_state = MoveState::Walking;
                 }
-            }
+            }            
             MoveState::Walking => {
                 let up_point = tracked_user_segment.p1 + glm::vec4(0.0, 0.0, 0.5, 1.0);
                 let down_point = tracked_user_segment.p1 - glm::vec4(0.0, 0.0, 0.2, 1.0);
