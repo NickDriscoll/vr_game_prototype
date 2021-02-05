@@ -771,7 +771,7 @@ fn main() {
             const DEADZONE_MAGNITUDE: f32 = 0.1;
             let mut velocity = match &left_stick_state {
                 Some(stick_state) => {
-                    if stick_state.changed_since_last_sync {                            
+                    if stick_state.changed_since_last_sync && player_movement_state != MoveState::Sliding {                            
                         match xrutil::locate_space(&left_hand_aim_space, &tracking_space, stick_state.last_change_time) {
                             Some(pose) => {
                                 let hand_space_vec = glm::vec4(stick_state.current_state.x, stick_state.current_state.y, 0.0, 0.0);
@@ -936,7 +936,7 @@ fn main() {
 
         //Gravity the player if they're falling
         const GRAVITY_VELOCITY_CAP: f32 = 10.0;
-        if let MoveState::Falling = player_movement_state {
+        if player_movement_state != MoveState::Grounded {
             tracking_space_velocity.z -= acceleration_gravity * delta_time;
             if tracking_space_velocity.z > GRAVITY_VELOCITY_CAP {
                 tracking_space_velocity.z = GRAVITY_VELOCITY_CAP;
@@ -1032,7 +1032,8 @@ fn main() {
             }
         }
 
-        //Checking if the user has collided with a floor
+        //User collision section
+        const MIN_NORMAL_LIKENESS: f32 = 0.6;
         match player_movement_state {
             MoveState::Falling => {
                 let mut done_checking = false;
@@ -1045,14 +1046,13 @@ fn main() {
                 if !done_checking {
                     if let Some(collision_plane) = segment_standing_terrain(&terrain, &standing_segment) {
                         let dot = glm::dot(&collision_plane.normal, &glm::vec4(0.0, 0.0, 1.0, 0.0));
-                        println!("This floor triangle's dot product with +z is: {}", dot);
-                        if dot >= 0.0 {
+                        if dot >= MIN_NORMAL_LIKENESS {
                             tracking_space_velocity.z = 0.0;
                             tracking_space_position += glm::vec4_to_vec3(&(collision_plane.point - tracked_user_segment.p1));
                             player_jumps_remaining = MAX_JUMPS;
                             player_movement_state = MoveState::Grounded;
                         } else {
-                            
+                            player_movement_state = MoveState::Sliding;
                         }
                         done_checking = true;
                     }
@@ -1075,7 +1075,22 @@ fn main() {
                 }
             }
             MoveState::Sliding => {
-                
+                tracking_space_velocity.x = 0.0;
+                tracking_space_velocity.y = 0.0;
+                match segment_standing_terrain(&terrain, &tracked_user_segment) {
+                    Some(collision_plane) => {
+                        if glm::dot(&collision_plane.normal, &glm::vec4(0.0, 0.0, 1.0, 0.0)) >= MIN_NORMAL_LIKENESS {
+                            tracking_space_velocity = glm::zero();
+                            tracking_space_position += glm::vec4_to_vec3(&(collision_plane.point - tracked_user_segment.p1));
+                            player_jumps_remaining = MAX_JUMPS;
+                            player_movement_state = MoveState::Grounded;
+                        } else {
+                            let distance_to_steep_tri = -point_plane_distance(&tracked_user_segment.p1, &collision_plane);
+                            tracking_space_position += glm::vec4_to_vec3(&(collision_plane.normal * distance_to_steep_tri));
+                        }
+                    }
+                    None => { player_movement_state = MoveState::Falling; }
+                }
             }
             MoveState::Grounded => {
                 let standing_segment = LineSegment {
@@ -1088,16 +1103,20 @@ fn main() {
                 if !still_grounded {
                     if let Some(collision_plane) = segment_standing_terrain(&terrain, &standing_segment) {
                         let dot = glm::dot(&collision_plane.normal, &glm::vec4(0.0, 0.0, 1.0, 0.0));
-                        println!("This floor triangle's dot product with +z is: {}", dot);
-                        if dot >= 0.0 {
+                        if dot >= MIN_NORMAL_LIKENESS {
                             tracking_space_velocity.z = 0.0;
                             tracking_space_position += glm::vec4_to_vec3(&(collision_plane.point - tracked_user_segment.p1));
                             still_grounded = true;
+                            player_jumps_remaining -= 1;
+                        } else {
+                            tracking_space_velocity.z = 0.0;
+                            tracking_space_position += glm::vec4_to_vec3(&(collision_plane.point - tracked_user_segment.p1));
+                            player_movement_state = MoveState::Sliding;
                         }
                     }
                 }
 
-                //Check the AABBs if we aren't standing on the ground
+                //Check the AABBs
                 if !still_grounded {
                     for opt_aabb in collision_aabbs.iter() {
                         if let Some(aabb) = opt_aabb {
@@ -1105,16 +1124,12 @@ fn main() {
                             if let Some(point) = standing_on_plane(&plane, &standing_segment, &aabb_boundaries) {                                
                                 tracking_space_velocity.z = 0.0;
                                 tracking_space_position += glm::vec4_to_vec3(&(point - tracked_user_segment.p1));
+                                player_jumps_remaining -= 1;
                                 still_grounded = true;
                                 break;
                             }
                         }
                     }
-                }
-
-                if !still_grounded {
-                    player_jumps_remaining -= 1;
-                    player_movement_state = MoveState::Falling;
                 }
             }
         }
