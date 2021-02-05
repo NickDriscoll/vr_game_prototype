@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::Read;
 use ozy::io;
 
+#[derive(Debug)]
 pub struct LineSegment {
     pub p0: glm::TVec4<f32>,
     pub p1: glm::TVec4<f32>
@@ -13,6 +14,10 @@ impl LineSegment {
             p0: glm::zero(),
             p1: glm::zero()
         }
+    }
+
+    pub fn length(&self) -> f32 {
+        f32::sqrt(f32::powi(self.p1.x - self.p0.x, 2) + f32::powi(self.p1.y - self.p0.y, 2))
     }
 }
 
@@ -135,11 +140,6 @@ impl Terrain {
             face_normals
         }
     }
-}
-
-pub struct TerrainCollision {
-    pub point: glm::TVec4<f32>,
-    pub face_plane: Plane
 }
 
 pub fn segment_intersect_plane(plane: &Plane, segment: &LineSegment) -> Option<glm::TVec4<f32>> {

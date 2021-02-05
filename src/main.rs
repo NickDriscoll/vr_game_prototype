@@ -23,7 +23,7 @@ use ozy::{glutil};
 use ozy::glutil::ColorSpace;
 use ozy::render::{Framebuffer, InstancedMesh, RenderTarget, ScreenState, SimpleMesh, TextureKeeper};
 use ozy::structs::OptionVec;
-use crate::collision::{AABB, LineSegment, Plane, PlaneBoundaries, Terrain, TerrainCollision, segment_intersect_plane, standing_on_plane, point_plane_distance};
+use crate::collision::{AABB, LineSegment, Plane, PlaneBoundaries, Terrain, segment_intersect_plane, standing_on_plane, point_plane_distance};
 
 #[cfg(windows)]
 use winapi::um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext};
@@ -41,8 +41,9 @@ const LEFT_STICK_VECTOR2: &str =                    "/user/hand/left/input/thumb
 
 #[derive(PartialEq, Eq)]
 enum MoveState {
-    Walking,
-    Falling
+    Grounded,
+    Falling,
+    Sliding
 }
 
 fn clamp<T: PartialOrd>(x: T, min: T, max: T) -> T {
@@ -55,7 +56,8 @@ fn sign(p1: &glm::TVec2<f32>, p2: &glm::TVec2<f32>, p3: &glm::TVec2<f32>) -> f32
     return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
 }
 
-fn segment_standing_terrain(terrain: &Terrain, line_segment: &LineSegment) -> Option<TerrainCollision> {
+//The point of the returned plane is the point returned by the standing check
+fn segment_standing_terrain(terrain: &Terrain, line_segment: &LineSegment) -> Option<Plane> {
     let mut triangle_planes = Vec::new();
 
     //For each triangle in the terrain collision mesh
@@ -87,13 +89,7 @@ fn segment_standing_terrain(terrain: &Terrain, line_segment: &LineSegment) -> Op
         if let Some(point) = segment_intersect_plane(plane, &line_segment) {
             if point.z > max_height {
                 max_height = point.z;
-
-                let p = Plane::new(plane.point, plane.normal);
-                let c = TerrainCollision {
-                    point,
-                    face_plane: p
-                };
-                collision = Some(c);
+                collision = Some(Plane::new(point, plane.normal));
             }
         }
     }
@@ -717,7 +713,7 @@ fn main() {
 
     //Player state
     let mut last_left_trigger = false;
-    let mut player_movement_state = MoveState::Walking;
+    let mut player_movement_state = MoveState::Grounded;
     let player_radius = 0.15;                               //The player's radius as a circle in the xy plane
     let mut last_tracked_user_segment = LineSegment::zero();
     let mut was_holding_left_trigger = false;
@@ -805,7 +801,6 @@ fn main() {
                 let holding = state.current_state == 1.0;
 
                 if holding && !was_holding_left_trigger && player_jumps_remaining > 0 {
-                    println!("Tried to jump");
                     player_jumps_remaining -= 1;
                     velocity = glm::vec3(velocity.x, velocity.y, 10.0);
                     player_movement_state = MoveState::Falling;
@@ -934,7 +929,7 @@ fn main() {
                 Command::ResetPlayerPosition => {
                     tracking_space_position = glm::vec3(0.0, 0.0, 3.0);
                     tracking_space_velocity = glm::zero();
-                    player_movement_state = MoveState::Walking;
+                    player_movement_state = MoveState::Grounded;
                 }
             }
         }
@@ -1037,124 +1032,92 @@ fn main() {
             }
         }
 
-        //Check for collision with non-walkable terrain triangles
-        {
-            let mut triangle_planes = Vec::new();
-
-            //For each triangle in the terrain collision mesh
-            for i in (0..terrain.indices.len()).step_by(3) {
-                //Get the vertices of the triangle
-                let a = terrain.vertices[terrain.indices[i] as usize];
-                let b = terrain.vertices[terrain.indices[i + 1] as usize];
-                let c = terrain.vertices[terrain.indices[i + 2] as usize];
-                let test_point = glm::vec2(tracked_user_segment.p1.x, tracked_user_segment.p1.y);
-
-                let d1 = sign(&test_point, &glm::vec3_to_vec2(&a), &glm::vec3_to_vec2(&b));
-                let d2 = sign(&test_point, &glm::vec3_to_vec2(&b), &glm::vec3_to_vec2(&c));
-                let d3 = sign(&test_point, &glm::vec3_to_vec2(&c), &glm::vec3_to_vec2(&a));
-
-                let has_neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
-                let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
-
-                if !(has_neg && has_pos) {
-                    let triangle_normal = terrain.face_normals[i / 3];
-                    let triangle_plane = Plane::new(glm::vec4(a.x, a.y, a.z, 1.0), glm::vec4(triangle_normal.x, triangle_normal.y, triangle_normal.z, 0.0));
-                    triangle_planes.push(triangle_plane);
-                }
-            }
-
-            for plane in triangle_planes.iter() {
-                let intersection = segment_intersect_plane(&plane, &tracked_user_segment);
-                if let Some(_) = intersection {
-                    if glm::dot(&plane.normal, &glm::vec4(0.0, 0.0, 1.0, 0.0)) < 0.6 {
-                        tracking_space_velocity.x = 0.0;
-                        tracking_space_velocity.y = 0.0;
-                        player_movement_state = MoveState::Falling;
-                        player_jumps_remaining -= 1;
-                        let dist = -point_plane_distance(&tracked_user_segment.p1, &plane);
-                        tracking_space_position += glm::vec4_to_vec3(&plane.normal) * dist;
-                    }
-                }
-            }
-        }
-
         //Checking if the user has collided with a floor
         match player_movement_state {
             MoveState::Falling => {
-                let mut standing_on = None;
+                let mut done_checking = false;
                 let standing_segment = LineSegment {
                     p0: last_tracked_user_segment.p1 + glm::vec4(0.0, 0.0, 0.05, 0.0),
                     p1: tracked_user_segment.p1
                 };
 
                 //Check if we're standing on the terrain mesh
-                if let None = standing_on {
-                    let collision = segment_standing_terrain(&terrain, &standing_segment);
-                    if let Some(col) = collision {
-                        if glm::dot(&col.face_plane.normal, &glm::vec4(0.0, 0.0, 1.0, 0.0)) >= 0.6 {
-                            standing_on = Some(col.point);
+                if !done_checking {
+                    if let Some(collision_plane) = segment_standing_terrain(&terrain, &standing_segment) {
+                        let dot = glm::dot(&collision_plane.normal, &glm::vec4(0.0, 0.0, 1.0, 0.0));
+                        println!("This floor triangle's dot product with +z is: {}", dot);
+                        if dot >= 0.0 {
+                            tracking_space_velocity.z = 0.0;
+                            tracking_space_position += glm::vec4_to_vec3(&(collision_plane.point - tracked_user_segment.p1));
+                            player_jumps_remaining = MAX_JUMPS;
+                            player_movement_state = MoveState::Grounded;
+                        } else {
+                            
                         }
+                        done_checking = true;
                     }
                 }
 
                 //Check for AABB collision
-                for opt_aabb in collision_aabbs.iter() {
-                    if let (None, Some(aabb)) = (standing_on, opt_aabb) {
-                        let (plane, aabb_boundaries) = aabb_get_top_plane(&aabb);
-                        standing_on = standing_on_plane(&plane, &standing_segment, &aabb_boundaries);
+                if !done_checking {
+                    for opt_aabb in collision_aabbs.iter() {
+                        if let Some(aabb) = opt_aabb {
+                            let (plane, aabb_boundaries) = aabb_get_top_plane(&aabb);
+                            if let Some(point) = standing_on_plane(&plane, &standing_segment, &aabb_boundaries) {
+                                tracking_space_velocity.z = 0.0;
+                                tracking_space_position += glm::vec4_to_vec3(&(point - tracked_user_segment.p1));
+                                player_jumps_remaining = MAX_JUMPS;
+                                player_movement_state = MoveState::Grounded;
+                                done_checking = true;
+                            }
+                        }
                     }
                 }
-
-                if let Some(point) = standing_on {
-                    tracking_space_velocity.z = 0.0;
-                    tracking_space_position += glm::vec4_to_vec3(&(point - tracked_user_segment.p1));
-                    player_jumps_remaining = MAX_JUMPS;
-                    player_movement_state = MoveState::Walking;
-                }
-            }            
-            MoveState::Walking => {
-                let up_point = tracked_user_segment.p1 + glm::vec4(0.0, 0.0, 0.5, 1.0);
-                let down_point = tracked_user_segment.p1 - glm::vec4(0.0, 0.0, 0.2, 1.0);
+            }
+            MoveState::Sliding => {
+                
+            }
+            MoveState::Grounded => {
                 let standing_segment = LineSegment {
-                    p0: up_point,
-                    p1: down_point
+                    p0: tracked_user_segment.p1 + glm::vec4(0.0, 0.0, 0.5, 1.0),
+                    p1: tracked_user_segment.p1 - glm::vec4(0.0, 0.0, 0.2, 1.0)
                 };
-                let mut standing_on = None;
+                let mut still_grounded = false;
 
                 //Check if we're standing on the terrain mesh
-                if let None = standing_on {
-                    let collision = segment_standing_terrain(&terrain, &standing_segment);
-                    if let Some(col) = collision {
-                        standing_on = Some(col.point);
+                if !still_grounded {
+                    if let Some(collision_plane) = segment_standing_terrain(&terrain, &standing_segment) {
+                        let dot = glm::dot(&collision_plane.normal, &glm::vec4(0.0, 0.0, 1.0, 0.0));
+                        println!("This floor triangle's dot product with +z is: {}", dot);
+                        if dot >= 0.0 {
+                            tracking_space_velocity.z = 0.0;
+                            tracking_space_position += glm::vec4_to_vec3(&(collision_plane.point - tracked_user_segment.p1));
+                            still_grounded = true;
+                        }
                     }
                 }
 
                 //Check the AABBs if we aren't standing on the ground
-                if let None = standing_on {
+                if !still_grounded {
                     for opt_aabb in collision_aabbs.iter() {
                         if let Some(aabb) = opt_aabb {
                             let (plane, aabb_boundaries) = aabb_get_top_plane(&aabb);
-                            standing_on = standing_on_plane(&plane, &standing_segment, &aabb_boundaries);
-                            if let Some(_) = standing_on {
+                            if let Some(point) = standing_on_plane(&plane, &standing_segment, &aabb_boundaries) {                                
+                                tracking_space_velocity.z = 0.0;
+                                tracking_space_position += glm::vec4_to_vec3(&(point - tracked_user_segment.p1));
+                                still_grounded = true;
                                 break;
                             }
                         }
                     }
                 }
 
-                if let Some(point) = standing_on {
-                    tracking_space_velocity.z = 0.0;
-                    tracking_space_position += glm::vec4_to_vec3(&(point - tracked_user_segment.p1));
-                } else {
+                if !still_grounded {
                     player_jumps_remaining -= 1;
                     player_movement_state = MoveState::Falling;
                 }
             }
         }
-
-        //Update tracking space location
-        tracking_space_position += tracking_space_velocity * delta_time;
-        world_from_tracking = glm::translation(&tracking_space_position);
 
         //After all collision processing has been completed, update the tracking space matrices once more
         world_from_tracking = glm::translation(&tracking_space_position);
