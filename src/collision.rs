@@ -7,6 +7,15 @@ pub struct LineSegment {
     pub p1: glm::TVec4<f32>
 }
 
+impl LineSegment {
+    pub fn zero() -> Self {
+        LineSegment {
+            p0: glm::zero(),
+            p1: glm::zero()
+        }
+    }
+}
+
 //An infinite plane as defined by a point on the plane and a vector normal to the plane
 pub struct Plane {
     pub point: glm::TVec4<f32>,
@@ -126,6 +135,11 @@ impl Terrain {
             face_normals
         }
     }
+}
+
+pub struct TerrainCollision {
+    pub point: glm::TVec4<f32>,
+    pub face_plane: Plane
 }
 
 pub fn segment_intersect_plane(plane: &Plane, segment: &LineSegment) -> Option<glm::TVec4<f32>> {

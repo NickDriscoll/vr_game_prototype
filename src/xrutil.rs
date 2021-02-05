@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use crate::render::SceneData;
+use crate::collision::LineSegment;
 
 pub fn print_pose(pose: xr::Posef) {
     println!("Position: ({}, {}, {})", pose.position.x, pose.position.y, pose.position.z);
@@ -118,10 +119,17 @@ pub fn entity_pose_update(scene_data: &mut SceneData, entity_index: usize, pose:
     }
 }
 
-pub fn tracked_player_position(view_space: &Option<xr::Space>, tracking_space: &Option<xr::Space>, time: xr::Time, world_from_tracking: &glm::TMat4<f32>) -> glm::TVec4<f32> {
+pub fn tracked_player_segment(view_space: &Option<xr::Space>, tracking_space: &Option<xr::Space>, time: xr::Time, world_from_tracking: &glm::TMat4<f32>) -> LineSegment {
     match locate_space(&view_space, &tracking_space, time) {
-        Some(pose) => { world_from_tracking * glm::vec4(pose.position.x, pose.position.y, 0.0, 1.0) }
-        None => { glm::zero() }
+        Some(pose) => {
+            let head = world_from_tracking * glm::vec4(pose.position.x, pose.position.y, pose.position.z, 1.0);
+            let feet = world_from_tracking * glm::vec4(pose.position.x, pose.position.y, 0.0, 1.0);
+            LineSegment {
+                p0: head,
+                p1: feet
+            }
+        }
+        None => { LineSegment {p0: glm::zero(), p1: glm::zero()} }
     }
 }
 
