@@ -180,3 +180,48 @@ pub fn standing_on_plane(plane: &Plane, segment: &LineSegment, boundaries: &Plan
 pub fn point_plane_distance(point: &glm::TVec4<f32>, plane: &Plane) -> f32 {
     glm::dot(&plane.normal, &(point - plane.point))
 }
+
+fn sign(test: &glm::TVec2<f32>, p0: &glm::TVec2<f32>, p1: &glm::TVec2<f32>) -> f32 {
+    (test.x - p1.x) * (p0.y - p1.y) - (p0.x - p1.x) * (test.y - p1.y)
+}
+
+//The point of the returned plane is the point returned by the standing check
+pub fn segment_standing_terrain(terrain: &Terrain, line_segment: &LineSegment) -> Option<Plane> {
+    let mut triangle_planes = Vec::new();
+
+    //For each triangle in the terrain collision mesh
+    for i in (0..terrain.indices.len()).step_by(3) {
+        //Get the vertices of the triangle
+        let a = terrain.vertices[terrain.indices[i] as usize];
+        let b = terrain.vertices[terrain.indices[i + 1] as usize];
+        let c = terrain.vertices[terrain.indices[i + 2] as usize];
+        let test_point = glm::vec2(line_segment.p1.x, line_segment.p1.y);
+
+        let d1 = sign(&test_point, &glm::vec3_to_vec2(&a), &glm::vec3_to_vec2(&b));
+        let d2 = sign(&test_point, &glm::vec3_to_vec2(&b), &glm::vec3_to_vec2(&c));
+        let d3 = sign(&test_point, &glm::vec3_to_vec2(&c), &glm::vec3_to_vec2(&a));
+
+        let has_neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+        let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+
+        if !(has_neg && has_pos) {
+            let triangle_normal = terrain.face_normals[i / 3];
+            let triangle_plane = Plane::new(glm::vec4(a.x, a.y, a.z, 1.0), glm::vec4(triangle_normal.x, triangle_normal.y, triangle_normal.z, 0.0));
+            triangle_planes.push(triangle_plane);
+        }
+    }
+
+    //For all potential triangles, do a plane test with the standing segment
+    let mut max_height = -f32::INFINITY;
+    let mut collision = None;
+    for plane in triangle_planes.iter() {
+        if let Some(point) = segment_intersect_plane(plane, &line_segment) {
+            if point.z > max_height {
+                max_height = point.z;
+                collision = Some(Plane::new(point, plane.normal));
+            }
+        }
+    }
+
+    collision
+}
