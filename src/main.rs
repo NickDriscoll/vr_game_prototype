@@ -26,19 +26,21 @@ use ozy::structs::OptionVec;
 use crate::collision::{AABB, LineSegment, Plane, PlaneBoundaries, Terrain, aabb_get_top_plane, segment_intersect_plane, segment_plane_tallest_collision, sign, standing_on_plane, point_plane_distance};
 
 #[cfg(windows)]
-use winapi::um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext};
+use winapi::{shared::windef::HWND, um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
 
 //The font data is baked at compile time
 const FONT_BYTES: &'static [u8; 212276] = include_bytes!("../fonts/Constantia.ttf");
 
-//XR interaction paths
-const DEFAULT_INTERACTION_PROFILE: &str =           "/interaction_profiles/valve/index_controller";
-const LEFT_GRIP_POSE: &str =                        "/user/hand/left/input/grip/pose";
-const LEFT_AIM_POSE: &str =                         "/user/hand/left/input/aim/pose";
-const LEFT_TRIGGER_FLOAT: &str =                    "/user/hand/left/input/trigger/value";
-const RIGHT_TRIGGER_FLOAT: &str =                   "/user/hand/right/input/trigger/value";
-const RIGHT_GRIP_POSE: &str =                       "/user/hand/right/input/grip/pose";
-const LEFT_STICK_VECTOR2: &str =                    "/user/hand/left/input/thumbstick";
+//OpenXR strings
+const VALVE_INDEX_INTERACTION_PROFILE: &str =           "/interaction_profiles/valve/index_controller";
+const HTC_VIVE_INTERACTION_PROFILE: &str =              "/interaction_profiles/htc/vive_controller";
+const LEFT_GRIP_POSE: &str =                            "/user/hand/left/input/grip/pose";
+const LEFT_AIM_POSE: &str =                             "/user/hand/left/input/aim/pose";
+const LEFT_TRIGGER_FLOAT: &str =                        "/user/hand/left/input/trigger/value";
+const RIGHT_TRIGGER_FLOAT: &str =                       "/user/hand/right/input/trigger/value";
+const RIGHT_GRIP_POSE: &str =                           "/user/hand/right/input/grip/pose";
+const LEFT_STICK_VECTOR2: &str =                        "/user/hand/left/input/thumbstick";
+const LEFT_TRACKPAD_VECTOR2: &str =                     "/user/hand/left/input/trackpad";
 
 fn clamp<T: PartialOrd>(x: T, min: T, max: T) -> T {
     if x < min { min }
@@ -154,18 +156,6 @@ fn main() {
         None => { None }
     };
 
-    //Create the paths to appropriate equipment
-    let left_grip_pose_path = xrutil::make_path(&xr_instance, LEFT_GRIP_POSE);
-    let left_aim_pose_path = xrutil::make_path(&xr_instance, LEFT_AIM_POSE);
-    let left_trigger_float_path = xrutil::make_path(&xr_instance, LEFT_TRIGGER_FLOAT);
-    let right_trigger_float_path = xrutil::make_path(&xr_instance, RIGHT_TRIGGER_FLOAT);
-    let right_grip_pose_path = xrutil::make_path(&xr_instance, RIGHT_GRIP_POSE);
-    let left_stick_vector_path = xrutil::make_path(&xr_instance, LEFT_STICK_VECTOR2);
-
-    //Create the hand subaction paths
-    let left_hand_subaction_path = xrutil::make_path(&xr_instance, xr::USER_HAND_LEFT);
-    let right_hand_subaction_path = xrutil::make_path(&xr_instance, xr::USER_HAND_RIGHT);
-
     //Create the actionset
     let xr_controller_actionset = match &xr_instance {
         Some(inst) => {
@@ -180,57 +170,6 @@ fn main() {
         None => { None }
     };
 
-    //Create the actions for getting pose data
-    let left_hand_pose_action = xrutil::make_action(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_pose", "Left hand pose");
-    let left_hand_aim_action = xrutil::make_action::<xr::Posef>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_aim", "Left hand aim");
-    let left_trigger_action = xrutil::make_action::<f32>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_trigger", "Left hand trigger");
-    let right_trigger_action = xrutil::make_action::<f32>(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_trigger", "Right hand trigger");
-    let right_hand_pose_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_pose", "Right hand pose");
-    let player_move_action = xrutil::make_action::<xr::Vector2f>(&left_hand_subaction_path, &xr_controller_actionset, "player_move", "Player movement");
-
-    //Suggest interaction profile bindings 
-    match (&xr_instance,
-           &left_hand_pose_action,
-           &left_hand_aim_action,
-           &left_trigger_action,
-           &right_trigger_action,
-           &right_hand_pose_action,
-           &player_move_action,
-           &left_grip_pose_path,
-           &left_aim_pose_path,
-           &left_trigger_float_path,
-           &right_trigger_float_path,
-           &right_grip_pose_path,
-           &left_stick_vector_path) {
-        (Some(inst),
-         Some(l_grip_action),
-         Some(l_aim_action),
-         Some(l_trigger_action),
-         Some(r_trigger_action),
-         Some(r_action),
-         Some(l_stick_action),
-         Some(l_grip_path),
-         Some(l_aim_path),
-         Some(l_trigger_path),
-         Some(r_trigger_path),
-         Some(r_path),
-         Some(l_stick_path)) => {
-            let profile = inst.string_to_path(DEFAULT_INTERACTION_PROFILE).unwrap();
-            let bindings = [
-                xr::Binding::new(l_grip_action, *l_grip_path),
-                xr::Binding::new(l_aim_action, *l_aim_path),
-                xr::Binding::new(l_trigger_action, *l_trigger_path),
-                xr::Binding::new(r_trigger_action, *r_trigger_path),
-                xr::Binding::new(r_action, *r_path),
-                xr::Binding::new(l_stick_action, *l_stick_path)
-            ];
-            if let Err(e) = inst.suggest_interaction_profile_bindings(profile, &bindings) {
-                println!("Error setting interaction profile bindings: {}", e);
-            }
-        }
-        _ => {}
-    }
-
     //Initialize glfw
     let mut glfw = match glfw::init(glfw::FAIL_ON_ERRORS) {
         Ok(g) => { g }
@@ -239,18 +178,13 @@ fn main() {
     
     //Ask for an OpenGL version based on what OpenXR requests. Default to 4.3
     match xr_graphics_reqs {
-        Some(r) => {
-            glfw.window_hint(glfw::WindowHint::ContextVersion(r.min_api_version_supported.major() as u32, r.min_api_version_supported.minor() as u32));
-        }
-        None => {
-            glfw.window_hint(glfw::WindowHint::ContextVersion(4, 3));
-        }
+        Some(r) => { glfw.window_hint(glfw::WindowHint::ContextVersion(r.min_api_version_supported.major() as u32, r.min_api_version_supported.minor() as u32)); }
+        None => { glfw.window_hint(glfw::WindowHint::ContextVersion(4, 3)); }
     }
 	glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
 
     //Create the window
     let window_size = glm::vec2(1920, 1080);
-
     let aspect_ratio = window_size.x as f32 / window_size.y as f32;
     let (mut window, events) = match glfw.create_window(window_size.x, window_size.y, "THCATO", glfw::WindowMode::Windowed) {
         Some(stuff) => { stuff }
@@ -330,6 +264,90 @@ fn main() {
         None => { (None, None, None) }
     };
 
+    //Create the paths to appropriate equipment
+    let left_grip_pose_path = xrutil::make_path(&xr_instance, LEFT_GRIP_POSE);
+    let left_aim_pose_path = xrutil::make_path(&xr_instance, LEFT_AIM_POSE);
+    let left_trigger_float_path = xrutil::make_path(&xr_instance, LEFT_TRIGGER_FLOAT);
+    let right_trigger_float_path = xrutil::make_path(&xr_instance, RIGHT_TRIGGER_FLOAT);
+    let right_grip_pose_path = xrutil::make_path(&xr_instance, RIGHT_GRIP_POSE);
+    let left_stick_vector_path = xrutil::make_path(&xr_instance, LEFT_STICK_VECTOR2);
+    let left_trackpad_vector_path = xrutil::make_path(&xr_instance, LEFT_TRACKPAD_VECTOR2);
+
+    //Create the hand subaction paths
+    let left_hand_subaction_path = xrutil::make_path(&xr_instance, xr::USER_HAND_LEFT);
+    let right_hand_subaction_path = xrutil::make_path(&xr_instance, xr::USER_HAND_RIGHT);
+
+    //Create the XrActions
+    let left_hand_pose_action = xrutil::make_action(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_pose", "Left hand pose");
+    let left_hand_aim_action = xrutil::make_action::<xr::Posef>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_aim", "Left hand aim");
+    let left_trigger_action = xrutil::make_action::<f32>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_trigger", "Left hand trigger");
+    let right_trigger_action = xrutil::make_action::<f32>(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_trigger", "Right hand trigger");
+    let right_hand_pose_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_pose", "Right hand pose");
+    let player_move_action = xrutil::make_action::<xr::Vector2f>(&left_hand_subaction_path, &xr_controller_actionset, "player_move", "Player movement");
+
+    //Suggest interaction profile bindings
+    match (&xr_instance,
+           &left_hand_pose_action,
+           &left_hand_aim_action,
+           &left_trigger_action,
+           &right_trigger_action,
+           &right_hand_pose_action,
+           &player_move_action,
+           &left_grip_pose_path,
+           &left_aim_pose_path,
+           &left_trigger_float_path,
+           &right_trigger_float_path,
+           &right_grip_pose_path,
+           &left_stick_vector_path,
+           &left_trackpad_vector_path) {
+        (Some(inst),
+         Some(l_grip_action),
+         Some(l_aim_action),
+         Some(l_trigger_action),
+         Some(r_trigger_action),
+         Some(r_action),
+         Some(move_action),
+         Some(l_grip_path),
+         Some(l_aim_path),
+         Some(l_trigger_path),
+         Some(r_trigger_path),
+         Some(r_path),
+         Some(l_stick_path),
+         Some(l_trackpad_path)) => {
+             //Valve Index bindings
+             {
+                let profile = inst.string_to_path(VALVE_INDEX_INTERACTION_PROFILE).unwrap();
+                let bindings = [
+                    xr::Binding::new(l_grip_action, *l_grip_path),
+                    xr::Binding::new(l_aim_action, *l_aim_path),
+                    xr::Binding::new(l_trigger_action, *l_trigger_path),
+                    xr::Binding::new(r_trigger_action, *r_trigger_path),
+                    xr::Binding::new(r_action, *r_path),
+                    xr::Binding::new(move_action, *l_stick_path)
+                ];
+                if let Err(e) = inst.suggest_interaction_profile_bindings(profile, &bindings) {
+                    println!("Error setting interaction profile bindings: {}", e);
+                }
+            }
+            //HTC Vive bindings
+            {
+               let profile = inst.string_to_path(HTC_VIVE_INTERACTION_PROFILE).unwrap();
+               let bindings = [
+                   xr::Binding::new(l_grip_action, *l_grip_path),
+                   xr::Binding::new(l_aim_action, *l_aim_path),
+                   xr::Binding::new(l_trigger_action, *l_trigger_path),
+                   xr::Binding::new(r_trigger_action, *r_trigger_path),
+                   xr::Binding::new(r_action, *r_path),
+                   xr::Binding::new(move_action, *l_trackpad_path)
+               ];
+               if let Err(e) = inst.suggest_interaction_profile_bindings(profile, &bindings) {
+                   println!("Error setting interaction profile bindings: {}", e);
+               }
+           }
+        }
+        _ => {}
+    }
+
     //Set controller actionset as active
     match (&xr_session, &xr_controller_actionset) {
         (Some(session), Some(actionset)) => {
@@ -339,22 +357,24 @@ fn main() {
         }
         _ => {}
     }
+
     //Define tracking space with z-up instead of the default y-up
-    let quat = glm::quat_rotation(&glm::vec3(0.0, 0.0, 1.0), &glm::vec3(0.0, 1.0, 0.0));
-    let space_pose = xr::Posef {
-        orientation: xr::Quaternionf {
-            x: quat.coords.x,
-            y: quat.coords.y,
-            z: quat.coords.z,
-            w: quat.coords.w,
-        },
-        position: xr::Vector3f {
-            x: 0.0,
-            y: 0.0,
-            z: 0.0
+    let space_pose = {
+        let quat = glm::quat_rotation(&glm::vec3(0.0, 0.0, 1.0), &glm::vec3(0.0, 1.0, 0.0));
+        xr::Posef {
+            orientation: xr::Quaternionf {
+                x: quat.coords.x,
+                y: quat.coords.y,
+                z: quat.coords.z,
+                w: quat.coords.w,
+            },
+            position: xr::Vector3f {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0
+            }
         }
     };
-
     let tracking_space = xrutil::make_reference_space(&xr_session, xr::ReferenceSpaceType::STAGE, space_pose);           //Create tracking space
     let view_space = xrutil::make_reference_space(&xr_session, xr::ReferenceSpaceType::VIEW, xr::Posef::IDENTITY);       //Create view space
     
