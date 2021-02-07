@@ -23,7 +23,8 @@ use ozy::{glutil};
 use ozy::glutil::ColorSpace;
 use ozy::render::{Framebuffer, InstancedMesh, RenderTarget, ScreenState, SimpleMesh, TextureKeeper};
 use ozy::structs::OptionVec;
-use crate::collision::{AABB, LineSegment, Plane, PlaneBoundaries, Terrain, aabb_get_top_plane, segment_intersect_plane, segment_plane_tallest_collision, sign, standing_on_plane, point_plane_distance};
+
+use crate::collision::*;
 
 #[cfg(windows)]
 use winapi::{shared::windef::HWND, um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
@@ -927,31 +928,22 @@ fn main() {
             let mut closest_intersection = None;
             for i in (0..terrain.indices.len()).step_by(3) {
                 //Get the vertices of the triangle
-                let a = terrain.vertices[terrain.indices[i] as usize];
-                let b = terrain.vertices[terrain.indices[i + 1] as usize];
-                let c = terrain.vertices[terrain.indices[i + 2] as usize];
+                let (a, b, c) = get_terrain_triangle(&terrain, i);
                 let normal = terrain.face_normals[i / 3];
 
                 let plane = Plane::new(glm::vec4(a.x, a.y, a.z, 1.0), glm::vec4(normal.x, normal.y, normal.z, 1.0));
 
                 //Pre-compute the denominator to avoid divide-by-zero
+                //Denominator of zero means that the ray is parallel to the plane
                 let denominator = glm::dot(&glm::vec3_to_vec4(&mouse_ray_dir), &plane.normal);
                 if denominator == 0.0 {
                     continue;
                 }
                 let t = glm::dot(&(plane.point - glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0)), &plane.normal) / denominator;
                 let intersection = camera_position + t * mouse_ray_dir;
-
-                //Check if this collision point is actually in the triangle
-                let test_point = glm::vec2(intersection.x, intersection.y);
-                let d1 = sign(&test_point, &glm::vec3_to_vec2(&a), &glm::vec3_to_vec2(&b));
-                let d2 = sign(&test_point, &glm::vec3_to_vec2(&b), &glm::vec3_to_vec2(&c));
-                let d3 = sign(&test_point, &glm::vec3_to_vec2(&c), &glm::vec3_to_vec2(&a));
-
-                let has_neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
-                let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
-
-                if !(has_neg && has_pos) {
+                
+                //If the intersection is in the triangle, check if it's the closest intersection to the camera so far
+                if point_in_triangle(&glm::vec2(intersection.x, intersection.y), &a, &b, &c) {
                     if t < smallest_t {
                         smallest_t = t;
                         closest_intersection = Some(intersection);
@@ -1047,19 +1039,8 @@ fn main() {
         let mut walkable_tris = Vec::new();
         let mut too_steep_tris = Vec::new();
         for i in (0..terrain.indices.len()).step_by(3) {
-            //Get the vertices of the triangle
-            let a = terrain.vertices[terrain.indices[i] as usize];
-            let b = terrain.vertices[terrain.indices[i + 1] as usize];
-            let c = terrain.vertices[terrain.indices[i + 2] as usize];
-            let test_point = glm::vec2(player.tracked_segment.p1.x, player.tracked_segment.p1.y);
-
-            let d1 = sign(&test_point, &glm::vec3_to_vec2(&a), &glm::vec3_to_vec2(&b));
-            let d2 = sign(&test_point, &glm::vec3_to_vec2(&b), &glm::vec3_to_vec2(&c));
-            let d3 = sign(&test_point, &glm::vec3_to_vec2(&c), &glm::vec3_to_vec2(&a));
-
-            let has_neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
-            let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
-            if !(has_neg && has_pos) {
+            let (a, b, c) = get_terrain_triangle(&terrain, i);
+            if point_in_triangle(&glm::vec2(player.tracked_segment.p1.x, player.tracked_segment.p1.y), &a, &b, &c) {
                 let triangle_normal = terrain.face_normals[i / 3];
                 let triangle_plane = Plane::new(glm::vec4(a.x, a.y, a.z, 1.0), glm::vec4(triangle_normal.x, triangle_normal.y, triangle_normal.z, 0.0));
                 let dot = glm::dot(&triangle_normal, &glm::vec3(0.0, 0.0, 1.0));

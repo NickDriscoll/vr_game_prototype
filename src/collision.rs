@@ -213,3 +213,23 @@ pub fn segment_plane_tallest_collision(segment: &LineSegment, planes: &[Plane]) 
     }
     collision
 }
+
+pub fn point_in_triangle(test_point: &glm::TVec2<f32>, p0: &glm::TVec3<f32>, p1: &glm::TVec3<f32>, p2: &glm::TVec3<f32>) -> bool {
+    //Check if this collision point is actually in the triangle
+    let d1 = sign(&test_point, &glm::vec3_to_vec2(&p0), &glm::vec3_to_vec2(&p1));
+    let d2 = sign(&test_point, &glm::vec3_to_vec2(&p1), &glm::vec3_to_vec2(&p2));
+    let d3 = sign(&test_point, &glm::vec3_to_vec2(&p2), &glm::vec3_to_vec2(&p0));
+
+    let has_neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+    let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+
+    !(has_neg && has_pos)
+}
+
+pub fn get_terrain_triangle(terrain: &Terrain, triangle_index: usize) -> (glm::TVec3<f32>, glm::TVec3<f32>, glm::TVec3<f32>) {    
+    //Get the vertices of the triangle
+    let a = terrain.vertices[terrain.indices[triangle_index] as usize];
+    let b = terrain.vertices[terrain.indices[triangle_index + 1] as usize];
+    let c = terrain.vertices[terrain.indices[triangle_index + 2] as usize];
+    (a, b, c)
+}
