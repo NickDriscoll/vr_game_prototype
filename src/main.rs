@@ -473,9 +473,6 @@ fn main() {
     //Uniform light source
     let mut uniform_light = glm::normalize(&glm::vec4(1.0, 0.6, 1.0, 0.0));
 
-    //Acceleration due to gravity
-    let acceleration_gravity = 20.0;        //20.0 m/s
-
     //Initialize shadow data
     let mut shadow_view;
     let shadow_proj_size = 30.0;
@@ -549,7 +546,7 @@ fn main() {
     };
 
     //Load terrain data
-    let terrain_name = "terrain";
+    let terrain_name = "terrain5";
     let terrain = Terrain::from_ozt(&format!("models/{}.ozt", terrain_name));
     let terrain_mesh = SimpleMesh::from_ozy(&format!("models/{}.ozy", terrain_name), &mut texture_keeper, &tex_params);
     let terrain_entity_index = scene_data.push_single_entity(terrain_mesh);
@@ -651,7 +648,7 @@ fn main() {
 
     //Player state
     let mut player = Player {
-        tracking_position: glm::vec3(0.0, 0.0, 0.5),
+        tracking_position: glm::vec3(0.0, 0.0, 1.0),
         tracking_velocity: glm::zero(),
         tracked_segment: LineSegment::zero(),
         last_tracked_segment: LineSegment::zero(),
@@ -705,53 +702,44 @@ fn main() {
         }
 
         //Calculate the velocity of tracking space
-        player.tracking_velocity = {
+        {
             const MOVEMENT_SPEED: f32 = 5.0;
             const DEADZONE_MAGNITUDE: f32 = 0.1;
-            let mut velocity = match &left_stick_state {
-                Some(stick_state) => {
-                    if stick_state.changed_since_last_sync && player.movement_state != MoveState::Sliding {                            
-                        match xrutil::locate_space(&left_hand_aim_space, &tracking_space, stick_state.last_change_time) {
-                            Some(pose) => {
-                                let hand_space_vec = glm::vec4(stick_state.current_state.x, stick_state.current_state.y, 0.0, 0.0);
-                                let magnitude = glm::length(&hand_space_vec);
-                                if magnitude < DEADZONE_MAGNITUDE {
-                                    glm::vec3(0.0, 0.0, player.tracking_velocity.z)
-                                } else {
-                                    //Explicit check for zero to avoid divide-by-zero in normalize
-                                    if hand_space_vec == glm::zero() {
-                                        player.tracking_velocity
-                                    } else {
-                                        //World space untreated vector
-                                        let untreated = xrutil::pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec;
-                                        let ugh = glm::normalize(&glm::vec3(untreated.x, untreated.y, 0.0)) * MOVEMENT_SPEED * magnitude;
-                                        glm::vec3(ugh.x, ugh.y, player.tracking_velocity.z)
-                                    }
-                                }
+            if let Some(stick_state) = &left_stick_state {
+                if stick_state.changed_since_last_sync && player.movement_state != MoveState::Sliding {                            
+                    if let Some(pose) = xrutil::locate_space(&left_hand_aim_space, &tracking_space, stick_state.last_change_time) {
+                        let hand_space_vec = glm::vec4(stick_state.current_state.x, stick_state.current_state.y, 0.0, 0.0);
+                        let magnitude = glm::length(&hand_space_vec);
+                        if magnitude < DEADZONE_MAGNITUDE {
+                            player.tracking_velocity.x = 0.0;
+                            player.tracking_velocity.y = 0.0;
+                        } else {
+                            //Explicit check for zero to avoid divide-by-zero in normalize
+                            if hand_space_vec != glm::zero() {
+                                //World space untreated vector
+                                let untreated = xrutil::pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec;
+                                let ugh = glm::normalize(&glm::vec3(untreated.x, untreated.y, 0.0)) * MOVEMENT_SPEED * magnitude;
+                                player.tracking_velocity = glm::vec3(ugh.x, ugh.y, player.tracking_velocity.z);
                             }
-                            None => { player.tracking_velocity }
                         }
-                    } else { player.tracking_velocity }
-                }
-                _ => { player.tracking_velocity }
-            };
+                    }
+                }                        
+            }
 
             if let Some(state) = &left_trigger_state {
                 let holding = state.current_state == 1.0;
 
                 if holding && !was_holding_left_trigger && player.jumps_remaining > 0 {
                     player.jumps_remaining -= 1;
-                    velocity = glm::vec3(velocity.x, velocity.y, 10.0);
+                    player.tracking_velocity = glm::vec3(player.tracking_velocity.x, player.tracking_velocity.y, 10.0);
                     player.movement_state = MoveState::Falling;
-                } else if state.current_state < 1.0 && was_holding_left_trigger && velocity.z > 0.0 {
-                    velocity.z /= 2.0;
+                } else if state.current_state < 1.0 && was_holding_left_trigger && player.tracking_velocity.z > 0.0 {
+                    player.tracking_velocity.z /= 2.0;
                 }
 
                 was_holding_left_trigger = holding;
             }
-
-            velocity
-        };
+        }
 
         //Poll for OpenXR events
         /*
@@ -858,16 +846,17 @@ fn main() {
                 Command::Quit => { window.set_should_close(true); }
                 Command::ToggleMenu(chain_index, menu_index) => { ui_state.toggle_menu(chain_index, menu_index); }
                 Command::ToggleNormalVis => { scene_data.visualize_normals = !scene_data.visualize_normals; }
-                Command::ToggleComplexNormals => { scene_data.complex_normals = !scene_data.complex_normals; }                
+                Command::ToggleComplexNormals => { scene_data.complex_normals = !scene_data.complex_normals; }
                 Command::ToggleOutline => { scene_data.outlining = !scene_data.outlining; }
                 Command::ToggleHMDPov => { hmd_pov = !hmd_pov; }
-                Command::ToggleAllMenus => {
-                    ui_state.toggle_hide_all_menus();
-                }
+                Command::ToggleAllMenus => { ui_state.toggle_hide_all_menus(); }
                 Command::ToggleWireframe => { wireframe = !wireframe; }
                 Command::ResetPlayerPosition => {
                     player.tracking_position = glm::vec3(0.0, 0.0, 3.0);
                     player.tracking_velocity = glm::zero();
+                    player.tracked_segment = LineSegment::zero();
+                    player.last_tracked_segment = LineSegment::zero();
+                    player.jumps_remaining = Player::MAX_JUMPS;
                     player.movement_state = MoveState::Grounded;
                 }
             }
@@ -875,8 +864,9 @@ fn main() {
 
         //Gravity the player
         const GRAVITY_VELOCITY_CAP: f32 = 10.0;
+        const ACCELERATION_GRAVITY: f32 = 20.0;        //20.0 m/s^2
         if player.movement_state != MoveState::Grounded {
-            player.tracking_velocity.z -= acceleration_gravity * delta_time;
+            player.tracking_velocity.z -= ACCELERATION_GRAVITY * delta_time;
             if player.tracking_velocity.z > GRAVITY_VELOCITY_CAP {
                 player.tracking_velocity.z = GRAVITY_VELOCITY_CAP;
             }
@@ -1075,7 +1065,8 @@ fn main() {
 
                 fn resolve_collision_too_steep(player: &mut Player, collision_plane: &Plane) {                    
                     let distance_to_steep_tri = -point_plane_distance(&player.tracked_segment.p1, collision_plane);
-                    player.tracking_velocity = glm::zero();
+                    player.tracking_velocity.x = 0.0;
+                    player.tracking_velocity.y = 0.0;
                     player.tracking_position += glm::vec4_to_vec3(&(collision_plane.normal * distance_to_steep_tri));
                     player.movement_state = MoveState::Sliding;
                 }
@@ -1194,8 +1185,8 @@ fn main() {
         //Create a view matrix from the camera state
         {
             let new_view_matrix = glm::rotation(camera_orientation.y, &glm::vec3(1.0, 0.0, 0.0)) *
-                        glm::rotation(camera_orientation.x, &glm::vec3(0.0, 0.0, 1.0)) *
-                        glm::translation(&(-camera_position));
+                                  glm::rotation(camera_orientation.x, &glm::vec3(0.0, 0.0, 1.0)) *
+                                  glm::translation(&(-camera_position));
             screen_state.update_view(new_view_matrix);
         }
 
