@@ -23,11 +23,12 @@ use ozy::{glutil};
 use ozy::glutil::ColorSpace;
 use ozy::render::{Framebuffer, InstancedMesh, RenderTarget, ScreenState, SimpleMesh, TextureKeeper};
 use ozy::structs::OptionVec;
-use crate::collision::{AABB, LineSegment, Plane, PlaneBoundaries, Terrain, segment_intersect_plane, sign, standing_on_plane, point_plane_distance};
+use crate::collision::{AABB, LineSegment, Plane, PlaneBoundaries, Terrain, aabb_get_top_plane, segment_intersect_plane, segment_plane_tallest_collision, sign, standing_on_plane, point_plane_distance};
 
 #[cfg(windows)]
 use winapi::um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext};
 
+//The font data is baked at compile time
 const FONT_BYTES: &'static [u8; 212276] = include_bytes!("../fonts/Constantia.ttf");
 
 //XR interaction paths
@@ -49,35 +50,6 @@ fn write_matrix_to_buffer(buffer: &mut [f32], index: usize, matrix: glm::TMat4<f
     for k in 0..16 {
         buffer[16 * index + k] = matrix[k];
     }
-}
-
-fn aabb_get_top_plane(aabb: &AABB) -> (Plane, PlaneBoundaries) {    
-    let mut pos = aabb.position;
-    pos.z += aabb.height;
-    let plane = Plane::new(pos, glm::vec4(0.0, 0.0, 1.0, 0.0));
-    let aabb_boundaries = PlaneBoundaries {
-        xmin: -aabb.width + aabb.position.x,
-        xmax: aabb.width + aabb.position.x,
-        ymin: -aabb.depth + aabb.position.y,
-        ymax: aabb.depth + aabb.position.y
-    };
-
-    (plane, aabb_boundaries)
-}
-
-//The returned plane's reference point is the intersection point
-fn segment_plane_tallest_collision(segment: &LineSegment, planes: &[Plane]) -> Option<Plane> {    
-    let mut max_height = -f32::INFINITY;
-    let mut collision = None;
-    for plane in planes.iter() {
-        if let Some(point) = segment_intersect_plane(plane, &segment) {
-            if point.z > max_height {
-                max_height = point.z;
-                collision = Some(Plane::new(point, plane.normal));
-            }
-        }
-    }
-    collision
 }
 
 fn main() {
