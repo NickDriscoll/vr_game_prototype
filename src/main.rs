@@ -8,7 +8,7 @@ mod structs;
 mod render;
 mod xrutil;
 
-use structs::Command;
+use structs::{Command, MoveState, Player};
 use render::{render_main_scene, SceneData, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
@@ -38,13 +38,6 @@ const LEFT_TRIGGER_FLOAT: &str =                    "/user/hand/left/input/trigg
 const RIGHT_TRIGGER_FLOAT: &str =                   "/user/hand/right/input/trigger/value";
 const RIGHT_GRIP_POSE: &str =                       "/user/hand/right/input/grip/pose";
 const LEFT_STICK_VECTOR2: &str =                    "/user/hand/left/input/thumbstick";
-
-#[derive(PartialEq, Eq)]
-enum MoveState {
-    Grounded,
-    Falling,
-    Sliding
-}
 
 fn clamp<T: PartialOrd>(x: T, min: T, max: T) -> T {
     if x < min { min }
@@ -555,6 +548,9 @@ fn main() {
         pause_menu_chain_index = state.create_menu_chain();
         graphics_menu_chain_index = state.create_menu_chain();
         
+        let mut topbar_menu = Vec::with_capacity(3);
+        topbar_menu.push(("Graphics options", Some(Command::ToggleMenu(graphics_menu_chain_index, graphics_menu_index))));
+
         let mut graphics_menu = vec![
             ("Highlight spheres", Some(Command::ToggleOutline)),
             ("Visualize normals", Some(Command::ToggleNormalVis)),
@@ -564,15 +560,14 @@ fn main() {
 
         //Only display the HMD perspective button if OpenXR was initialized
         if let Some(_) = xr_session {
-            graphics_menu.push(("Toggle HMD perspective", Some(Command::ToggleHMDPov)))
+            graphics_menu.push(("Toggle HMD perspective", Some(Command::ToggleHMDPov)));
+            topbar_menu.push(("Reset player position", Some(Command::ResetPlayerPosition)));
         }
 
+        topbar_menu.push(("Quit", Some(Command::Quit)));
+
         let menus = vec![
-            ozy::ui::Menu::new(vec![
-                ("Graphics options", Some(Command::ToggleMenu(graphics_menu_chain_index, graphics_menu_index))),
-                ("Reset player position", Some(Command::ResetPlayerPosition)),
-                ("Quit", Some(Command::Quit))
-            ], ozy::ui::UIAnchor::LeftAlignedRow((0.0, 0.0)), 24.0),
+            ozy::ui::Menu::new(topbar_menu, ozy::ui::UIAnchor::LeftAlignedRow((0.0, 0.0)), 24.0),
             ozy::ui::Menu::new(graphics_menu, ozy::ui::UIAnchor::RightAlignedColumn((window_size.x as f32, 0.0)), 24.0)
         ];
 
@@ -683,15 +678,16 @@ fn main() {
     }
 
     //Player state
-    const MAX_JUMPS: usize = 2;
-    let mut last_left_trigger = false;
-    let mut player_movement_state = MoveState::Grounded;
-    let player_radius = 0.15;                               //The player's radius as a circle in the xy plane
-    let mut last_tracked_user_segment = LineSegment::zero();
+    let mut player = Player {
+        tracking_position: glm::vec3(0.0, 0.0, 0.5),
+        tracking_velocity: glm::zero(),
+        tracked_segment: LineSegment::zero(),
+        last_tracked_segment: LineSegment::zero(),
+        movement_state: MoveState::Grounded,
+        radius: 0.15,
+        jumps_remaining: Player::MAX_JUMPS
+    };
     let mut was_holding_left_trigger = false;
-    let mut player_jumps_remaining = MAX_JUMPS;
-    let mut tracking_space_position = glm::vec3(0.0, 0.0, 5.0);
-    let mut tracking_space_velocity = glm::vec3(0.0, 0.0, 0.0);
     
     //Matrices for relating tracking space and world space
     let mut world_from_tracking = glm::identity();
@@ -737,44 +733,44 @@ fn main() {
         }
 
         //Calculate the velocity of tracking space
-        tracking_space_velocity = {
+        player.tracking_velocity = {
             const MOVEMENT_SPEED: f32 = 5.0;
             const DEADZONE_MAGNITUDE: f32 = 0.1;
             let mut velocity = match &left_stick_state {
                 Some(stick_state) => {
-                    if stick_state.changed_since_last_sync && player_movement_state != MoveState::Sliding {                            
+                    if stick_state.changed_since_last_sync && player.movement_state != MoveState::Sliding {                            
                         match xrutil::locate_space(&left_hand_aim_space, &tracking_space, stick_state.last_change_time) {
                             Some(pose) => {
                                 let hand_space_vec = glm::vec4(stick_state.current_state.x, stick_state.current_state.y, 0.0, 0.0);
                                 let magnitude = glm::length(&hand_space_vec);
                                 if magnitude < DEADZONE_MAGNITUDE {
-                                    glm::vec3(0.0, 0.0, tracking_space_velocity.z)
+                                    glm::vec3(0.0, 0.0, player.tracking_velocity.z)
                                 } else {
                                     //Explicit check for zero to avoid divide-by-zero in normalize
                                     if hand_space_vec == glm::zero() {
-                                        tracking_space_velocity
+                                        player.tracking_velocity
                                     } else {
                                         //World space untreated vector
                                         let untreated = xrutil::pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec;
                                         let ugh = glm::normalize(&glm::vec3(untreated.x, untreated.y, 0.0)) * MOVEMENT_SPEED * magnitude;
-                                        glm::vec3(ugh.x, ugh.y, tracking_space_velocity.z)
+                                        glm::vec3(ugh.x, ugh.y, player.tracking_velocity.z)
                                     }
                                 }
                             }
-                            None => { tracking_space_velocity }
+                            None => { player.tracking_velocity }
                         }
-                    } else { tracking_space_velocity }
+                    } else { player.tracking_velocity }
                 }
-                _ => { tracking_space_velocity }
+                _ => { player.tracking_velocity }
             };
 
             if let Some(state) = &left_trigger_state {
                 let holding = state.current_state == 1.0;
 
-                if holding && !was_holding_left_trigger && player_jumps_remaining > 0 {
-                    player_jumps_remaining -= 1;
+                if holding && !was_holding_left_trigger && player.jumps_remaining > 0 {
+                    player.jumps_remaining -= 1;
                     velocity = glm::vec3(velocity.x, velocity.y, 10.0);
-                    player_movement_state = MoveState::Falling;
+                    player.movement_state = MoveState::Falling;
                 } else if state.current_state < 1.0 && was_holding_left_trigger && velocity.z > 0.0 {
                     velocity.z /= 2.0;
                 }
@@ -898,19 +894,19 @@ fn main() {
                 }
                 Command::ToggleWireframe => { wireframe = !wireframe; }
                 Command::ResetPlayerPosition => {
-                    tracking_space_position = glm::vec3(0.0, 0.0, 3.0);
-                    tracking_space_velocity = glm::zero();
-                    player_movement_state = MoveState::Grounded;
+                    player.tracking_position = glm::vec3(0.0, 0.0, 3.0);
+                    player.tracking_velocity = glm::zero();
+                    player.movement_state = MoveState::Grounded;
                 }
             }
         }
 
         //Gravity the player
         const GRAVITY_VELOCITY_CAP: f32 = 10.0;
-        if player_movement_state != MoveState::Grounded {
-            tracking_space_velocity.z -= acceleration_gravity * delta_time;
-            if tracking_space_velocity.z > GRAVITY_VELOCITY_CAP {
-                tracking_space_velocity.z = GRAVITY_VELOCITY_CAP;
+        if player.movement_state != MoveState::Grounded {
+            player.tracking_velocity.z -= acceleration_gravity * delta_time;
+            if player.tracking_velocity.z > GRAVITY_VELOCITY_CAP {
+                player.tracking_velocity.z = GRAVITY_VELOCITY_CAP;
             }
         }
 
@@ -926,8 +922,8 @@ fn main() {
         scene_data.single_entities[dragon_entity_index].model_matrix = glm::translation(&glm::vec3(0.0, -14.0, 0.0)) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
 
         //Update tracking space location
-        tracking_space_position += tracking_space_velocity * delta_time;
-        world_from_tracking = glm::translation(&tracking_space_position);
+        player.tracking_position += player.tracking_velocity * delta_time;
+        world_from_tracking = glm::translation(&player.tracking_position);
 
         //Collision handling section
 
@@ -975,24 +971,24 @@ fn main() {
         }
 
         //The user is considered to be always standing on the ground in tracking space
-        let tracked_user_segment = xrutil::tracked_player_segment(&view_space, &tracking_space, last_xr_render_time, &world_from_tracking);
+        player.tracked_segment = xrutil::tracked_player_segment(&view_space, &tracking_space, last_xr_render_time, &world_from_tracking);
 
         //Check side collision with AABBs
         //We reduce this to a circle vs rectangle in the xy plane
         for opt_aabb in collision_aabbs.iter() {
             if let Some(aabb) = opt_aabb {
-                if tracking_space_position.z + glm::epsilon::<f32>() < aabb.position.z + aabb.height {
+                if player.tracking_position.z + glm::epsilon::<f32>() < aabb.position.z + aabb.height {
                     let closest_point_on_aabb = glm::vec3(
-                        clamp(tracked_user_segment.p1.x, aabb.position.x - aabb.width, aabb.position.x + aabb.width),
-                        clamp(tracked_user_segment.p1.y, aabb.position.y - aabb.depth, aabb.position.y + aabb.depth),
+                        clamp(player.tracked_segment.p1.x, aabb.position.x - aabb.width, aabb.position.x + aabb.width),
+                        clamp(player.tracked_segment.p1.y, aabb.position.y - aabb.depth, aabb.position.y + aabb.depth),
                         0.0
                     );
-                    let focus = glm::vec3(tracked_user_segment.p1.x, tracked_user_segment.p1.y, 0.0);
+                    let focus = glm::vec3(player.tracked_segment.p1.x, player.tracked_segment.p1.y, 0.0);
 
                     let distance = glm::distance(&closest_point_on_aabb, &focus);
-                    if distance > 0.0 && distance < player_radius {
+                    if distance > 0.0 && distance < player.radius {
                         let vec = glm::normalize(&(focus - closest_point_on_aabb));
-                        tracking_space_position += (player_radius - distance) * vec;
+                        player.tracking_position += (player.radius - distance) * vec;
                     }
                 }
             }
@@ -1008,7 +1004,7 @@ fn main() {
             let a = terrain.vertices[terrain.indices[i] as usize];
             let b = terrain.vertices[terrain.indices[i + 1] as usize];
             let c = terrain.vertices[terrain.indices[i + 2] as usize];
-            let test_point = glm::vec2(tracked_user_segment.p1.x, tracked_user_segment.p1.y);
+            let test_point = glm::vec2(player.tracked_segment.p1.x, player.tracked_segment.p1.y);
 
             let d1 = sign(&test_point, &glm::vec3_to_vec2(&a), &glm::vec3_to_vec2(&b));
             let d2 = sign(&test_point, &glm::vec3_to_vec2(&b), &glm::vec3_to_vec2(&c));
@@ -1031,24 +1027,24 @@ fn main() {
         //Check if we're bonking any of the down-facing triangles
         for tri in down_facing_tris.iter() {
             //If the distance to the triangle is within the range (-distance, distance), eject the player
-            let distance = point_plane_distance(&tracked_user_segment.p0, &tri);
-            if f32::abs(distance) < player_radius {
-                tracking_space_position += glm::vec4_to_vec3(&tri.normal) * (player_radius - distance);
+            let distance = point_plane_distance(&player.tracked_segment.p0, &tri);
+            if f32::abs(distance) < player.radius {
+                player.tracking_position += glm::vec4_to_vec3(&tri.normal) * (player.radius - distance);
             }
         }
 
         //User collision section
         const MIN_NORMAL_LIKENESS: f32 = 0.7;
-        match player_movement_state {
+        match player.movement_state {
             MoveState::Falling => {
                 let mut done_checking = false;
                 let standing_segment = LineSegment {
-                    p0: last_tracked_user_segment.p1 + glm::vec4(0.0, 0.0, 0.05, 0.0),
-                    p1: tracked_user_segment.p1
+                    p0: player.last_tracked_segment.p1 + glm::vec4(0.0, 0.0, 0.05, 0.0),
+                    p1: player.tracked_segment.p1
                 };
                 let swept_segment = LineSegment {
-                    p0: 0.5 * tracked_user_segment.p0 + 0.5 * tracked_user_segment.p1,
-                    p1: 0.5 * last_tracked_user_segment.p0 + 0.5 * last_tracked_user_segment.p1
+                    p0: 0.5 * player.tracked_segment.p0 + 0.5 * player.tracked_segment.p1,
+                    p1: 0.5 * player.last_tracked_segment.p0 + 0.5 * player.last_tracked_segment.p1
                 };
 
                 //Check for AABB collision
@@ -1057,7 +1053,7 @@ fn main() {
                         if let Some(aabb) = opt_aabb {
                             let (plane, aabb_boundaries) = aabb_get_top_plane(&aabb);
                             if let Some(point) = standing_on_plane(&plane, &standing_segment, &aabb_boundaries) {
-                                resolve_collision(&mut tracking_space_velocity, &mut tracking_space_position, &tracked_user_segment, &point, &mut player_jumps_remaining, &mut player_movement_state);
+                                resolve_collision(&mut player, &point);
                                 done_checking = true;
                             }
                         }
@@ -1068,7 +1064,7 @@ fn main() {
                 //Check walkable tris
                 if !done_checking {
                     if let Some(collision_plane) = segment_plane_tallest_collision(&standing_segment, &walkable_tris) {
-                        resolve_collision(&mut tracking_space_velocity, &mut tracking_space_position, &tracked_user_segment, &collision_plane.point, &mut player_jumps_remaining, &mut player_movement_state);                        
+                        resolve_collision(&mut player, &collision_plane.point);
                         done_checking = true;
                     }
                 }
@@ -1076,11 +1072,7 @@ fn main() {
                 //Check too steep tris
                 if !done_checking {
                     if let Some(collision_plane) = segment_plane_tallest_collision(&standing_segment, &too_steep_tris) {
-                        //We're standing on a triangle that is too steep to stand on
-                        let distance_to_steep_tri = -point_plane_distance(&tracked_user_segment.p1, &collision_plane);
-                        tracking_space_velocity = glm::zero();
-                        tracking_space_position += glm::vec4_to_vec3(&(collision_plane.normal * distance_to_steep_tri));
-                        player_movement_state = MoveState::Sliding;
+                        resolve_collision_too_steep(&mut player, &collision_plane);
                         done_checking = true;
                     }
                 }
@@ -1088,7 +1080,7 @@ fn main() {
                 //Check walkable tris with the swept segment
                 if !done_checking {                    
                     if let Some(collision_plane) = segment_plane_tallest_collision(&swept_segment, &walkable_tris) {
-                        resolve_collision(&mut tracking_space_velocity, &mut tracking_space_position, &tracked_user_segment, &collision_plane.point, &mut player_jumps_remaining, &mut player_movement_state);                        
+                        resolve_collision(&mut player, &collision_plane.point);
                         done_checking = true;
                     }
                 }
@@ -1096,64 +1088,60 @@ fn main() {
                 //Check too steep tris
                 if !done_checking {
                     if let Some(collision_plane) = segment_plane_tallest_collision(&swept_segment, &too_steep_tris) {
-                        //We're standing on a triangle that is too steep to stand on
-                        let distance_to_steep_tri = -point_plane_distance(&tracked_user_segment.p1, &collision_plane);
-                        tracking_space_velocity = glm::zero();
-                        tracking_space_position += glm::vec4_to_vec3(&(collision_plane.normal * distance_to_steep_tri));
-                        player_movement_state = MoveState::Sliding;
+                        resolve_collision_too_steep(&mut player, &collision_plane);
                         done_checking = true;
                     }
                 }
 
                 //Local collision resolution function
-                fn resolve_collision(
-                    tracking_space_velocity: &mut glm::TVec3<f32>,
-                    tracking_space_position: &mut glm::TVec3<f32>,
-                    tracked_segment: &LineSegment,
-                    collision_point: &glm::TVec4<f32>,
-                    player_jumps_remaining: &mut usize,
-                    player_movement_state: &mut MoveState
-                ) {
-                    *tracking_space_velocity = glm::zero();
-                    *tracking_space_position += glm::vec4_to_vec3(&(collision_point - tracked_segment.p1));
-                    *player_jumps_remaining = MAX_JUMPS;
-                    *player_movement_state = MoveState::Grounded;
+                fn resolve_collision(player: &mut Player, collision_point: &glm::TVec4<f32>,) {
+                    player.tracking_velocity = glm::zero();
+                    player.tracking_position += glm::vec4_to_vec3(&(collision_point - player.tracked_segment.p1));
+                    player.jumps_remaining = Player::MAX_JUMPS;
+                    player.movement_state = MoveState::Grounded;
+                }
+
+                fn resolve_collision_too_steep(player: &mut Player, collision_plane: &Plane) {                    
+                    let distance_to_steep_tri = -point_plane_distance(&player.tracked_segment.p1, collision_plane);
+                    player.tracking_velocity = glm::zero();
+                    player.tracking_position += glm::vec4_to_vec3(&(collision_plane.normal * distance_to_steep_tri));
+                    player.movement_state = MoveState::Sliding;
                 }
             }
             MoveState::Sliding => {
                 let mut done_checking = false;
 
                 if !done_checking {
-                    if let Some(collision_plane) = segment_plane_tallest_collision(&tracked_user_segment, &walkable_tris) {
-                        tracking_space_velocity = glm::zero();
-                        tracking_space_position += glm::vec4_to_vec3(&(collision_plane.point - tracked_user_segment.p1));
-                        player_jumps_remaining = MAX_JUMPS;
-                        player_movement_state = MoveState::Grounded;
+                    if let Some(collision_plane) = segment_plane_tallest_collision(&player.tracked_segment, &walkable_tris) {
+                        player.tracking_velocity = glm::zero();
+                        player.tracking_position += glm::vec4_to_vec3(&(collision_plane.point - player.tracked_segment.p1));
+                        player.jumps_remaining = Player::MAX_JUMPS;
+                        player.movement_state = MoveState::Grounded;
                         done_checking = true;                        
                     }
                 }
 
                 if !done_checking {
-                    if let Some(collision_plane) = segment_plane_tallest_collision(&tracked_user_segment, &too_steep_tris) {
-                        let distance_to_steep_tri = -point_plane_distance(&tracked_user_segment.p1, &collision_plane);
-                        tracking_space_position += glm::vec4_to_vec3(&(collision_plane.normal * distance_to_steep_tri));
+                    if let Some(collision_plane) = segment_plane_tallest_collision(&player.tracked_segment, &too_steep_tris) {
+                        let distance_to_steep_tri = -point_plane_distance(&player.tracked_segment.p1, &collision_plane);
+                        player.tracking_position += glm::vec4_to_vec3(&(collision_plane.normal * distance_to_steep_tri));
                         done_checking = true;
                     }
                 }
 
                 if !done_checking {
-                    player_movement_state = MoveState::Falling;
+                    player.movement_state = MoveState::Falling;
                 }
             }
             MoveState::Grounded => {
                 let mut done_checking = false;
                 let standing_segment = LineSegment {
-                    p0: tracked_user_segment.p1 + glm::vec4(0.0, 0.0, 0.5, 1.0),
-                    p1: tracked_user_segment.p1 - glm::vec4(0.0, 0.0, 0.2, 1.0)
+                    p0: player.tracked_segment.p1 + glm::vec4(0.0, 0.0, 0.5, 1.0),
+                    p1: player.tracked_segment.p1 - glm::vec4(0.0, 0.0, 0.2, 1.0)
                 };
                 let swept_segment = LineSegment {
-                    p0: 0.5 * tracked_user_segment.p0 + 0.5 * tracked_user_segment.p1,
-                    p1: 0.5 * last_tracked_user_segment.p0 + 0.5 * last_tracked_user_segment.p1
+                    p0: 0.5 * player.tracked_segment.p0 + 0.5 * player.tracked_segment.p1,
+                    p1: 0.5 * player.last_tracked_segment.p0 + 0.5 * player.last_tracked_segment.p1
                 };
 
                 //Check the AABBs
@@ -1162,7 +1150,7 @@ fn main() {
                         if let Some(aabb) = opt_aabb {
                             let (plane, aabb_boundaries) = aabb_get_top_plane(&aabb);
                             if let Some(point) = standing_on_plane(&plane, &standing_segment, &aabb_boundaries) {
-                                resolve_collision_walkable(&mut tracking_space_velocity, &mut tracking_space_position, &tracked_user_segment, &point, &mut player_movement_state, &mut done_checking);
+                                resolve_collision_walkable(&mut player, &point, &mut done_checking);
                                 break;
                             }
                         }
@@ -1172,68 +1160,53 @@ fn main() {
                 //Check if we're standing on a walkable triangle
                 if !done_checking {
                     if let Some(collision_plane) = segment_plane_tallest_collision(&standing_segment, &walkable_tris) {
-                        resolve_collision_walkable(&mut tracking_space_velocity, &mut tracking_space_position, &tracked_user_segment, &collision_plane.point, &mut player_movement_state, &mut done_checking);
+                        resolve_collision_walkable(&mut player, &collision_plane.point, &mut done_checking);
                     }
                 }                
                 if !done_checking {
                     if let Some(collision_plane) = segment_plane_tallest_collision(&standing_segment, &too_steep_tris) {
-                        resolve_collision_too_steep(&mut tracking_space_velocity, &mut tracking_space_position, &tracked_user_segment, &collision_plane.point, &mut player_movement_state);
+                        resolve_collision_too_steep(&mut player, &collision_plane.point);
                     }
                 }
                 
                 //Check if we're standing on a too-steep triangle
                 if !done_checking {
                     if let Some(collision_plane) = segment_plane_tallest_collision(&swept_segment, &walkable_tris) {
-                        resolve_collision_walkable(&mut tracking_space_velocity, &mut tracking_space_position, &tracked_user_segment, &collision_plane.point, &mut player_movement_state, &mut done_checking);
+                        resolve_collision_walkable(&mut player, &collision_plane.point, &mut done_checking);
                     }
                 }                
                 if !done_checking {
                     if let Some(collision_plane) = segment_plane_tallest_collision(&swept_segment, &too_steep_tris) {
-                        resolve_collision_too_steep(&mut tracking_space_velocity, &mut tracking_space_position, &tracked_user_segment, &collision_plane.point, &mut player_movement_state);
+                        resolve_collision_too_steep(&mut player, &collision_plane.point);
                     }
                 }
 
                 //If we're still not grounded, we're falling
                 if !done_checking {
-                    player_jumps_remaining -= 1;
-                    player_movement_state = MoveState::Falling;
+                    player.jumps_remaining -= 1;
+                    player.movement_state = MoveState::Falling;
                 }
 
                 //Local collision resolution functions
 
-                fn resolve_collision_walkable(
-                    tracking_space_velocity: &mut glm::TVec3<f32>,
-                    tracking_space_position: &mut glm::TVec3<f32>,
-                    tracked_segment: &LineSegment,
-                    collision_point: &glm::TVec4<f32>,
-                    player_movement_state: &mut MoveState,
-                    done_checking: &mut bool
-                ) {
-                    eject_player(tracking_space_velocity, tracking_space_position, tracked_segment, collision_point);
-                    *player_movement_state = MoveState::Grounded;
+                fn resolve_collision_walkable(player: &mut Player, collision_point: &glm::TVec4<f32>, done_checking: &mut bool) {
+                    eject_player(player, collision_point);
+                    player.movement_state = MoveState::Grounded;
                     *done_checking = true;
                 }
-
-                fn resolve_collision_too_steep(
-                    tracking_space_velocity: &mut glm::TVec3<f32>,
-                    tracking_space_position: &mut glm::TVec3<f32>,
-                    tracked_segment: &LineSegment,
-                    collision_point: &glm::TVec4<f32>,
-                    player_movement_state: &mut MoveState,
-                ) {
-                    eject_player(tracking_space_velocity, tracking_space_position, tracked_segment, collision_point);
-                    *player_movement_state = MoveState::Sliding;
+                fn resolve_collision_too_steep(player: &mut Player, collision_point: &glm::TVec4<f32>) {
+                    eject_player(player, collision_point);
+                    player.movement_state = MoveState::Sliding;
                 }
-
-                fn eject_player(tracking_space_velocity :&mut glm::TVec3<f32>, tracking_space_position: &mut glm::TVec3<f32>, tracked_segment: &LineSegment, collision_point: &glm::TVec4<f32>) {                    
-                    *tracking_space_velocity = glm::zero();
-                    *tracking_space_position += glm::vec4_to_vec3(&(collision_point - tracked_segment.p1));
+                fn eject_player(player: &mut Player, collision_point: &glm::TVec4<f32>) {
+                    player.tracking_velocity = glm::zero();
+                    player.tracking_position += glm::vec4_to_vec3(&(collision_point - player.tracked_segment.p1));
                 }
             }
         }
 
         //After all collision processing has been completed, update the tracking space matrices once more
-        world_from_tracking = glm::translation(&tracking_space_position);
+        world_from_tracking = glm::translation(&player.tracking_position);
         tracking_from_world = glm::affine_inverse(world_from_tracking);
 
         //Make the light dance around
@@ -1242,7 +1215,7 @@ fn main() {
         shadow_view = glm::look_at(&glm::vec4_to_vec3(&uniform_light), &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
         scene_data.shadow_matrix = shadow_projection * shadow_view;
 
-        last_tracked_user_segment = tracked_user_segment;
+        player.last_tracked_segment = player.tracked_segment;
         last_camera_position = camera_position;
         //Pre-render phase
 
