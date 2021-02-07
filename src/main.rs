@@ -23,7 +23,7 @@ use ozy::{glutil};
 use ozy::glutil::ColorSpace;
 use ozy::render::{Framebuffer, InstancedMesh, RenderTarget, ScreenState, SimpleMesh, TextureKeeper};
 use ozy::structs::OptionVec;
-use crate::collision::{AABB, LineSegment, Plane, PlaneBoundaries, Terrain, segment_intersect_plane, segment_standing_terrain, standing_on_plane, point_plane_distance};
+use crate::collision::{AABB, LineSegment, Plane, PlaneBoundaries, Terrain, segment_intersect_plane, segment_standing_terrain, sign, standing_on_plane, point_plane_distance};
 
 #[cfg(windows)]
 use winapi::um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext};
@@ -567,8 +567,9 @@ fn main() {
     };
 
     //Load terrain data
-    let terrain = Terrain::from_ozt("models/terrain4.ozt");
-    let terrain_mesh = SimpleMesh::from_ozy("models/terrain4.ozy", &mut texture_keeper, &tex_params);
+    let terrain_name = "terrain";
+    let terrain = Terrain::from_ozt(&format!("models/{}.ozt", terrain_name));
+    let terrain_mesh = SimpleMesh::from_ozy(&format!("models/{}.ozy", terrain_name), &mut texture_keeper, &tex_params);
     let terrain_entity_index = scene_data.push_single_entity(terrain_mesh);
     scene_data.single_entities[terrain_entity_index].uv_scale = 20.0;
     scene_data.single_entities[terrain_entity_index].model_matrix = ozy::routines::uniform_scale(1.0);
@@ -978,6 +979,43 @@ fn main() {
                         let vec = glm::normalize(&(focus - closest_point_on_aabb));
                         tracking_space_position += (player_radius - distance) * vec;
                     }
+                }
+            }
+        }
+
+        //Check for collision with down-facing triangles
+        {
+            let mut down_facing_tris = Vec::new();
+
+            //For each triangle in the terrain collision mesh
+            for i in (0..terrain.indices.len()).step_by(3) {
+                //Get the vertices of the triangle
+                let a = terrain.vertices[terrain.indices[i] as usize];
+                let b = terrain.vertices[terrain.indices[i + 1] as usize];
+                let c = terrain.vertices[terrain.indices[i + 2] as usize];
+                let test_point = glm::vec2(tracked_user_segment.p1.x, tracked_user_segment.p1.y);
+        
+                let d1 = sign(&test_point, &glm::vec3_to_vec2(&a), &glm::vec3_to_vec2(&b));
+                let d2 = sign(&test_point, &glm::vec3_to_vec2(&b), &glm::vec3_to_vec2(&c));
+                let d3 = sign(&test_point, &glm::vec3_to_vec2(&c), &glm::vec3_to_vec2(&a));
+        
+                let has_neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+                let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+        
+                if !(has_neg && has_pos) {
+                    let triangle_normal = terrain.face_normals[i / 3];
+                    if glm::dot(&triangle_normal, &glm::vec3(0.0, 0.0, 1.0)) < 0.0 {
+                        let triangle_plane = Plane::new(glm::vec4(a.x, a.y, a.z, 1.0), glm::vec4(triangle_normal.x, triangle_normal.y, triangle_normal.z, 0.0));
+                        down_facing_tris.push(triangle_plane);
+                    }
+                }
+            }
+
+            //Check if we're bonking any of these triangles
+            for tri in down_facing_tris.iter() {
+                let distance = point_plane_distance(&tracked_user_segment.p0, &tri);
+                if f32::abs(distance) < player_radius {
+                    tracking_space_position += glm::vec4_to_vec3(&tri.normal) * (player_radius - distance);
                 }
             }
         }

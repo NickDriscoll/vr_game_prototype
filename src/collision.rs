@@ -181,7 +181,7 @@ pub fn point_plane_distance(point: &glm::TVec4<f32>, plane: &Plane) -> f32 {
     glm::dot(&plane.normal, &(point - plane.point))
 }
 
-fn sign(test: &glm::TVec2<f32>, p0: &glm::TVec2<f32>, p1: &glm::TVec2<f32>) -> f32 {
+pub fn sign(test: &glm::TVec2<f32>, p0: &glm::TVec2<f32>, p1: &glm::TVec2<f32>) -> f32 {
     (test.x - p1.x) * (p0.y - p1.y) - (p0.x - p1.x) * (test.y - p1.y)
 }
 
