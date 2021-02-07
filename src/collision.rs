@@ -184,3 +184,32 @@ pub fn point_plane_distance(point: &glm::TVec4<f32>, plane: &Plane) -> f32 {
 pub fn sign(test: &glm::TVec2<f32>, p0: &glm::TVec2<f32>, p1: &glm::TVec2<f32>) -> f32 {
     (test.x - p1.x) * (p0.y - p1.y) - (p0.x - p1.x) * (test.y - p1.y)
 }
+
+pub fn aabb_get_top_plane(aabb: &AABB) -> (Plane, PlaneBoundaries) {    
+    let mut pos = aabb.position;
+    pos.z += aabb.height;
+    let plane = Plane::new(pos, glm::vec4(0.0, 0.0, 1.0, 0.0));
+    let aabb_boundaries = PlaneBoundaries {
+        xmin: -aabb.width + aabb.position.x,
+        xmax: aabb.width + aabb.position.x,
+        ymin: -aabb.depth + aabb.position.y,
+        ymax: aabb.depth + aabb.position.y
+    };
+
+    (plane, aabb_boundaries)
+}
+
+//The returned plane's reference point is the intersection point
+pub fn segment_plane_tallest_collision(segment: &LineSegment, planes: &[Plane]) -> Option<Plane> {    
+    let mut max_height = -f32::INFINITY;
+    let mut collision = None;
+    for plane in planes.iter() {
+        if let Some(point) = segment_intersect_plane(plane, &segment) {
+            if point.z > max_height {
+                max_height = point.z;
+                collision = Some(Plane::new(point, plane.normal));
+            }
+        }
+    }
+    collision
+}
