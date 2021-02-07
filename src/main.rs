@@ -1030,6 +1030,11 @@ fn main() {
                     p1: tracked_user_segment.p1
                 };
 
+                let swept_segment = LineSegment {
+                    p0: 0.5 * tracked_user_segment.p0 + 0.5 * tracked_user_segment.p1,
+                    p1: 0.5 * last_tracked_user_segment.p0 + 0.5 * last_tracked_user_segment.p1
+                };
+
                 //Check for AABB collision
                 if !done_checking {
                     for opt_aabb in collision_aabbs.iter() {
@@ -1050,9 +1055,25 @@ fn main() {
                             resolve_collision(&mut tracking_space_velocity, &mut tracking_space_position, &tracked_user_segment, &collision_plane.point, &mut player_jumps_remaining, &mut player_movement_state);
                         } else {
                             //We're standing on a triangle that is too steep to stand on
+                            tracking_space_velocity.x = 0.0;
+                            tracking_space_velocity.y = 0.0;
                             player_movement_state = MoveState::Sliding;
                         }
                         done_checking = true;
+                    } else {
+                        println!("Trying swept segment");
+                        if let Some(collision_plane) = segment_standing_terrain(&terrain, &swept_segment) {
+                            println!("Swept segment collision");
+                            if glm::dot(&collision_plane.normal, &glm::vec4(0.0, 0.0, 1.0, 0.0)) >= MIN_NORMAL_LIKENESS {
+                                resolve_collision(&mut tracking_space_velocity, &mut tracking_space_position, &tracked_user_segment, &collision_plane.point, &mut player_jumps_remaining, &mut player_movement_state);
+                            } else {
+                                //We're standing on a triangle that is too steep to stand on
+                                tracking_space_velocity.x = 0.0;
+                                tracking_space_velocity.y = 0.0;
+                                player_movement_state = MoveState::Sliding;
+                            }
+                            done_checking = true;
+                        }
                     }
                 }
 
@@ -1072,8 +1093,6 @@ fn main() {
                 }
             }
             MoveState::Sliding => {
-                tracking_space_velocity.x = 0.0;
-                tracking_space_velocity.y = 0.0;
                 match segment_standing_terrain(&terrain, &tracked_user_segment) {
                     Some(collision_plane) => {
                         if glm::dot(&collision_plane.normal, &glm::vec4(0.0, 0.0, 1.0, 0.0)) >= MIN_NORMAL_LIKENESS {
@@ -1090,12 +1109,15 @@ fn main() {
                 }
             }
             MoveState::Grounded => {
-                player_movement_state = MoveState::Falling;
+                let mut still_grounded = false;
                 let standing_segment = LineSegment {
                     p0: tracked_user_segment.p1 + glm::vec4(0.0, 0.0, 0.5, 1.0),
                     p1: tracked_user_segment.p1 - glm::vec4(0.0, 0.0, 0.2, 1.0)
                 };
-                let mut still_grounded = false;
+                let swept_segment = LineSegment {
+                    p0: 0.5 * tracked_user_segment.p0 + 0.5 * tracked_user_segment.p1,
+                    p1: 0.5 * last_tracked_user_segment.p0 + 0.5 * last_tracked_user_segment.p1
+                };
 
                 //Check the AABBs
                 if !still_grounded {
@@ -1118,7 +1140,23 @@ fn main() {
                         } else {
                             tracking_space_velocity = glm::zero();
                             tracking_space_position += glm::vec4_to_vec3(&(collision_plane.point - tracked_user_segment.p1));
+                            tracking_space_velocity.x = 0.0;
+                            tracking_space_velocity.y = 0.0;
                             player_movement_state = MoveState::Sliding;
+                        }
+                    } else {
+                        println!("Trying swept segment");
+                        if let Some(collision_plane) = segment_standing_terrain(&terrain, &swept_segment) {
+                            println!("Swept segment collision");
+                            if glm::dot(&collision_plane.normal, &glm::vec4(0.0, 0.0, 1.0, 0.0)) >= MIN_NORMAL_LIKENESS {
+                                resolve_collision(&mut tracking_space_velocity, &mut tracking_space_position, &tracked_user_segment, &collision_plane.point, &mut player_movement_state, &mut still_grounded);
+                            } else {
+                                tracking_space_velocity = glm::zero();
+                                tracking_space_position += glm::vec4_to_vec3(&(collision_plane.point - tracked_user_segment.p1));
+                                tracking_space_velocity.x = 0.0;
+                                tracking_space_velocity.y = 0.0;
+                                player_movement_state = MoveState::Sliding;
+                            }
                         }
                     }
                 }
