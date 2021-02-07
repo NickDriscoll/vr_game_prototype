@@ -473,7 +473,8 @@ fn main() {
     let camera_hit_sphere_radius = 0.2;
 
     //Initialize screen state
-    let mut screen_state = ScreenState::new(window_size, glm::identity(), glm::perspective_zo(aspect_ratio, glm::half_pi(), NEAR_DISTANCE, FAR_DISTANCE));
+    let fov_radians = glm::half_pi();
+    let mut screen_state = ScreenState::new(window_size, glm::identity(), glm::perspective_zo(aspect_ratio, fov_radians, NEAR_DISTANCE, FAR_DISTANCE));
 
     //Fullscreen the window
     /*
@@ -608,6 +609,7 @@ fn main() {
     scene_data.instanced_entities[mesa_entity_index].mesh.update_buffer(&mesa_transforms);
 
     //Create dragon
+    let mut dragon_position = glm::vec3(0.0, -14.0, 0.0);
     let dragon_mesh = SimpleMesh::from_ozy("models/dragon.ozy", &mut texture_keeper, &tex_params);
     let dragon_entity_index = scene_data.push_single_entity(dragon_mesh);
 
@@ -900,8 +902,74 @@ fn main() {
         let camera_velocity = camera_speed * glm::vec4_to_vec3(&(glm::affine_inverse(*screen_state.get_view_from_world()) * camera_input));
         camera_position += camera_velocity * delta_time;
 
+        //Calculate screen-ray terrain intersection
+        {
+            let fovx_radians = fov_radians * aspect_ratio;
+            let max_coords = glm::vec4(
+                NEAR_DISTANCE * f32::tan(fovx_radians / 2.0),
+                NEAR_DISTANCE * f32::tan(fov_radians / 2.0),
+                -NEAR_DISTANCE,
+                1.0
+            );
+            let normalized_coords = glm::vec4(
+                screen_space_mouse.x * 2.0 / window_size.x as f32 - 1.0,
+                -screen_space_mouse.y * 2.0 / window_size.y as f32 + 1.0,
+                1.0,
+                1.0
+            );
+            let view_space_mouse = glm::matrix_comp_mult(&normalized_coords, &max_coords);
+            let world_space_mouse = glm::vec4_to_vec3(&(screen_state.get_world_from_view() * view_space_mouse));
+            let mouse_ray = glm::normalize(&(world_space_mouse - camera_position));
+            
+            //Check each triangle for ray-plane collision
+            let mut smallest_t = f32::INFINITY;
+            let mut closest_intersection = None;
+            for i in (0..terrain.indices.len()).step_by(3) {
+                //Get the vertices of the triangle
+                let a = terrain.vertices[terrain.indices[i] as usize];
+                let b = terrain.vertices[terrain.indices[i + 1] as usize];
+                let c = terrain.vertices[terrain.indices[i + 2] as usize];
+                let normal = terrain.face_normals[i / 3];
+
+                let plane = Plane::new(glm::vec4(a.x, a.y, a.z, 1.0), glm::vec4(normal.x, normal.y, normal.z, 1.0));
+
+                //Pre-compute the denominator to avoid divide-by-zero
+                let denominator = glm::dot(&glm::vec3_to_vec4(&mouse_ray), &plane.normal);
+                if denominator == 0.0 {
+                    continue;
+                }
+                let t = glm::dot(&(plane.point - glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0)), &plane.normal) / glm::dot(&glm::vec3_to_vec4(&mouse_ray), &plane.normal);
+                let intersection = camera_position + t * mouse_ray;
+
+                //Check if this collision point is actually in the triangle
+                let test_point = glm::vec2(intersection.x, intersection.y);
+                let d1 = sign(&test_point, &glm::vec3_to_vec2(&a), &glm::vec3_to_vec2(&b));
+                let d2 = sign(&test_point, &glm::vec3_to_vec2(&b), &glm::vec3_to_vec2(&c));
+                let d3 = sign(&test_point, &glm::vec3_to_vec2(&c), &glm::vec3_to_vec2(&a));
+
+                let has_neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+                let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+
+                if !(has_neg && has_pos) {
+                    if t < smallest_t {
+                        smallest_t = t;
+                        closest_intersection = Some(intersection);
+                    }
+                }
+
+                if i == 0 {
+                    println!("ray: {:?}", mouse_ray);
+                }
+            }
+
+            //We now know the closest intersection point
+            if let Some(point) = closest_intersection {
+                dragon_position = point;
+            }
+        }
+
         //Spin the dragon
-        scene_data.single_entities[dragon_entity_index].model_matrix = glm::translation(&glm::vec3(0.0, -14.0, 0.0)) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
+        scene_data.single_entities[dragon_entity_index].model_matrix = glm::translation(&dragon_position) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
 
         //Update tracking space location
         player.tracking_position += player.tracking_velocity * delta_time;
