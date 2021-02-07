@@ -904,7 +904,8 @@ fn main() {
 
         //Calculate screen-ray terrain intersection
         {
-            let fovx_radians = fov_radians * aspect_ratio;
+            //let fovx_radians = fov_radians * aspect_ratio;
+            let fovx_radians = 2.0 * f32::atan(f32::tan(fov_radians / 2.0) * aspect_ratio);
             let max_coords = glm::vec4(
                 NEAR_DISTANCE * f32::tan(fovx_radians / 2.0),
                 NEAR_DISTANCE * f32::tan(fov_radians / 2.0),
@@ -919,7 +920,7 @@ fn main() {
             );
             let view_space_mouse = glm::matrix_comp_mult(&normalized_coords, &max_coords);
             let world_space_mouse = glm::vec4_to_vec3(&(screen_state.get_world_from_view() * view_space_mouse));
-            let mouse_ray = glm::normalize(&(world_space_mouse - camera_position));
+            let mouse_ray_dir = glm::normalize(&(world_space_mouse - camera_position));
             
             //Check each triangle for ray-plane collision
             let mut smallest_t = f32::INFINITY;
@@ -934,12 +935,12 @@ fn main() {
                 let plane = Plane::new(glm::vec4(a.x, a.y, a.z, 1.0), glm::vec4(normal.x, normal.y, normal.z, 1.0));
 
                 //Pre-compute the denominator to avoid divide-by-zero
-                let denominator = glm::dot(&glm::vec3_to_vec4(&mouse_ray), &plane.normal);
+                let denominator = glm::dot(&glm::vec3_to_vec4(&mouse_ray_dir), &plane.normal);
                 if denominator == 0.0 {
                     continue;
                 }
-                let t = glm::dot(&(plane.point - glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0)), &plane.normal) / glm::dot(&glm::vec3_to_vec4(&mouse_ray), &plane.normal);
-                let intersection = camera_position + t * mouse_ray;
+                let t = glm::dot(&(plane.point - glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0)), &plane.normal) / denominator;
+                let intersection = camera_position + t * mouse_ray_dir;
 
                 //Check if this collision point is actually in the triangle
                 let test_point = glm::vec2(intersection.x, intersection.y);
@@ -955,10 +956,6 @@ fn main() {
                         smallest_t = t;
                         closest_intersection = Some(intersection);
                     }
-                }
-
-                if i == 0 {
-                    println!("ray: {:?}", mouse_ray);
                 }
             }
 
