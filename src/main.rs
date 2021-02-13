@@ -35,13 +35,16 @@ const FONT_BYTES: &'static [u8; 212276] = include_bytes!("../fonts/Constantia.tt
 //OpenXR strings
 const VALVE_INDEX_INTERACTION_PROFILE: &str =           "/interaction_profiles/valve/index_controller";
 const HTC_VIVE_INTERACTION_PROFILE: &str =              "/interaction_profiles/htc/vive_controller";
+
 const LEFT_GRIP_POSE: &str =                            "/user/hand/left/input/grip/pose";
 const LEFT_AIM_POSE: &str =                             "/user/hand/left/input/aim/pose";
 const LEFT_TRIGGER_FLOAT: &str =                        "/user/hand/left/input/trigger/value";
-const RIGHT_TRIGGER_FLOAT: &str =                       "/user/hand/right/input/trigger/value";
-const RIGHT_GRIP_POSE: &str =                           "/user/hand/right/input/grip/pose";
 const LEFT_STICK_VECTOR2: &str =                        "/user/hand/left/input/thumbstick";
 const LEFT_TRACKPAD_VECTOR2: &str =                     "/user/hand/left/input/trackpad";
+const RIGHT_TRACKPAD_FORCE: &str =                      "/user/hand/right/input/trackpad/force";
+const RIGHT_TRIGGER_FLOAT: &str =                       "/user/hand/right/input/trigger/value";
+const RIGHT_GRIP_POSE: &str =                           "/user/hand/right/input/grip/pose";
+const RIGHT_AIM_POSE: &str =                            "/user/hand/right/input/aim/pose";
 
 fn clamp<T: PartialOrd>(x: T, min: T, max: T) -> T {
     if x < min { min }
@@ -271,6 +274,8 @@ fn main() {
     let left_trigger_float_path = xrutil::make_path(&xr_instance, LEFT_TRIGGER_FLOAT);
     let right_trigger_float_path = xrutil::make_path(&xr_instance, RIGHT_TRIGGER_FLOAT);
     let right_grip_pose_path = xrutil::make_path(&xr_instance, RIGHT_GRIP_POSE);
+    let right_aim_pose_path = xrutil::make_path(&xr_instance, RIGHT_AIM_POSE);
+    let right_trackpad_force_path = xrutil::make_path(&xr_instance, RIGHT_TRACKPAD_FORCE);
     let left_stick_vector_path = xrutil::make_path(&xr_instance, LEFT_STICK_VECTOR2);
     let left_trackpad_vector_path = xrutil::make_path(&xr_instance, LEFT_TRACKPAD_VECTOR2);
 
@@ -283,7 +288,9 @@ fn main() {
     let left_hand_aim_action = xrutil::make_action::<xr::Posef>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_aim", "Left hand aim");
     let left_trigger_action = xrutil::make_action::<f32>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_trigger", "Left hand trigger");
     let right_trigger_action = xrutil::make_action::<f32>(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_trigger", "Right hand trigger");
-    let right_hand_pose_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_pose", "Right hand pose");
+    let right_hand_grip_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_pose", "Right hand pose");
+    let right_hand_aim_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_aim", "Right hand aim");
+    let item_menu_action = xrutil::make_action::<bool>(&right_hand_subaction_path, &xr_controller_actionset, "item_menu", "Interact with item menu");
     let player_move_action = xrutil::make_action::<xr::Vector2f>(&left_hand_subaction_path, &xr_controller_actionset, "player_move", "Player movement");
 
     //Suggest interaction profile bindings
@@ -292,7 +299,7 @@ fn main() {
            &left_hand_aim_action,
            &left_trigger_action,
            &right_trigger_action,
-           &right_hand_pose_action,
+           &right_hand_grip_action,
            &player_move_action,
            &left_grip_pose_path,
            &left_aim_pose_path,
@@ -300,7 +307,11 @@ fn main() {
            &right_trigger_float_path,
            &right_grip_pose_path,
            &left_stick_vector_path,
-           &left_trackpad_vector_path) {
+           &left_trackpad_vector_path,
+           &right_trackpad_force_path,
+           &item_menu_action,
+           &right_hand_aim_action,
+           &right_aim_pose_path) {
         (Some(inst),
          Some(l_grip_action),
          Some(l_aim_action),
@@ -314,17 +325,23 @@ fn main() {
          Some(r_trigger_path),
          Some(r_path),
          Some(l_stick_path),
-         Some(l_trackpad_path)) => {
+         Some(l_trackpad_path),
+         Some(r_trackpad_force),
+         Some(i_menu_action),
+         Some(r_aim_action),
+         Some(r_aim_path)) => {
              //Valve Index bindings
              {
                 let profile = inst.string_to_path(VALVE_INDEX_INTERACTION_PROFILE).unwrap();
                 let bindings = [
                     xr::Binding::new(l_grip_action, *l_grip_path),
                     xr::Binding::new(l_aim_action, *l_aim_path),
+                    xr::Binding::new(r_aim_action, *r_aim_path),
                     xr::Binding::new(l_trigger_action, *l_trigger_path),
                     xr::Binding::new(r_trigger_action, *r_trigger_path),
                     xr::Binding::new(r_action, *r_path),
-                    xr::Binding::new(move_action, *l_stick_path)
+                    xr::Binding::new(move_action, *l_stick_path),
+                    xr::Binding::new(i_menu_action, *r_trackpad_force)
                 ];
                 if let Err(e) = inst.suggest_interaction_profile_bindings(profile, &bindings) {
                     println!("Error setting interaction profile bindings: {}", e);
@@ -336,10 +353,12 @@ fn main() {
                let bindings = [
                    xr::Binding::new(l_grip_action, *l_grip_path),
                    xr::Binding::new(l_aim_action, *l_aim_path),
+                   xr::Binding::new(r_aim_action, *r_aim_path),
                    xr::Binding::new(l_trigger_action, *l_trigger_path),
                    xr::Binding::new(r_trigger_action, *r_trigger_path),
                    xr::Binding::new(r_action, *r_path),
-                   xr::Binding::new(move_action, *l_trackpad_path)
+                   xr::Binding::new(move_action, *l_trackpad_path),                   
+                   xr::Binding::new(i_menu_action, *r_trackpad_force)
                ];
                if let Err(e) = inst.suggest_interaction_profile_bindings(profile, &bindings) {
                    println!("Error setting interaction profile bindings: {}", e);
@@ -381,7 +400,8 @@ fn main() {
     
     let left_hand_grip_space = xrutil::make_actionspace(&xr_session, left_hand_subaction_path, &left_hand_pose_action, space_pose); //Create left hand grip space
     let left_hand_aim_space = xrutil::make_actionspace(&xr_session, left_hand_subaction_path, &left_hand_aim_action, space_pose); //Create left hand aim space
-    let right_hand_action_space = xrutil::make_actionspace(&xr_session, right_hand_subaction_path, &right_hand_pose_action, space_pose); //Create right hand action space
+    let right_hand_grip_space = xrutil::make_actionspace(&xr_session, right_hand_subaction_path, &right_hand_grip_action, space_pose); //Create right hand grip space
+    let right_hand_aim_space = xrutil::make_actionspace(&xr_session, right_hand_subaction_path, &right_hand_aim_action, space_pose); //Create right hand aim space
 
     //Create swapchains
     let mut xr_swapchains = match (&xr_session, &xr_viewconfiguration_views) {
@@ -568,7 +588,7 @@ fn main() {
     };
 
     //Load terrain data
-    let terrain_name = "terrain5";
+    let terrain_name = "terrain";
     let terrain = Terrain::from_ozt(&format!("models/{}.ozt", terrain_name));
     let terrain_mesh = SimpleMesh::from_ozy(&format!("models/{}.ozy", terrain_name), &mut texture_keeper, &tex_params);
     let terrain_entity_index = scene_data.push_single_entity(terrain_mesh);
@@ -613,6 +633,12 @@ fn main() {
     let mut dragon_position = glm::vec3(0.0, -14.0, 0.0);
     let dragon_mesh = SimpleMesh::from_ozy("models/dragon.ozy", &mut texture_keeper, &tex_params);
     let dragon_entity_index = scene_data.push_single_entity(dragon_mesh);
+
+    //Create shoe
+    let mut shoe_position = glm::vec3(-5.0, 0.0, 0.0);
+    let shoe_mesh = SimpleMesh::from_ozy("models/shoes.ozy", &mut texture_keeper, &tex_params);
+    let shoe_entity_index = scene_data.push_single_entity(shoe_mesh);
+    scene_data.single_entities[shoe_entity_index].model_matrix = glm::translation(&shoe_position);
 
     //Create the cube that will be user to render the skybox
 	scene_data.skybox_vao = ozy::prims::skybox_cube_vao();
@@ -664,6 +690,7 @@ fn main() {
     }
 
     let mut wireframe = false;
+    let mut placing = false;
     let mut hmd_pov = false;
     if let Some(_) = &xr_instance {
         hmd_pov = true;
@@ -680,6 +707,11 @@ fn main() {
         jumps_remaining: Player::MAX_JUMPS
     };
     let mut was_holding_left_trigger = false;
+
+    const MAX_WATER_PRESSURE: f32 = 40.0;
+    const MAX_WATER_REMAINING: f32 = 75.0;
+    let mut water_gun_force = glm::zero();
+    let mut remaining_water = MAX_WATER_REMAINING;
     
     //Matrices for relating tracking space and world space
     let mut world_from_tracking = glm::identity();
@@ -715,12 +747,18 @@ fn main() {
         let left_stick_state = xrutil::get_actionstate(&xr_session, &player_move_action);
         let left_trigger_state = xrutil::get_actionstate(&xr_session, &left_trigger_action);
         let right_trigger_state = xrutil::get_actionstate(&xr_session, &right_trigger_action);
+        let right_trackpad_force_state = xrutil::get_actionstate(&xr_session, &item_menu_action);
 
         if let Some(state) = right_trigger_state {
-            if state.changed_since_last_sync {
-                if state.current_state == 1.0 {
-                    command_buffer.push(Command::ResetPlayerPosition);
-                }
+            if let Some(pose) = xrutil::locate_space(&right_hand_aim_space, &tracking_space, last_xr_render_time) {
+                let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
+                water_gun_force = glm::vec4_to_vec3(&(-state.current_state * xrutil::pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec));
+            }
+        }
+
+        if let Some(state) = right_trackpad_force_state {
+            if state.changed_since_last_sync && state.current_state {
+                println!("Right trackpad pressed");
             }
         }
 
@@ -746,7 +784,7 @@ fn main() {
                             }
                         }
                     }
-                }                        
+                }
             }
 
             if let Some(state) = &left_trigger_state {
@@ -762,6 +800,16 @@ fn main() {
 
                 was_holding_left_trigger = holding;
             }
+        }
+
+        //Do water gun stuff
+        if water_gun_force != glm::zero() && remaining_water > 0.0 {
+            let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
+            remaining_water -= glm::length(&update_force);
+            player.tracking_velocity += update_force;
+        }
+        if player.movement_state != MoveState::Falling {
+            remaining_water = MAX_WATER_REMAINING;
         }
 
         //Poll for OpenXR events
@@ -784,6 +832,7 @@ fn main() {
                         Key::Escape => {
                             command_buffer.push(Command::ToggleAllMenus);
                         }
+                        Key::Space => { placing = !placing; }
                         Key::W => {
                             camera_input.z += -1.0;
                         }
@@ -829,10 +878,16 @@ fn main() {
                     }
                 }
                 WindowEvent::MouseButton(glfw::MouseButtonLeft, action, ..) => {
-                    if action == glfw::Action::Press {
-                        mouse_lbutton_pressed = true;
-                    } else {
-                        mouse_lbutton_pressed = false;
+                    match action {
+                        Action::Press => {
+                            mouse_lbutton_pressed = true;
+                            placing = true;
+                        }
+                        Action::Release => {
+                            mouse_lbutton_pressed = false;
+                            placing = false;
+                        }
+                        Action::Repeat => {}
                     }
                 }
                 WindowEvent::MouseButton(glfw::MouseButtonRight, glfw::Action::Release, ..) => {
@@ -903,8 +958,8 @@ fn main() {
         let camera_velocity = camera_speed * glm::vec4_to_vec3(&(glm::affine_inverse(*screen_state.get_view_from_world()) * camera_input));
         camera_position += camera_velocity * delta_time;
 
-        //Calculate screen-ray terrain intersection
-        {
+        //Place dragon at clicking position
+        if placing {
             //let fovx_radians = fov_radians * aspect_ratio;
             let fovx_radians = 2.0 * f32::atan(f32::tan(fov_radians / 2.0) * aspect_ratio);
             let max_coords = glm::vec4(
@@ -936,15 +991,14 @@ fn main() {
                 //Pre-compute the denominator to avoid divide-by-zero
                 //Denominator of zero means that the ray is parallel to the plane
                 let denominator = glm::dot(&glm::vec3_to_vec4(&mouse_ray_dir), &plane.normal);
-                if denominator == 0.0 {
-                    continue;
-                }
+                if denominator == 0.0 { continue; }
+
                 let t = glm::dot(&(plane.point - glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0)), &plane.normal) / denominator;
                 let intersection = camera_position + t * mouse_ray_dir;
                 
                 //If the intersection is in the triangle, check if it's the closest intersection to the camera so far
                 if point_in_triangle(&glm::vec2(intersection.x, intersection.y), &a, &b, &c) {
-                    if t < smallest_t {
+                    if t > 0.0 && t < smallest_t {
                         smallest_t = t;
                         closest_intersection = Some(intersection);
                     }
@@ -959,6 +1013,9 @@ fn main() {
 
         //Spin the dragon
         scene_data.single_entities[dragon_entity_index].model_matrix = glm::translation(&dragon_position) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
+
+        //Bob and spin the jetpack
+        scene_data.single_entities[shoe_entity_index].model_matrix = glm::translation(&shoe_position) * glm::translation(&glm::vec3(0.0, 0.0, 0.15 * f32::sin(2.0 * elapsed_time) + 0.15)) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
 
         //Update tracking space location
         player.tracking_position += player.tracking_velocity * delta_time;
@@ -1297,7 +1354,7 @@ fn main() {
                             
                             //Fetch the hand poses from the runtime
                             let left_hand_pose = xrutil::locate_space(&left_hand_grip_space, &tracking_space, wait_info.predicted_display_time);
-                            let right_hand_pose = xrutil::locate_space(&right_hand_action_space, &tracking_space, wait_info.predicted_display_time);
+                            let right_hand_pose = xrutil::locate_space(&right_hand_grip_space, &tracking_space, wait_info.predicted_display_time);
 
                             //Right here is where we want to update the controller object's model matrix
                             xrutil::entity_pose_update(&mut scene_data, left_wand_entity_index, left_hand_pose, &world_from_tracking);
