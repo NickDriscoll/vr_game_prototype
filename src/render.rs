@@ -1,5 +1,5 @@
 use std::ptr;
-use ozy::render::{InstancedMesh, SimpleMesh};
+use ozy::render::{InstancedMesh, RenderTarget, SimpleMesh};
 use crate::glutil;
 use gl::types::*;
 
@@ -8,15 +8,17 @@ pub const FAR_DISTANCE: f32 = 100000.0;
 
 pub struct SingleEntity {
     pub mesh: SimpleMesh,
-    pub uv_scale: f32,
+    pub visible: bool,
+    pub uv_scale: glm::TVec2<f32>,
     pub uv_offset: glm::TVec2<f32>,
     pub model_matrix: glm::TMat4<f32>
 }
 
 pub struct InstancedEntity {
     pub mesh: InstancedMesh,
+    pub visible: bool,
     pub uv_offset: glm::TVec2<f32>,
-    pub uv_scale: f32
+    pub uv_scale: glm::TVec2<f32>
 }
 
 pub struct SceneData {
@@ -28,17 +30,24 @@ pub struct SceneData {
     pub skybox_vao: GLuint,
     pub uniform_light: glm::TVec4<f32>,
     pub shadow_matrix: glm::TMat4<f32>,
-    pub programs: [GLuint; 3],              //non-instanced program followed by instanced program followed by skybox program
+    pub programs: [GLuint; 5],              //non-instanced , instanced  , skybox , single-shadow , instanced-shadow
     pub single_entities: Vec<SingleEntity>,
     pub instanced_entities: Vec<InstancedEntity>,
 }
 
 impl SceneData {
+    const SINGULAR_PROGRAM_INDEX: usize = 0;
+    const INSTANCED_PROGRAM_INDEX: usize = 1;
+    const SKYBOX_PROGRAM_INDEX: usize = 2;
+    const SINGLE_SHADOW_PROGRAM_INDEX: usize = 3;
+    const INSTANCED_SHADOW_PROGRAM_INDEX: usize = 4;
+
     //Returns the entity's index
     pub fn push_single_entity(&mut self, mesh: SimpleMesh) -> usize {
         let entity = SingleEntity {
+            visible: true,
             mesh: mesh,
-            uv_scale: 1.0,
+            uv_scale: glm::vec2(1.0, 1.0),
             uv_offset: glm::zero(),
             model_matrix: glm::identity()
         };
@@ -49,9 +58,10 @@ impl SceneData {
     //Returns the entity's index
     pub fn push_instanced_entity(&mut self, mesh: InstancedMesh) -> usize {
         let entity = InstancedEntity {
+            visible: true,
             mesh: mesh,
             uv_offset: glm::zero(),
-            uv_scale: 1.0
+            uv_scale: glm::vec2(1.0, 1.0)
         };
         self.instanced_entities.push(entity);
         self.instanced_entities.len() - 1
@@ -69,7 +79,7 @@ impl Default for SceneData {
             skybox_vao: 0,
             uniform_light: glm::vec4(0.0, 0.0, 1.0, 0.0),
             shadow_matrix: glm::identity(),
-            programs: [0, 0, 0],
+            programs: [0, 0, 0, 0, 0],
             single_entities: Vec::new(),
             instanced_entities: Vec::new()
         }
@@ -95,9 +105,6 @@ impl ViewData {
 }
 
 pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
-    const SINGULAR_PROGRAM_INDEX: usize = 0;
-    const INSTANCED_PROGRAM_INDEX: usize = 1;
-    const SKYBOX_PROGRAM_INDEX: usize = 2;
 
     let texture_map_names = ["albedo_map", "normal_map", "roughness_map", "shadow_map"];
 
@@ -123,28 +130,32 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
     }
 
     //Render non-instanced entities
-    gl::UseProgram(scene_data.programs[SINGULAR_PROGRAM_INDEX]);
+    gl::UseProgram(scene_data.programs[SceneData::SINGULAR_PROGRAM_INDEX]);
     for entity in scene_data.single_entities.iter() {
-        for i in 0..ozy::render::TEXTURE_MAP_COUNT {
-            gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
-            gl::BindTexture(gl::TEXTURE_2D, entity.mesh.texture_maps[i]);
-        }        
-        glutil::bind_matrix4(scene_data.programs[SINGULAR_PROGRAM_INDEX], "model_matrix", &entity.model_matrix);
-        glutil::bind_float(scene_data.programs[SINGULAR_PROGRAM_INDEX], "uv_scale", entity.uv_scale);
-        glutil::bind_vector2(scene_data.programs[SINGULAR_PROGRAM_INDEX], "uv_offset", &entity.uv_offset);
-        entity.mesh.draw();
+        if entity.visible {
+            for i in 0..ozy::render::TEXTURE_MAP_COUNT {
+                gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
+                gl::BindTexture(gl::TEXTURE_2D, entity.mesh.texture_maps[i]);
+            }        
+            glutil::bind_matrix4(scene_data.programs[SceneData::SINGULAR_PROGRAM_INDEX], "model_matrix", &entity.model_matrix);
+            glutil::bind_vector2(scene_data.programs[SceneData::SINGULAR_PROGRAM_INDEX], "uv_scale", &entity.uv_scale);
+            glutil::bind_vector2(scene_data.programs[SceneData::SINGULAR_PROGRAM_INDEX], "uv_offset", &entity.uv_offset);
+            entity.mesh.draw();
+        }
     }
 
     //Instanced entity rendering
-    gl::UseProgram(scene_data.programs[INSTANCED_PROGRAM_INDEX]);
+    gl::UseProgram(scene_data.programs[SceneData::INSTANCED_PROGRAM_INDEX]);
     for entity in scene_data.instanced_entities.iter() {
-        for i in 0..ozy::render::TEXTURE_MAP_COUNT {
-            gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
-            gl::BindTexture(gl::TEXTURE_2D, entity.mesh.texture_maps()[i]);
+        if entity.visible {
+            for i in 0..ozy::render::TEXTURE_MAP_COUNT {
+                gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
+                gl::BindTexture(gl::TEXTURE_2D, entity.mesh.texture_maps()[i]);
+            }
+            glutil::bind_vector2(scene_data.programs[SceneData::INSTANCED_PROGRAM_INDEX], "uv_offset", &entity.uv_offset);
+            glutil::bind_vector2(scene_data.programs[SceneData::INSTANCED_PROGRAM_INDEX], "uv_scale", &entity.uv_scale);
+            entity.mesh.draw();
         }
-        glutil::bind_vector2(scene_data.programs[INSTANCED_PROGRAM_INDEX], "uv_offset", &entity.uv_offset);
-        glutil::bind_float(scene_data.programs[INSTANCED_PROGRAM_INDEX], "uv_scale", entity.uv_scale);
-        entity.mesh.draw();
     }
 
     //Skybox rendering
@@ -155,9 +166,29 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
     let skybox_view_projection = view_data.projection_matrix * glm::mat3_to_mat4(&glm::mat4_to_mat3(&view_data.view_matrix));
 
     //Render the skybox
-    gl::UseProgram(scene_data.programs[SKYBOX_PROGRAM_INDEX]);
-    glutil::bind_matrix4(scene_data.programs[SKYBOX_PROGRAM_INDEX], "view_projection", &skybox_view_projection);
+    gl::UseProgram(scene_data.programs[SceneData::SKYBOX_PROGRAM_INDEX]);
+    glutil::bind_matrix4(scene_data.programs[SceneData::SKYBOX_PROGRAM_INDEX], "view_projection", &skybox_view_projection);
     gl::BindTexture(gl::TEXTURE_CUBE_MAP, scene_data.skybox_cubemap);
     gl::BindVertexArray(scene_data.skybox_vao);
     gl::DrawElements(gl::TRIANGLES, 36, gl::UNSIGNED_SHORT, ptr::null());
+}
+
+pub unsafe fn render_shadows(scene_data: &SceneData) {
+    //Draw instanced meshes into shadow map
+    glutil::bind_matrix4(scene_data.programs[SceneData::INSTANCED_SHADOW_PROGRAM_INDEX], "view_projection", &scene_data.shadow_matrix);
+    gl::UseProgram(scene_data.programs[SceneData::INSTANCED_SHADOW_PROGRAM_INDEX]);
+    for entity in &scene_data.instanced_entities {
+        if entity.visible {
+            entity.mesh.draw();
+        }
+    }
+
+    //Draw simple meshes into shadow map
+    gl::UseProgram(scene_data.programs[SceneData::SINGLE_SHADOW_PROGRAM_INDEX]);
+    for entity in &scene_data.single_entities {
+        if entity.visible {
+            glutil::bind_matrix4(scene_data.programs[SceneData::SINGLE_SHADOW_PROGRAM_INDEX], "mvp", &(scene_data.shadow_matrix * entity.model_matrix));
+            entity.mesh.draw();
+        }
+    }
 }

@@ -18,7 +18,7 @@ uniform sampler2D shadow_map;
 
 uniform vec4 sun_direction; //TODO(Nick): Change to tangent space
 uniform vec4 view_position;
-uniform float uv_scale = 1.0;
+uniform vec2 uv_scale = vec2(1.0, 1.0);
 uniform vec2 uv_offset = vec2(0.0, 0.0);
 
 uniform bool complex_normals = false;

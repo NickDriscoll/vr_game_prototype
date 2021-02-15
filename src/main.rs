@@ -8,7 +8,7 @@ mod structs;
 mod render;
 mod xrutil;
 
-use render::{render_main_scene, SceneData, ViewData};
+use render::{render_main_scene, render_shadows, SceneData, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
 use glfw::{Action, Context, Key, WindowEvent, WindowMode};
@@ -23,8 +23,8 @@ use ozy::glutil::ColorSpace;
 use ozy::render::{Framebuffer, InstancedMesh, RenderTarget, ScreenState, SimpleMesh, TextureKeeper};
 use ozy::structs::OptionVec;
 
-use crate::structs::*;
 use crate::collision::*;
+use crate::structs::*;
 
 #[cfg(windows)]
 use winapi::{shared::windef::HWND, um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
@@ -346,7 +346,7 @@ fn main() {
                 if let Err(e) = inst.suggest_interaction_profile_bindings(profile, &bindings) {
                     println!("Error setting interaction profile bindings: {}", e);
                 }
-            }
+             }
             //HTC Vive bindings
             {
                let profile = inst.string_to_path(HTC_VIVE_INTERACTION_PROFILE).unwrap();
@@ -363,7 +363,7 @@ fn main() {
                if let Err(e) = inst.suggest_interaction_profile_bindings(profile, &bindings) {
                    println!("Error setting interaction profile bindings: {}", e);
                }
-           }
+            }
         }
         _ => {}
     }
@@ -525,7 +525,7 @@ fn main() {
     //Initialize scene data struct
     let mut scene_data = SceneData {
         shadow_texture: shadow_rendertarget.texture,
-        programs: [complex_3D, complex_instanced_3D, skybox_program],
+        programs: [complex_3D, complex_instanced_3D, skybox_program, shadow_3D, shadow_instanced_3D],
         uniform_light,
         ..Default::default()
     };
@@ -592,7 +592,7 @@ fn main() {
     let terrain = Terrain::from_ozt(&format!("models/{}.ozt", terrain_name));
     let terrain_mesh = SimpleMesh::from_ozy(&format!("models/{}.ozy", terrain_name), &mut texture_keeper, &tex_params);
     let terrain_entity_index = scene_data.push_single_entity(terrain_mesh);
-    scene_data.single_entities[terrain_entity_index].uv_scale = 20.0;
+    scene_data.single_entities[terrain_entity_index].uv_scale = glm::vec2(20.0, 20.0);
     scene_data.single_entities[terrain_entity_index].model_matrix = ozy::routines::uniform_scale(1.0);
 
     //Create aabbs
@@ -626,7 +626,7 @@ fn main() {
 
     //Create graphics data for the mesas
     let mesa_entity_index = scene_data.push_instanced_entity(mesa_instanced_mesh);
-    scene_data.single_entities[mesa_entity_index].uv_scale = 2.0;
+    scene_data.single_entities[mesa_entity_index].uv_scale = glm::vec2(2.0, 2.0);
     scene_data.instanced_entities[mesa_entity_index].mesh.update_buffer(&mesa_transforms);
 
     //Create dragon
@@ -708,6 +708,7 @@ fn main() {
     const MAX_WATER_REMAINING: f32 = 75.0;
     let mut water_gun_force = glm::zero();
     let mut remaining_water = MAX_WATER_REMAINING;
+    let mut water_pillar_y_scale = 1.0;
     
     //Matrices for relating tracking space and world space
     let mut world_from_tracking = glm::identity();
@@ -931,8 +932,23 @@ fn main() {
             //Calculate the force of shooting the water gun
             if let (Some(state), Some(pose)) = (right_trigger_state, xrutil::locate_space(&right_hand_aim_space, &tracking_space, last_xr_render_time)) {
                 if state.current_state > 0.0 && player.movement_state != MoveState::Falling { set_player_falling(&mut player); }
+                let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
                 let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
-                water_gun_force = glm::vec4_to_vec3(&(-state.current_state * xrutil::pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec));  
+                let world_space_vec = hand_transform * hand_space_vec;
+                let hand_origin = hand_transform * glm::vec4(0.0, 0.0, 0.0, 1.0);
+
+                //Calculate water gun force vector
+                water_gun_force = glm::vec4_to_vec3(&(-state.current_state * world_space_vec));
+
+                //Calculate scale of water pillar
+                match ray_hit_terrain(&terrain, &hand_origin, &world_space_vec) {
+                    Some(point) => {
+                        water_pillar_y_scale = glm::length(&(point - hand_origin));
+                    }
+                    None => {
+
+                    }
+                }
             }
 
             //Do water gun stuff
@@ -940,6 +956,9 @@ fn main() {
                 let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
                 remaining_water -= glm::length(&update_force);
                 player.tracking_velocity += update_force;
+                scene_data.single_entities[water_cylinder_entity_index].visible = true;
+            } else {
+                scene_data.single_entities[water_cylinder_entity_index].visible = false;
             }
             if player.movement_state != MoveState::Falling {
                 remaining_water = MAX_WATER_REMAINING;
@@ -970,46 +989,21 @@ fn main() {
                 1.0
             );
             let view_space_mouse = glm::matrix_comp_mult(&normalized_coords, &max_coords);
-            let world_space_mouse = glm::vec4_to_vec3(&(screen_state.get_world_from_view() * view_space_mouse));
-            let mouse_ray_dir = glm::normalize(&(world_space_mouse - camera_position));
-            
-            //Check each triangle for ray-plane collision
-            let mut smallest_t = f32::INFINITY;
-            let mut closest_intersection = None;
-            for i in (0..terrain.indices.len()).step_by(3) {
-                //Get the vertices of the triangle
-                let (a, b, c) = get_terrain_triangle(&terrain, i);
-                let normal = terrain.face_normals[i / 3];
+            let world_space_mouse = screen_state.get_world_from_view() * view_space_mouse;
+            let mouse_ray_dir = glm::normalize(&(world_space_mouse - glm::vec3_to_vec4(&camera_position)));
 
-                let plane = Plane::new(glm::vec4(a.x, a.y, a.z, 1.0), glm::vec4(normal.x, normal.y, normal.z, 1.0));
-
-                //Pre-compute the denominator to avoid divide-by-zero
-                //Denominator of zero means that the ray is parallel to the plane
-                let denominator = glm::dot(&glm::vec3_to_vec4(&mouse_ray_dir), &plane.normal);
-                if denominator == 0.0 { continue; }
-
-                //Compute ray-plane intersection
-                let t = glm::dot(&(plane.point - glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0)), &plane.normal) / denominator;
-                let intersection = camera_position + t * mouse_ray_dir;
-                
-                //If the intersection is in the triangle, check if it's the closest intersection to the camera so far
-                if point_in_triangle(&glm::vec2(intersection.x, intersection.y), &a, &b, &c) && t > 0.0 && t < smallest_t {
-                    smallest_t = t;
-                    closest_intersection = Some(intersection);
-                }
-            }
-
-            //We now know the closest intersection point
-            if let Some(point) = closest_intersection {
-                dragon_position = point;
+            //Update dragon's position if the ray hit
+            if let Some(point) = ray_hit_terrain(&terrain, &world_space_mouse, &mouse_ray_dir) {
+                dragon_position = glm::vec4_to_vec3(&point);
             }
         }
 
         //Spin the dragon
         scene_data.single_entities[dragon_entity_index].model_matrix = glm::translation(&dragon_position) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
 
-        //scene_data.single_entities[terrain_entity_index].uv_offset += glm::vec2(0.0, 0.2) * delta_time;
-        scene_data.single_entities[water_cylinder_entity_index].uv_offset += glm::vec2(0.0, 0.2) * delta_time;
+        //Update the water gun's pillar of water
+        scene_data.single_entities[water_cylinder_entity_index].uv_offset += glm::vec2(0.0, 1.0) * delta_time;
+        scene_data.single_entities[water_cylinder_entity_index].uv_scale.y = water_pillar_y_scale;
 
         //Update tracking space location
         player.tracking_position += player.tracking_velocity * delta_time;
@@ -1048,7 +1042,7 @@ fn main() {
                     ];
 
                     for plane in &planes {
-                        if let Some(_) = segment_intersect_plane(plane, &segment) {
+                        if let Some(_) = segment_hit_plane(plane, &segment) {
                             let dist = point_plane_distance(&glm::vec3_to_vec4(&camera_position), plane);
                             camera_position += (camera_hit_sphere_radius - dist) * glm::vec4_to_vec3(&plane.normal);
 
@@ -1315,26 +1309,7 @@ fn main() {
             //Enable depth test for 3D rendering
             gl::Enable(gl::DEPTH_TEST);
 
-            //Shadow map rendering
-            shadow_rendertarget.bind();
-
-            //Draw instanced meshes into shadow map
-            glutil::bind_matrix4(shadow_instanced_3D, "view_projection", &scene_data.shadow_matrix);
-            gl::UseProgram(shadow_instanced_3D);
-            for entity in &scene_data.instanced_entities {
-                entity.mesh.draw();
-            }
-
-            //Draw simple meshes into shadow map
-            gl::UseProgram(shadow_3D);
-            for entity in &scene_data.single_entities {
-                glutil::bind_matrix4(shadow_3D, "mvp", &(scene_data.shadow_matrix * entity.model_matrix));
-                entity.mesh.draw();
-            }
-
-            if wireframe {
-                gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
-            }
+            if wireframe { gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE); }
 
             //Render into HMD
             match (&xr_session, &mut xr_swapchains, &xr_swapchain_size, &xr_swapchain_images, &mut xr_framewaiter, &mut xr_framestream, &tracking_space) {
@@ -1354,7 +1329,14 @@ fn main() {
                             //Right here is where we want to update the controller object's model matrix
                             xrutil::entity_pose_update(&mut scene_data, left_wand_entity_index, left_hand_pose, &world_from_tracking);
                             xrutil::entity_pose_update(&mut scene_data, right_wand_entity_index, right_hand_pose, &world_from_tracking);
-                            xrutil::entity_pose_update(&mut scene_data, water_cylinder_entity_index, right_hand_aim_pose, &world_from_tracking);
+
+                            if let Some(p) = right_hand_aim_pose {
+                                scene_data.single_entities[water_cylinder_entity_index].model_matrix = xrutil::pose_to_mat4(&p, &world_from_tracking) * glm::scaling(&glm::vec3(1.0, water_pillar_y_scale, 1.0));
+                            }
+
+                            //Render shadow map
+                            shadow_rendertarget.bind();
+                            render_shadows(&scene_data);
 
                             let mut sc_indices = vec![0; views.len()];
                             for i in 0..views.len() {
@@ -1502,6 +1484,11 @@ fn main() {
 
             //Main window rendering
             if !hmd_pov {
+                //Render shadow map
+                shadow_rendertarget.bind();
+                render_shadows(&scene_data);
+
+                //Render main scene
                 let freecam_viewdata = ViewData::new(
                     glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0),
                     *screen_state.get_view_from_world(),

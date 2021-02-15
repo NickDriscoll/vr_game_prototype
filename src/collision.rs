@@ -142,7 +142,7 @@ impl Terrain {
     }
 }
 
-pub fn segment_intersect_plane(plane: &Plane, segment: &LineSegment) -> Option<glm::TVec4<f32>> {
+pub fn segment_hit_plane(plane: &Plane, segment: &LineSegment) -> Option<glm::TVec4<f32>> {
     let denominator = glm::dot(&plane.normal, &(segment.p1 - segment.p0));
 
     //Check for divide-by-zero
@@ -159,8 +159,37 @@ pub fn segment_intersect_plane(plane: &Plane, segment: &LineSegment) -> Option<g
     }
 }
 
+pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec4<f32>, ray_direction: &glm::TVec4<f32>) -> Option<glm::TVec4<f32>> {
+    let mut smallest_t = f32::INFINITY;
+    let mut closest_intersection = None;
+    for i in (0..terrain.indices.len()).step_by(3) {
+        //Get the vertices of the triangle
+        let (a, b, c) = get_terrain_triangle(&terrain, i);
+        let normal = terrain.face_normals[i / 3];
+
+        let plane = Plane::new(glm::vec4(a.x, a.y, a.z, 1.0), glm::vec4(normal.x, normal.y, normal.z, 1.0));
+
+        //Pre-compute the denominator to avoid divide-by-zero
+        //Denominator of zero means that the ray is parallel to the plane
+        let denominator = glm::dot(&ray_direction, &plane.normal);
+        if denominator == 0.0 { continue; }
+
+        //Compute ray-plane intersection
+        let t = glm::dot(&(plane.point - ray_origin), &plane.normal) / denominator;
+        let intersection = ray_origin + t * ray_direction;
+                        
+        //If the intersection is in the triangle, check if it's the closest intersection to the camera so far
+        if point_in_triangle(&glm::vec2(intersection.x, intersection.y), &a, &b, &c) && t > 0.0 && t < smallest_t {
+            smallest_t = t;
+            closest_intersection = Some(intersection);
+        }
+    }
+
+    closest_intersection
+}
+
 pub fn standing_on_plane(plane: &Plane, segment: &LineSegment, boundaries: &PlaneBoundaries) -> Option<glm::TVec4<f32>> {
-    let collision_point = segment_intersect_plane(&plane, &segment);
+    let collision_point = segment_hit_plane(&plane, &segment);
     if let Some(point) = collision_point {
         let on_aabb = point.x > boundaries.xmin &&
                       point.x < boundaries.xmax &&
@@ -204,7 +233,7 @@ pub fn segment_plane_tallest_collision(segment: &LineSegment, planes: &[Plane]) 
     let mut max_height = -f32::INFINITY;
     let mut collision = None;
     for plane in planes.iter() {
-        if let Some(point) = segment_intersect_plane(plane, &segment) {
+        if let Some(point) = segment_hit_plane(plane, &segment) {
             if point.z > max_height {
                 max_height = point.z;
                 collision = Some(Plane::new(point, plane.normal));
