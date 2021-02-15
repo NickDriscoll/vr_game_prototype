@@ -8,7 +8,6 @@ mod structs;
 mod render;
 mod xrutil;
 
-use structs::{Command, MoveState, Player};
 use render::{render_main_scene, SceneData, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
@@ -24,6 +23,7 @@ use ozy::glutil::ColorSpace;
 use ozy::render::{Framebuffer, InstancedMesh, RenderTarget, ScreenState, SimpleMesh, TextureKeeper};
 use ozy::structs::OptionVec;
 
+use crate::structs::*;
 use crate::collision::*;
 
 #[cfg(windows)]
@@ -634,11 +634,9 @@ fn main() {
     let dragon_mesh = SimpleMesh::from_ozy("models/dragon.ozy", &mut texture_keeper, &tex_params);
     let dragon_entity_index = scene_data.push_single_entity(dragon_mesh);
 
-    //Create shoe
-    let mut shoe_position = glm::vec3(-5.0, 0.0, 0.0);
-    let shoe_mesh = SimpleMesh::from_ozy("models/shoes.ozy", &mut texture_keeper, &tex_params);
-    let shoe_entity_index = scene_data.push_single_entity(shoe_mesh);
-    scene_data.single_entities[shoe_entity_index].model_matrix = glm::translation(&shoe_position);
+    //Create water cylinder
+    let water_cylinder_mesh = SimpleMesh::from_ozy("models/water_cylinder.ozy", &mut texture_keeper, &tex_params);
+    let water_cylinder_entity_index = scene_data.push_single_entity(water_cylinder_mesh);
 
     //Create the cube that will be user to render the skybox
 	scene_data.skybox_vao = ozy::prims::skybox_cube_vao();
@@ -692,9 +690,7 @@ fn main() {
     let mut wireframe = false;
     let mut placing = false;
     let mut hmd_pov = false;
-    if let Some(_) = &xr_instance {
-        hmd_pov = true;
-    }
+    if let Some(_) = &xr_instance { hmd_pov = true; }
 
     //Player state
     let mut player = Player {
@@ -737,9 +733,8 @@ fn main() {
 
         //Sync OpenXR actions
         if let (Some(session), Some(controller_actionset)) = (&xr_session, &xr_controller_actionset) {
-            match session.sync_actions(&[xr::ActiveActionSet::new(controller_actionset)]) {
-                Ok(_) => {  }
-                Err(e) => { println!("Unable to sync actions: {}", e); }
+            if let Err(e) = session.sync_actions(&[xr::ActiveActionSet::new(controller_actionset)]) {
+                println!("Unable to sync actions: {}", e);
             }
         }
 
@@ -749,67 +744,11 @@ fn main() {
         let right_trigger_state = xrutil::get_actionstate(&xr_session, &right_trigger_action);
         let right_trackpad_force_state = xrutil::get_actionstate(&xr_session, &item_menu_action);
 
-        if let Some(state) = right_trigger_state {
-            if let Some(pose) = xrutil::locate_space(&right_hand_aim_space, &tracking_space, last_xr_render_time) {
-                let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
-                water_gun_force = glm::vec4_to_vec3(&(-state.current_state * xrutil::pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec));
-            }
-        }
-
+        //Emergency escape button
         if let Some(state) = right_trackpad_force_state {
             if state.changed_since_last_sync && state.current_state {
-                println!("Right trackpad pressed");
+                command_buffer.push(Command::ResetPlayerPosition);
             }
-        }
-
-        //Calculate the velocity of tracking space
-        {
-            const MOVEMENT_SPEED: f32 = 5.0;
-            const DEADZONE_MAGNITUDE: f32 = 0.1;
-            if let Some(stick_state) = &left_stick_state {
-                if stick_state.changed_since_last_sync && player.movement_state != MoveState::Sliding {                            
-                    if let Some(pose) = xrutil::locate_space(&left_hand_aim_space, &tracking_space, stick_state.last_change_time) {
-                        let hand_space_vec = glm::vec4(stick_state.current_state.x, stick_state.current_state.y, 0.0, 0.0);
-                        let magnitude = glm::length(&hand_space_vec);
-                        if magnitude < DEADZONE_MAGNITUDE {
-                            player.tracking_velocity.x = 0.0;
-                            player.tracking_velocity.y = 0.0;
-                        } else {
-                            //Explicit check for zero to avoid divide-by-zero in normalize
-                            if hand_space_vec != glm::zero() {
-                                //World space untreated vector
-                                let untreated = xrutil::pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec;
-                                let ugh = glm::normalize(&glm::vec3(untreated.x, untreated.y, 0.0)) * MOVEMENT_SPEED * magnitude;
-                                player.tracking_velocity = glm::vec3(ugh.x, ugh.y, player.tracking_velocity.z);
-                            }
-                        }
-                    }
-                }
-            }
-
-            if let Some(state) = &left_trigger_state {
-                let holding = state.current_state == 1.0;
-
-                if holding && !was_holding_left_trigger && player.jumps_remaining > 0 {
-                    player.jumps_remaining -= 1;
-                    player.tracking_velocity = glm::vec3(player.tracking_velocity.x, player.tracking_velocity.y, 10.0);
-                    player.movement_state = MoveState::Falling;
-                } else if state.current_state < 1.0 && was_holding_left_trigger && player.tracking_velocity.z > 0.0 {
-                    player.tracking_velocity.z /= 2.0;
-                }
-
-                was_holding_left_trigger = holding;
-            }
-        }
-
-        //Do water gun stuff
-        if water_gun_force != glm::zero() && remaining_water > 0.0 {
-            let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
-            remaining_water -= glm::length(&update_force);
-            player.tracking_velocity += update_force;
-        }
-        if player.movement_state != MoveState::Falling {
-            remaining_water = MAX_WATER_REMAINING;
         }
 
         //Poll for OpenXR events
@@ -950,6 +889,63 @@ fn main() {
             }
         }
 
+        //Calculate the velocity of tracking space
+        {
+            const MOVEMENT_SPEED: f32 = 5.0;
+            const DEADZONE_MAGNITUDE: f32 = 0.1;
+            if let Some(stick_state) = &left_stick_state {
+                if stick_state.changed_since_last_sync && player.movement_state != MoveState::Sliding {                            
+                    if let Some(pose) = xrutil::locate_space(&left_hand_aim_space, &tracking_space, stick_state.last_change_time) {
+                        let hand_space_vec = glm::vec4(stick_state.current_state.x, stick_state.current_state.y, 0.0, 0.0);
+                        let magnitude = glm::length(&hand_space_vec);
+                        if magnitude < DEADZONE_MAGNITUDE {
+                            player.tracking_velocity.x = 0.0;
+                            player.tracking_velocity.y = 0.0;
+                        } else {
+                            //Explicit check for zero to avoid divide-by-zero in normalize
+                            if hand_space_vec != glm::zero() {
+                                //World space untreated vector
+                                let untreated = xrutil::pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec;
+                                let ugh = glm::normalize(&glm::vec3(untreated.x, untreated.y, 0.0)) * MOVEMENT_SPEED * magnitude;
+                                player.tracking_velocity = glm::vec3(ugh.x, ugh.y, player.tracking_velocity.z);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(state) = &left_trigger_state {
+                let holding = state.current_state == 1.0;
+
+                if holding && !was_holding_left_trigger && player.jumps_remaining > 0 {
+                    player.tracking_velocity = glm::vec3(player.tracking_velocity.x, player.tracking_velocity.y, 10.0);
+
+                    set_player_falling(&mut player);
+                } else if state.current_state < 1.0 && was_holding_left_trigger && player.tracking_velocity.z > 0.0 {
+                    player.tracking_velocity.z /= 2.0;
+                }
+
+                was_holding_left_trigger = holding;
+            }
+
+            //Calculate the force of shooting the water gun
+            if let (Some(state), Some(pose)) = (right_trigger_state, xrutil::locate_space(&right_hand_aim_space, &tracking_space, last_xr_render_time)) {
+                if state.current_state > 0.0 && player.movement_state != MoveState::Falling { set_player_falling(&mut player); }
+                let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
+                water_gun_force = glm::vec4_to_vec3(&(-state.current_state * xrutil::pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec));  
+            }
+
+            //Do water gun stuff
+            if water_gun_force != glm::zero() && remaining_water > 0.0 {
+                let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
+                remaining_water -= glm::length(&update_force);
+                player.tracking_velocity += update_force;
+            }
+            if player.movement_state != MoveState::Falling {
+                remaining_water = MAX_WATER_REMAINING;
+            }
+        }
+
         //If the user is controlling the camera, force the mouse cursor into the center of the screen
         if mouselook_enabled {
             window.set_cursor_pos(window_size.x as f64 / 2.0, window_size.y as f64 / 2.0);
@@ -960,7 +956,6 @@ fn main() {
 
         //Place dragon at clicking position
         if placing {
-            //let fovx_radians = fov_radians * aspect_ratio;
             let fovx_radians = 2.0 * f32::atan(f32::tan(fov_radians / 2.0) * aspect_ratio);
             let max_coords = glm::vec4(
                 NEAR_DISTANCE * f32::tan(fovx_radians / 2.0),
@@ -993,15 +988,14 @@ fn main() {
                 let denominator = glm::dot(&glm::vec3_to_vec4(&mouse_ray_dir), &plane.normal);
                 if denominator == 0.0 { continue; }
 
+                //Compute ray-plane intersection
                 let t = glm::dot(&(plane.point - glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0)), &plane.normal) / denominator;
                 let intersection = camera_position + t * mouse_ray_dir;
                 
                 //If the intersection is in the triangle, check if it's the closest intersection to the camera so far
-                if point_in_triangle(&glm::vec2(intersection.x, intersection.y), &a, &b, &c) {
-                    if t > 0.0 && t < smallest_t {
-                        smallest_t = t;
-                        closest_intersection = Some(intersection);
-                    }
+                if point_in_triangle(&glm::vec2(intersection.x, intersection.y), &a, &b, &c) && t > 0.0 && t < smallest_t {
+                    smallest_t = t;
+                    closest_intersection = Some(intersection);
                 }
             }
 
@@ -1014,8 +1008,8 @@ fn main() {
         //Spin the dragon
         scene_data.single_entities[dragon_entity_index].model_matrix = glm::translation(&dragon_position) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
 
-        //Bob and spin the jetpack
-        scene_data.single_entities[shoe_entity_index].model_matrix = glm::translation(&shoe_position) * glm::translation(&glm::vec3(0.0, 0.0, 0.15 * f32::sin(2.0 * elapsed_time) + 0.15)) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
+        //scene_data.single_entities[terrain_entity_index].uv_offset += glm::vec2(0.0, 0.2) * delta_time;
+        scene_data.single_entities[water_cylinder_entity_index].uv_offset += glm::vec2(0.0, 0.2) * delta_time;
 
         //Update tracking space location
         player.tracking_position += player.tracking_velocity * delta_time;
@@ -1043,6 +1037,7 @@ fn main() {
                         p1: glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0),
                     };
 
+                    //Array of the planes that define the AABB
                     let planes = [
                         Plane::new(aabb.position + glm::vec4(aabb.width, 0.0, 0.0, 0.0), glm::vec4(1.0, 0.0, 0.0, 0.0)),
                         Plane::new(aabb.position + glm::vec4(-aabb.width, 0.0, 0.0, 0.0), glm::vec4(-1.0, 0.0, 0.0, 0.0)),
@@ -1052,10 +1047,8 @@ fn main() {
                         Plane::new(aabb.position + glm::vec4(0.0, 0.0, -aabb.height, 0.0), glm::vec4(0.0, 0.0, -1.0, 0.0)),
                     ];
 
-                    let mut intersection_point;
                     for plane in &planes {
-                        intersection_point = segment_intersect_plane(plane, &segment);
-                        if let Some(point) = intersection_point {
+                        if let Some(_) = segment_intersect_plane(plane, &segment) {
                             let dist = point_plane_distance(&glm::vec3_to_vec4(&camera_position), plane);
                             camera_position += (camera_hit_sphere_radius - dist) * glm::vec4_to_vec3(&plane.normal);
 
@@ -1197,6 +1190,7 @@ fn main() {
             MoveState::Sliding => {
                 let mut done_checking = false;
 
+                //Check the walkable tris
                 if !done_checking {
                     if let Some(collision_plane) = segment_plane_tallest_collision(&player.tracked_segment, &walkable_tris) {
                         player.tracking_velocity = glm::zero();
@@ -1207,6 +1201,7 @@ fn main() {
                     }
                 }
 
+                //Check the too steep tris
                 if !done_checking {
                     if let Some(collision_plane) = segment_plane_tallest_collision(&player.tracked_segment, &too_steep_tris) {
                         let distance_to_steep_tri = -point_plane_distance(&player.tracked_segment.p1, &collision_plane);
@@ -1216,7 +1211,7 @@ fn main() {
                 }
 
                 if !done_checking {
-                    player.movement_state = MoveState::Falling;
+                    set_player_falling(&mut player);
                 }
             }
             MoveState::Grounded => {
@@ -1269,8 +1264,7 @@ fn main() {
 
                 //If we're still not grounded, we're falling
                 if !done_checking {
-                    player.jumps_remaining -= 1;
-                    player.movement_state = MoveState::Falling;
+                    set_player_falling(&mut player);
                 }
 
                 //Local collision resolution functions
@@ -1301,7 +1295,7 @@ fn main() {
         shadow_view = glm::look_at(&glm::vec4_to_vec3(&uniform_light), &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
         scene_data.shadow_matrix = shadow_projection * shadow_view;
 
-        player.last_tracked_segment = player.tracked_segment;
+        player.last_tracked_segment = player.tracked_segment.clone();
         last_camera_position = camera_position;
         //Pre-render phase
 
@@ -1355,10 +1349,12 @@ fn main() {
                             //Fetch the hand poses from the runtime
                             let left_hand_pose = xrutil::locate_space(&left_hand_grip_space, &tracking_space, wait_info.predicted_display_time);
                             let right_hand_pose = xrutil::locate_space(&right_hand_grip_space, &tracking_space, wait_info.predicted_display_time);
+                            let right_hand_aim_pose = xrutil::locate_space(&right_hand_aim_space, &tracking_space, wait_info.predicted_display_time);
 
                             //Right here is where we want to update the controller object's model matrix
                             xrutil::entity_pose_update(&mut scene_data, left_wand_entity_index, left_hand_pose, &world_from_tracking);
                             xrutil::entity_pose_update(&mut scene_data, right_wand_entity_index, right_hand_pose, &world_from_tracking);
+                            xrutil::entity_pose_update(&mut scene_data, water_cylinder_entity_index, right_hand_aim_pose, &world_from_tracking);
 
                             let mut sc_indices = vec![0; views.len()];
                             for i in 0..views.len() {

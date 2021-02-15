@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::Read;
 use ozy::io;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct LineSegment {
     pub p0: glm::TVec4<f32>,
     pub p1: glm::TVec4<f32>

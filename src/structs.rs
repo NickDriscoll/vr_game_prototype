@@ -33,3 +33,8 @@ pub struct Player {
 impl Player {
     pub const MAX_JUMPS: usize = 2;
 }
+
+pub fn set_player_falling(player: &mut Player) {
+    player.jumps_remaining -= 1;
+    player.movement_state = MoveState::Falling;    
+}

@@ -9,11 +9,13 @@ pub const FAR_DISTANCE: f32 = 100000.0;
 pub struct SingleEntity {
     pub mesh: SimpleMesh,
     pub uv_scale: f32,
+    pub uv_offset: glm::TVec2<f32>,
     pub model_matrix: glm::TMat4<f32>
 }
 
 pub struct InstancedEntity {
     pub mesh: InstancedMesh,
+    pub uv_offset: glm::TVec2<f32>,
     pub uv_scale: f32
 }
 
@@ -37,6 +39,7 @@ impl SceneData {
         let entity = SingleEntity {
             mesh: mesh,
             uv_scale: 1.0,
+            uv_offset: glm::zero(),
             model_matrix: glm::identity()
         };
         self.single_entities.push(entity);
@@ -47,6 +50,7 @@ impl SceneData {
     pub fn push_instanced_entity(&mut self, mesh: InstancedMesh) -> usize {
         let entity = InstancedEntity {
             mesh: mesh,
+            uv_offset: glm::zero(),
             uv_scale: 1.0
         };
         self.instanced_entities.push(entity);
@@ -127,6 +131,7 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
         }        
         glutil::bind_matrix4(scene_data.programs[SINGULAR_PROGRAM_INDEX], "model_matrix", &entity.model_matrix);
         glutil::bind_float(scene_data.programs[SINGULAR_PROGRAM_INDEX], "uv_scale", entity.uv_scale);
+        glutil::bind_vector2(scene_data.programs[SINGULAR_PROGRAM_INDEX], "uv_offset", &entity.uv_offset);
         entity.mesh.draw();
     }
 
@@ -137,6 +142,7 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
             gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
             gl::BindTexture(gl::TEXTURE_2D, entity.mesh.texture_maps()[i]);
         }
+        glutil::bind_vector2(scene_data.programs[INSTANCED_PROGRAM_INDEX], "uv_offset", &entity.uv_offset);
         glutil::bind_float(scene_data.programs[INSTANCED_PROGRAM_INDEX], "uv_scale", entity.uv_scale);
         entity.mesh.draw();
     }
