@@ -588,7 +588,7 @@ fn main() {
     };
 
     //Load terrain data
-    let terrain_name = "terrain";
+    let terrain_name = "terrain3";
     let terrain = Terrain::from_ozt(&format!("models/{}.ozt", terrain_name));
     let terrain_mesh = SimpleMesh::from_ozy(&format!("models/{}.ozy", terrain_name), &mut texture_keeper, &tex_params);
     let terrain_entity_index = scene_data.push_single_entity(terrain_mesh);
@@ -993,10 +993,12 @@ fn main() {
             );
             let view_space_mouse = glm::matrix_comp_mult(&normalized_coords, &max_coords);
             let world_space_mouse = screen_state.get_world_from_view() * view_space_mouse;
-            let mouse_ray_dir = glm::normalize(&(world_space_mouse - glm::vec3_to_vec4(&camera_position)));
+
+            let ray_origin = glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0);
+            let mouse_ray_dir = glm::normalize(&(world_space_mouse - ray_origin));
 
             //Update dragon's position if the ray hit
-            if let Some(point) = ray_hit_terrain(&terrain, &world_space_mouse, &mouse_ray_dir) {
+            if let Some(point) = ray_hit_terrain(&terrain, &ray_origin, &mouse_ray_dir) {
                 dragon_position = glm::vec4_to_vec3(&point);
             }
         }
@@ -1005,7 +1007,7 @@ fn main() {
         scene_data.single_entities[dragon_entity_index].model_matrix = glm::translation(&dragon_position) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
 
         //Update the water gun's pillar of water
-        scene_data.single_entities[water_cylinder_entity_index].uv_offset += glm::vec2(0.0, 1.0) * delta_time;
+        scene_data.single_entities[water_cylinder_entity_index].uv_offset += glm::vec2(0.0, 3.0) * delta_time;
         scene_data.single_entities[water_cylinder_entity_index].uv_scale.y = water_pillar_scale.y;
 
         //Update tracking space location
