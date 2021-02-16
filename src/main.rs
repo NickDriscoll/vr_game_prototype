@@ -708,7 +708,7 @@ fn main() {
     const MAX_WATER_REMAINING: f32 = 75.0;
     let mut water_gun_force = glm::zero();
     let mut remaining_water = MAX_WATER_REMAINING;
-    let mut water_pillar_y_scale = 1.0;
+    let mut water_pillar_scale = glm::vec3(1.0, 1.0, 1.0);
     
     //Matrices for relating tracking space and world space
     let mut world_from_tracking = glm::identity();
@@ -943,7 +943,7 @@ fn main() {
                 //Calculate scale of water pillar
                 match ray_hit_terrain(&terrain, &hand_origin, &world_space_vec) {
                     Some(point) => {
-                        water_pillar_y_scale = glm::length(&(point - hand_origin));
+                        water_pillar_scale.y = glm::length(&(point - hand_origin));
                     }
                     None => {
 
@@ -955,6 +955,9 @@ fn main() {
             if water_gun_force != glm::zero() && remaining_water > 0.0 {
                 let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
                 remaining_water -= glm::length(&update_force);
+                let xz_scale = remaining_water / MAX_WATER_REMAINING;
+                water_pillar_scale.x = xz_scale;
+                water_pillar_scale.z = xz_scale;
                 player.tracking_velocity += update_force;
                 scene_data.single_entities[water_cylinder_entity_index].visible = true;
             } else {
@@ -1003,7 +1006,7 @@ fn main() {
 
         //Update the water gun's pillar of water
         scene_data.single_entities[water_cylinder_entity_index].uv_offset += glm::vec2(0.0, 1.0) * delta_time;
-        scene_data.single_entities[water_cylinder_entity_index].uv_scale.y = water_pillar_y_scale;
+        scene_data.single_entities[water_cylinder_entity_index].uv_scale.y = water_pillar_scale.y;
 
         //Update tracking space location
         player.tracking_position += player.tracking_velocity * delta_time;
@@ -1331,7 +1334,7 @@ fn main() {
                             xrutil::entity_pose_update(&mut scene_data, right_wand_entity_index, right_hand_pose, &world_from_tracking);
 
                             if let Some(p) = right_hand_aim_pose {
-                                scene_data.single_entities[water_cylinder_entity_index].model_matrix = xrutil::pose_to_mat4(&p, &world_from_tracking) * glm::scaling(&glm::vec3(1.0, water_pillar_y_scale, 1.0));
+                                scene_data.single_entities[water_cylinder_entity_index].model_matrix = xrutil::pose_to_mat4(&p, &world_from_tracking) * glm::scaling(&water_pillar_scale);
                             }
 
                             //Render shadow map
