@@ -592,7 +592,7 @@ fn main() {
     let terrain = Terrain::from_ozt(&format!("models/{}.ozt", terrain_name));
     let terrain_mesh = SimpleMesh::from_ozy(&format!("models/{}.ozy", terrain_name), &mut texture_keeper, &tex_params);
     let terrain_entity_index = scene_data.push_single_entity(terrain_mesh);
-    scene_data.single_entities[terrain_entity_index].uv_scale = glm::vec2(20.0, 20.0);
+    scene_data.single_entities[terrain_entity_index].uv_scale = glm::vec2(3.0, 3.0);
     scene_data.single_entities[terrain_entity_index].model_matrix = ozy::routines::uniform_scale(1.0);
 
     //Create aabbs
@@ -626,7 +626,7 @@ fn main() {
 
     //Create graphics data for the mesas
     let mesa_entity_index = scene_data.push_instanced_entity(mesa_instanced_mesh);
-    scene_data.single_entities[mesa_entity_index].uv_scale = glm::vec2(2.0, 2.0);
+    scene_data.instanced_entities[mesa_entity_index].uv_scale = glm::vec2(2.0, 2.0);
     scene_data.instanced_entities[mesa_entity_index].mesh.update_buffer(&mesa_transforms);
 
     //Create dragon
@@ -1007,7 +1007,7 @@ fn main() {
         scene_data.single_entities[dragon_entity_index].model_matrix = glm::translation(&dragon_position) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
 
         //Update the water gun's pillar of water
-        scene_data.single_entities[water_cylinder_entity_index].uv_offset += glm::vec2(0.0, 3.0) * delta_time;
+        scene_data.single_entities[water_cylinder_entity_index].uv_offset += glm::vec2(0.0, 5.0) * delta_time;
         scene_data.single_entities[water_cylinder_entity_index].uv_scale.y = water_pillar_scale.y;
 
         //Update tracking space location
