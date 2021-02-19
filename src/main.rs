@@ -41,6 +41,7 @@ const LEFT_AIM_POSE: &str =                             "/user/hand/left/input/a
 const LEFT_TRIGGER_FLOAT: &str =                        "/user/hand/left/input/trigger/value";
 const LEFT_STICK_VECTOR2: &str =                        "/user/hand/left/input/thumbstick";
 const LEFT_TRACKPAD_VECTOR2: &str =                     "/user/hand/left/input/trackpad";
+const RIGHT_TRACKPAD_CLICK: &str =                      "/user/hand/right/input/trackpad/click";
 const RIGHT_TRACKPAD_FORCE: &str =                      "/user/hand/right/input/trackpad/force";
 const RIGHT_TRIGGER_FLOAT: &str =                       "/user/hand/right/input/trigger/value";
 const RIGHT_GRIP_POSE: &str =                           "/user/hand/right/input/grip/pose";
@@ -276,6 +277,7 @@ fn main() {
     let right_grip_pose_path = xrutil::make_path(&xr_instance, RIGHT_GRIP_POSE);
     let right_aim_pose_path = xrutil::make_path(&xr_instance, RIGHT_AIM_POSE);
     let right_trackpad_force_path = xrutil::make_path(&xr_instance, RIGHT_TRACKPAD_FORCE);
+    let right_trackpad_click_path = xrutil::make_path(&xr_instance, RIGHT_TRACKPAD_CLICK);
     let left_stick_vector_path = xrutil::make_path(&xr_instance, LEFT_STICK_VECTOR2);
     let left_trackpad_vector_path = xrutil::make_path(&xr_instance, LEFT_TRACKPAD_VECTOR2);
 
@@ -311,7 +313,8 @@ fn main() {
            &right_trackpad_force_path,
            &item_menu_action,
            &right_hand_aim_action,
-           &right_aim_pose_path) {
+           &right_aim_pose_path,
+           &right_trackpad_click_path) {
         (Some(inst),
          Some(l_grip_action),
          Some(l_aim_action),
@@ -329,9 +332,10 @@ fn main() {
          Some(r_trackpad_force),
          Some(i_menu_action),
          Some(r_aim_action),
-         Some(r_aim_path)) => {
+         Some(r_aim_path),
+         Some(r_track_click_path)) => {
              //Valve Index bindings
-             {
+            {
                 let profile = inst.string_to_path(VALVE_INDEX_INTERACTION_PROFILE).unwrap();
                 let bindings = [
                     xr::Binding::new(l_grip_action, *l_grip_path),
@@ -346,7 +350,7 @@ fn main() {
                 if let Err(e) = inst.suggest_interaction_profile_bindings(profile, &bindings) {
                     println!("Error setting interaction profile bindings: {}", e);
                 }
-             }
+            }
             //HTC Vive bindings
             {
                let profile = inst.string_to_path(HTC_VIVE_INTERACTION_PROFILE).unwrap();
@@ -358,7 +362,7 @@ fn main() {
                    xr::Binding::new(r_trigger_action, *r_trigger_path),
                    xr::Binding::new(r_action, *r_path),
                    xr::Binding::new(move_action, *l_trackpad_path),                   
-                   xr::Binding::new(i_menu_action, *r_trackpad_force)
+                   xr::Binding::new(i_menu_action, *r_track_click_path)
                ];
                if let Err(e) = inst.suggest_interaction_profile_bindings(profile, &bindings) {
                    println!("Error setting interaction profile bindings: {}", e);
@@ -540,7 +544,7 @@ fn main() {
     ];
 
     //OptionVec to hold all AABBs used for collision
-    let mut collision_aabbs = OptionVec::new();
+    let mut collision_aabbs: OptionVec<AABB> = OptionVec::new();
 
     let mut mouse_lbutton_pressed = false;
     let mut mouse_lbutton_pressed_last_frame = false;
@@ -588,46 +592,12 @@ fn main() {
     };
 
     //Load terrain data
-    let terrain_name = "terrain3";
+    let terrain_name = "testmap";
     let terrain = Terrain::from_ozt(&format!("models/{}.ozt", terrain_name));
     let terrain_mesh = SimpleMesh::from_ozy(&format!("models/{}.ozy", terrain_name), &mut texture_keeper, &tex_params);
     let terrain_entity_index = scene_data.push_single_entity(terrain_mesh);
     scene_data.single_entities[terrain_entity_index].uv_scale = glm::vec2(3.0, 3.0);
     scene_data.single_entities[terrain_entity_index].model_matrix = ozy::routines::uniform_scale(1.0);
-
-    //Create aabbs
-    let mesa_mesh = SimpleMesh::from_ozy("models/cube.ozy", &mut texture_keeper, &tex_params);
-    let mesa_block_width = 12;
-    let mesa_block_depth = 10;
-    let mesa_instanced_mesh = unsafe { InstancedMesh::from_simplemesh(&mesa_mesh, mesa_block_width * mesa_block_depth, 5) };
-    let mut mesa_transforms = vec![0.0; 16 * mesa_block_width * mesa_block_depth];
-    let mesa_spacing = 7.5;
-    for i in 0..mesa_block_width {
-        let ypos = i as f32 * mesa_spacing + 30.0;
-        for j in 0..mesa_block_depth {
-            let xpos = j as f32 * mesa_spacing;
-            let height_scale = i + j;
-
-            let mesa_position = glm::vec3(xpos, ypos, 0.0);
-            let mesa_scale = glm::vec3(2.5, 2.5, 0.5 * (height_scale as f32 + 1.0));
-
-            let matrix = glm::translation(&mesa_position) * glm::scaling(&mesa_scale);
-            write_matrix_to_buffer(&mut mesa_transforms, i * mesa_block_depth + j, matrix);
-
-            let mesa_aabb = AABB {
-                position: glm::vec4(mesa_position.x, mesa_position.y, mesa_position.z, 1.0),
-                width: mesa_scale.x,
-                depth: mesa_scale.y,
-                height: mesa_scale.z * 2.0
-            };
-            collision_aabbs.insert(mesa_aabb);
-        }
-    }
-
-    //Create graphics data for the mesas
-    let mesa_entity_index = scene_data.push_instanced_entity(mesa_instanced_mesh);
-    scene_data.instanced_entities[mesa_entity_index].uv_scale = glm::vec2(2.0, 2.0);
-    scene_data.instanced_entities[mesa_entity_index].mesh.update_buffer(&mesa_transforms);
 
     //Create dragon
     let mut dragon_position = glm::vec3(0.0, -14.0, 0.0);
@@ -1009,6 +979,8 @@ fn main() {
         //Update the water gun's pillar of water
         scene_data.single_entities[water_cylinder_entity_index].uv_offset += glm::vec2(0.0, 5.0) * delta_time;
         scene_data.single_entities[water_cylinder_entity_index].uv_scale.y = water_pillar_scale.y;
+
+        scene_data.single_entities[terrain_entity_index].uv_offset += glm::vec2(0.0, 0.0) * delta_time;
 
         //Update tracking space location
         player.tracking_position += player.tracking_velocity * delta_time;
