@@ -519,7 +519,7 @@ fn main() {
     //Initialize shadow data
     let mut shadow_view;
     let shadow_proj_size = 30.0;
-    let shadow_projection = glm::ortho(-shadow_proj_size, shadow_proj_size, -shadow_proj_size, shadow_proj_size, 2.0 * -shadow_proj_size, 2.0 * shadow_proj_size);
+    let shadow_projection = glm::ortho(-shadow_proj_size * 2.0, shadow_proj_size * 2.0, -shadow_proj_size * 2.0, shadow_proj_size * 2.0, 2.0 * -shadow_proj_size, 2.0 * shadow_proj_size);
     let shadow_size = 8192;
     let shadow_rendertarget = unsafe { RenderTarget::new_shadow((shadow_size, shadow_size)) };
 
@@ -527,7 +527,7 @@ fn main() {
     let mut scene_data = SceneData {
         shadow_texture: shadow_rendertarget.texture,
         programs: [complex_3D, complex_instanced_3D, skybox_program, shadow_3D, shadow_instanced_3D],
-        uniform_light: glm::normalize(&glm::vec4(1.0, 0.6, 1.0, 0.0)),
+        uniform_light: glm::normalize(&glm::vec3(1.0, 0.6, 1.0)),
         ..Default::default()
     };
 
@@ -975,7 +975,7 @@ fn main() {
         scene_data.single_entities[water_cylinder_entity_index].uv_offset += glm::vec2(0.0, 5.0) * delta_time;
         scene_data.single_entities[water_cylinder_entity_index].uv_scale.y = water_pillar_scale.y;
 
-        scene_data.single_entities[terrain_entity_index].uv_offset += glm::vec2(0.0, 0.0) * delta_time;
+        scene_data.single_entities[terrain_entity_index].uv_offset += glm::vec2(0.001, 0.001) * delta_time;
 
         //Update tracking space location
         player.tracking_position += player.tracking_velocity * delta_time;
@@ -1013,11 +1013,11 @@ fn main() {
                         Plane::new(aabb.position + glm::vec4(0.0, 0.0, -aabb.height, 0.0), glm::vec4(0.0, 0.0, -1.0, 0.0)),
                     ];
 
+                    //Check if the line segment hit any of the AABB planes
                     for plane in &planes {
                         if let Some(_) = segment_hit_plane(plane, &segment) {
                             let dist = point_plane_distance(&glm::vec3_to_vec4(&camera_position), plane);
                             camera_position += (camera_hit_sphere_radius - dist) * glm::vec4_to_vec3(&plane.normal);
-
                             break;
                         }
                     }
@@ -1256,9 +1256,9 @@ fn main() {
         tracking_from_world = glm::affine_inverse(world_from_tracking);
 
         //Make the light dance around
-        scene_data.uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(-0.5 * elapsed_time), 4.0 * f32::sin(-0.5 * elapsed_time), 2.0, 0.0));
+        scene_data.uniform_light = glm::normalize(&glm::vec3(4.0 * f32::cos(-0.5 * elapsed_time), 4.0 * f32::sin(-0.5 * elapsed_time), 2.0));
         //scene_data.uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(0.5 * elapsed_time), 0.0, 2.0, 0.0));
-        shadow_view = glm::look_at(&glm::vec4_to_vec3(&scene_data.uniform_light), &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
+        shadow_view = glm::look_at(&scene_data.uniform_light, &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
         scene_data.shadow_matrix = shadow_projection * shadow_view;
 
         player.last_tracked_segment = player.tracked_segment.clone();
@@ -1383,7 +1383,7 @@ fn main() {
 
                                 //Actually rendering
                                 let view_data = ViewData::new(
-                                    glm::vec4(eye_world_matrix[12], eye_world_matrix[13], eye_world_matrix[14], 1.0),
+                                    glm::vec3(eye_world_matrix[12], eye_world_matrix[13], eye_world_matrix[14]),
                                     view_matrix,
                                     perspective
                                 );
@@ -1400,7 +1400,7 @@ fn main() {
                                     let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);
                                     let v_world_pos = xrutil::pose_to_mat4(&pose, &world_from_tracking);
                                     let view_state = ViewData::new(
-                                        glm::vec4(v_world_pos[12], v_world_pos[13], v_world_pos[14], 1.0),
+                                        glm::vec3(v_world_pos[12], v_world_pos[13], v_world_pos[14]),
                                         v_mat,
                                         *screen_state.get_clipping_from_view()
                                     );
@@ -1462,7 +1462,7 @@ fn main() {
 
                 //Render main scene
                 let freecam_viewdata = ViewData::new(
-                    glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0),
+                    camera_position,
                     *screen_state.get_view_from_world(),
                     *screen_state.get_clipping_from_view()
                 );

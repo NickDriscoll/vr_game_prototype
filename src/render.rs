@@ -28,7 +28,7 @@ pub struct SceneData {
     pub shadow_texture: GLuint,
     pub skybox_cubemap: GLuint,
     pub skybox_vao: GLuint,
-    pub uniform_light: glm::TVec4<f32>,
+    pub uniform_light: glm::TVec3<f32>,
     pub shadow_matrix: glm::TMat4<f32>,
     pub programs: [GLuint; 5],              //non-instanced , instanced  , skybox , single-shadow , instanced-shadow
     pub single_entities: Vec<SingleEntity>,
@@ -77,9 +77,9 @@ impl Default for SceneData {
             shadow_texture: 0,
             skybox_cubemap: 0,
             skybox_vao: 0,
-            uniform_light: glm::vec4(0.0, 0.0, 1.0, 0.0),
+            uniform_light: glm::vec3(0.0, 0.0, 1.0),
             shadow_matrix: glm::identity(),
-            programs: [0, 0, 0, 0, 0],
+            programs: [0; 5],
             single_entities: Vec::new(),
             instanced_entities: Vec::new()
         }
@@ -87,14 +87,14 @@ impl Default for SceneData {
 }
 
 pub struct ViewData {
-    pub view_position: glm::TVec4<f32>,
+    pub view_position: glm::TVec3<f32>,
     pub view_matrix: glm::TMat4<f32>,
     pub projection_matrix: glm::TMat4<f32>,
     pub view_projection: glm::TMat4<f32>
 }
 
 impl ViewData {
-    pub fn new(view_position: glm::TVec4<f32>, view_matrix: glm::TMat4<f32>, projection_matrix: glm::TMat4<f32>) -> Self {
+    pub fn new(view_position: glm::TVec3<f32>, view_matrix: glm::TMat4<f32>, projection_matrix: glm::TMat4<f32>) -> Self {
         Self {
             view_position,
             view_matrix,
@@ -105,7 +105,6 @@ impl ViewData {
 }
 
 pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
-
     let texture_map_names = ["albedo_map", "normal_map", "roughness_map", "shadow_map"];
 
     //Main scene rendering
@@ -117,12 +116,12 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
     for program in &scene_data.programs {
         glutil::bind_matrix4(*program, "shadow_matrix", &scene_data.shadow_matrix);
         glutil::bind_matrix4(*program, "view_projection", &view_data.view_projection);
-        glutil::bind_vector4(*program, "sun_direction", &scene_data.uniform_light);
+        glutil::bind_vector3(*program, "sun_direction", &scene_data.uniform_light);
         glutil::bind_int(*program, "shadow_map", ozy::render::TEXTURE_MAP_COUNT as GLint);
         glutil::bind_int(*program, "visualize_normals", scene_data.visualize_normals as GLint);
         glutil::bind_int(*program, "complex_normals", scene_data.complex_normals as GLint);
         glutil::bind_int(*program, "outlining", scene_data.outlining as GLint);
-        glutil::bind_vector4(*program, "view_position", &view_data.view_position);
+        glutil::bind_vector3(*program, "view_position", &view_data.view_position);
 
         for i in 0..ozy::render::TEXTURE_MAP_COUNT {
             glutil::bind_int(*program, texture_map_names[i], i as GLint);

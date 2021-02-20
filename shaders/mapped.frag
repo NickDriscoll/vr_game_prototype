@@ -16,14 +16,13 @@ uniform sampler2D roughness_map;
 //Shadow map
 uniform sampler2D shadow_map;
 
-uniform vec4 sun_direction; //TODO(Nick): Change to tangent space
-uniform vec4 view_position;
+uniform vec3 sun_direction; //TODO(Nick): Change to tangent space
+uniform vec3 view_position;
 uniform vec2 uv_scale = vec2(1.0, 1.0);
 uniform vec2 uv_offset = vec2(0.0, 0.0);
 
 uniform bool complex_normals = false;
 uniform bool visualize_normals = false;
-uniform bool outlining = false;
 
 const float AMBIENT = 0.1;
 
@@ -35,7 +34,7 @@ void main() {
     float roughness = texture(roughness_map, scaled_uvs).x;
 
     //TODO(Nick): Can compute this in vertex shader
-    vec4 view_direction = normalize(view_position - world_space_pos);
+    vec3 view_direction = normalize(view_position - vec3(world_space_pos));
     vec3 world_space_geometry_normal = tangent_matrix[2];
 
     vec3 world_space_normal;
@@ -72,19 +71,12 @@ void main() {
 
     float diffuse = max(0.0, dot(vec3(sun_direction), world_space_normal));
     
-    vec4 halfway = normalize(view_direction + sun_direction);
-    float specular_angle = max(0.0, dot(vec3(halfway), world_space_normal));
+    vec3 halfway = normalize(view_direction + sun_direction);
+    float specular_angle = max(0.0, dot(halfway, world_space_normal));
     float shininess = (1.0 - roughness) * (128.0 - 8.0) + 16.0;
     float specular = pow(specular_angle, shininess);
 
-    //Calculate edge outline
-    vec3 outline_color = vec3(0.0);
-    if (outlining) {
-        float outline_cos = max(0.0, 1.0 - (2.0 * dot(vec3(view_direction), world_space_geometry_normal)));
-        outline_color = vec3(0.0, 0.0, 1.0) * outline_cos;
-    }
-
-    vec3 final_color = ((specular + diffuse) * (1.0 - shadow) + AMBIENT) * albedo + outline_color;
+    vec3 final_color = ((specular + diffuse) * (1.0 - shadow) + AMBIENT) * albedo;
     if (visualize_normals) {
         frag_color = vec4(world_space_normal * 0.5 + 0.5, 1.0);
     } else {
