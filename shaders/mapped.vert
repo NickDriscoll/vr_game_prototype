@@ -10,7 +10,6 @@ out mat3 tangent_matrix;
 out vec4 world_space_pos;
 out vec4 shadow_space_pos;
 out vec2 f_uvs;
-out float f_view_depth;
 
 //Constant per-frame uniforms
 uniform mat4 shadow_matrix;

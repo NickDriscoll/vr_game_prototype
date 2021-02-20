@@ -4,7 +4,6 @@ in mat3 tangent_matrix;
 in vec4 world_space_pos;
 in vec4 shadow_space_pos;
 in vec2 f_uvs;
-in float f_view_depth;
 
 out vec4 frag_color;
 
@@ -29,7 +28,6 @@ const float AMBIENT = 0.1;
 void main() {
     vec2 scaled_uvs = f_uvs * uv_scale + uv_offset;
 
-    //vec2 scaled_uvs = f_uvs * uv_scale;
     vec3 albedo = texture(albedo_map, scaled_uvs).xyz;
     float roughness = texture(roughness_map, scaled_uvs).x;
 

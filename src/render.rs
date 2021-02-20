@@ -135,7 +135,7 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
             for i in 0..ozy::render::TEXTURE_MAP_COUNT {
                 gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
                 gl::BindTexture(gl::TEXTURE_2D, entity.mesh.texture_maps[i]);
-            }        
+            }
             glutil::bind_matrix4(scene_data.programs[SceneData::SINGULAR_PROGRAM_INDEX], "model_matrix", &entity.model_matrix);
             glutil::bind_vector2(scene_data.programs[SceneData::SINGULAR_PROGRAM_INDEX], "uv_scale", &entity.uv_scale);
             glutil::bind_vector2(scene_data.programs[SceneData::SINGULAR_PROGRAM_INDEX], "uv_offset", &entity.uv_offset);

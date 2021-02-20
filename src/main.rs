@@ -13,6 +13,7 @@ use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
 use glfw::{Action, Context, Key, WindowEvent, WindowMode};
 use gl::types::*;
+use std::collections::HashMap;
 use std::process::exit;
 use std::ptr;
 use std::os::raw::c_void;
@@ -32,21 +33,6 @@ use winapi::{shared::windef::HWND, um::{winuser::GetWindowDC, wingdi::wglGetCurr
 //The font data is baked at compile time
 const FONT_BYTES: &'static [u8; 212276] = include_bytes!("../fonts/Constantia.ttf");
 
-//OpenXR strings
-const VALVE_INDEX_INTERACTION_PROFILE: &str =           "/interaction_profiles/valve/index_controller";
-const HTC_VIVE_INTERACTION_PROFILE: &str =              "/interaction_profiles/htc/vive_controller";
-
-const LEFT_GRIP_POSE: &str =                            "/user/hand/left/input/grip/pose";
-const LEFT_AIM_POSE: &str =                             "/user/hand/left/input/aim/pose";
-const LEFT_TRIGGER_FLOAT: &str =                        "/user/hand/left/input/trigger/value";
-const LEFT_STICK_VECTOR2: &str =                        "/user/hand/left/input/thumbstick";
-const LEFT_TRACKPAD_VECTOR2: &str =                     "/user/hand/left/input/trackpad";
-const RIGHT_TRACKPAD_CLICK: &str =                      "/user/hand/right/input/trackpad/click";
-const RIGHT_TRACKPAD_FORCE: &str =                      "/user/hand/right/input/trackpad/force";
-const RIGHT_TRIGGER_FLOAT: &str =                       "/user/hand/right/input/trigger/value";
-const RIGHT_GRIP_POSE: &str =                           "/user/hand/right/input/grip/pose";
-const RIGHT_AIM_POSE: &str =                            "/user/hand/right/input/aim/pose";
-
 fn clamp<T: PartialOrd>(x: T, min: T, max: T) -> T {
     if x < min { min }
     else if x > max { max }
@@ -60,6 +46,16 @@ fn write_matrix_to_buffer(buffer: &mut [f32], index: usize, matrix: glm::TMat4<f
 }
 
 fn main() {
+    //Initialize the configuration data
+    let config = {
+        let mut int_options = HashMap::new();
+        int_options.insert(Configuration::WINDOWED_WIDTH, 1920);
+        int_options.insert(Configuration::WINDOWED_HEIGHT, 1080);
+        Configuration {
+            int_options
+        }
+    };
+
     //Initialize the OpenXR instance
     let xr_instance = {
         let openxr_entry = xr::Entry::linked();
@@ -175,6 +171,109 @@ fn main() {
         None => { None }
     };
 
+    //Create the paths to appropriate equipment
+    let left_grip_pose_path = xrutil::make_path(&xr_instance, xrutil::LEFT_GRIP_POSE);
+    let left_aim_pose_path = xrutil::make_path(&xr_instance, xrutil::LEFT_AIM_POSE);
+    let left_trigger_float_path = xrutil::make_path(&xr_instance, xrutil::LEFT_TRIGGER_FLOAT);
+    let right_trigger_float_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_TRIGGER_FLOAT);
+    let right_grip_pose_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_GRIP_POSE);
+    let right_aim_pose_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_AIM_POSE);
+    let right_trackpad_force_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_TRACKPAD_FORCE);
+    let right_trackpad_click_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_TRACKPAD_CLICK);
+    let left_stick_vector_path = xrutil::make_path(&xr_instance, xrutil::LEFT_STICK_VECTOR2);
+    let left_trackpad_vector_path = xrutil::make_path(&xr_instance, xrutil::LEFT_TRACKPAD_VECTOR2);
+
+    //Create the hand subaction paths
+    let left_hand_subaction_path = xrutil::make_path(&xr_instance, xr::USER_HAND_LEFT);
+    let right_hand_subaction_path = xrutil::make_path(&xr_instance, xr::USER_HAND_RIGHT);
+
+    //Create the XrActions
+    let left_hand_pose_action = xrutil::make_action(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_pose", "Left hand pose");
+    let left_hand_aim_action = xrutil::make_action::<xr::Posef>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_aim", "Left hand aim");
+    let left_trigger_action = xrutil::make_action::<f32>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_trigger", "Left hand trigger");
+    let right_trigger_action = xrutil::make_action::<f32>(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_trigger", "Right hand trigger");
+    let right_hand_grip_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_pose", "Right hand pose");
+    let right_hand_aim_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_aim", "Right hand aim");
+    let item_menu_action = xrutil::make_action::<bool>(&right_hand_subaction_path, &xr_controller_actionset, "item_menu", "Interact with item menu");
+    let player_move_action = xrutil::make_action::<xr::Vector2f>(&left_hand_subaction_path, &xr_controller_actionset, "player_move", "Player movement");
+
+    //Suggest interaction profile bindings
+    match (&xr_instance,
+           &left_hand_pose_action,
+           &left_hand_aim_action,
+           &left_trigger_action,
+           &right_trigger_action,
+           &right_hand_grip_action,
+           &player_move_action,
+           &left_grip_pose_path,
+           &left_aim_pose_path,
+           &left_trigger_float_path,
+           &right_trigger_float_path,
+           &right_grip_pose_path,
+           &left_stick_vector_path,
+           &left_trackpad_vector_path,
+           &right_trackpad_force_path,
+           &item_menu_action,
+           &right_hand_aim_action,
+           &right_aim_pose_path,
+           &right_trackpad_click_path) {
+        (Some(inst),
+         Some(l_grip_action),
+         Some(l_aim_action),
+         Some(l_trigger_action),
+         Some(r_trigger_action),
+         Some(r_action),
+         Some(move_action),
+         Some(l_grip_path),
+         Some(l_aim_path),
+         Some(l_trigger_path),
+         Some(r_trigger_path),
+         Some(r_path),
+         Some(l_stick_path),
+         Some(l_trackpad_path),
+         Some(r_trackpad_force),
+         Some(i_menu_action),
+         Some(r_aim_action),
+         Some(r_aim_path),
+         Some(r_track_click_path)) => {
+             //Valve Index bindings
+            {
+                let profile = inst.string_to_path(xrutil::VALVE_INDEX_INTERACTION_PROFILE).unwrap();
+                let bindings = [
+                    xr::Binding::new(l_grip_action, *l_grip_path),
+                    xr::Binding::new(l_aim_action, *l_aim_path),
+                    xr::Binding::new(r_aim_action, *r_aim_path),
+                    xr::Binding::new(l_trigger_action, *l_trigger_path),
+                    xr::Binding::new(r_trigger_action, *r_trigger_path),
+                    xr::Binding::new(r_action, *r_path),
+                    xr::Binding::new(move_action, *l_stick_path),
+                    xr::Binding::new(i_menu_action, *r_trackpad_force)
+                ];
+                if let Err(e) = inst.suggest_interaction_profile_bindings(profile, &bindings) {
+                    println!("Error setting interaction profile bindings: {}", e);
+                }
+            }
+            //HTC Vive bindings
+            {
+               let profile = inst.string_to_path(xrutil::HTC_VIVE_INTERACTION_PROFILE).unwrap();
+               let bindings = [
+                   xr::Binding::new(l_grip_action, *l_grip_path),
+                   xr::Binding::new(l_aim_action, *l_aim_path),
+                   xr::Binding::new(r_aim_action, *r_aim_path),
+                   xr::Binding::new(l_trigger_action, *l_trigger_path),
+                   xr::Binding::new(r_trigger_action, *r_trigger_path),
+                   xr::Binding::new(r_action, *r_path),
+                   xr::Binding::new(move_action, *l_trackpad_path),                   
+                   xr::Binding::new(i_menu_action, *r_track_click_path)
+               ];
+               if let Err(e) = inst.suggest_interaction_profile_bindings(profile, &bindings) {
+                   println!("Error setting interaction profile bindings: {}", e);
+               }
+            }
+        }
+        _ => {}
+    }
+
     //Initialize glfw
     let mut glfw = match glfw::init(glfw::FAIL_ON_ERRORS) {
         Ok(g) => { g }
@@ -188,10 +287,15 @@ fn main() {
     }
 	glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
 
+    //Initialize screen state
+    let mut screen_state = {
+        let window_size = get_window_size(&config);
+        let fov_radians = glm::half_pi();
+        ScreenState::new(window_size, glm::identity(), fov_radians, NEAR_DISTANCE, FAR_DISTANCE)
+    };
+
     //Create the window
-    let window_size = glm::vec2(1920, 1080);
-    let aspect_ratio = window_size.x as f32 / window_size.y as f32;
-    let (mut window, events) = match glfw.create_window(window_size.x, window_size.y, "THCATO", glfw::WindowMode::Windowed) {
+    let (mut window, events) = match glfw.create_window(screen_state.get_window_size().x, screen_state.get_window_size().y, "THCATO", glfw::WindowMode::Windowed) {
         Some(stuff) => { stuff }
         None => {
             panic!("Unable to create a window!");
@@ -268,109 +372,6 @@ fn main() {
         }
         None => { (None, None, None) }
     };
-
-    //Create the paths to appropriate equipment
-    let left_grip_pose_path = xrutil::make_path(&xr_instance, LEFT_GRIP_POSE);
-    let left_aim_pose_path = xrutil::make_path(&xr_instance, LEFT_AIM_POSE);
-    let left_trigger_float_path = xrutil::make_path(&xr_instance, LEFT_TRIGGER_FLOAT);
-    let right_trigger_float_path = xrutil::make_path(&xr_instance, RIGHT_TRIGGER_FLOAT);
-    let right_grip_pose_path = xrutil::make_path(&xr_instance, RIGHT_GRIP_POSE);
-    let right_aim_pose_path = xrutil::make_path(&xr_instance, RIGHT_AIM_POSE);
-    let right_trackpad_force_path = xrutil::make_path(&xr_instance, RIGHT_TRACKPAD_FORCE);
-    let right_trackpad_click_path = xrutil::make_path(&xr_instance, RIGHT_TRACKPAD_CLICK);
-    let left_stick_vector_path = xrutil::make_path(&xr_instance, LEFT_STICK_VECTOR2);
-    let left_trackpad_vector_path = xrutil::make_path(&xr_instance, LEFT_TRACKPAD_VECTOR2);
-
-    //Create the hand subaction paths
-    let left_hand_subaction_path = xrutil::make_path(&xr_instance, xr::USER_HAND_LEFT);
-    let right_hand_subaction_path = xrutil::make_path(&xr_instance, xr::USER_HAND_RIGHT);
-
-    //Create the XrActions
-    let left_hand_pose_action = xrutil::make_action(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_pose", "Left hand pose");
-    let left_hand_aim_action = xrutil::make_action::<xr::Posef>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_aim", "Left hand aim");
-    let left_trigger_action = xrutil::make_action::<f32>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_trigger", "Left hand trigger");
-    let right_trigger_action = xrutil::make_action::<f32>(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_trigger", "Right hand trigger");
-    let right_hand_grip_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_pose", "Right hand pose");
-    let right_hand_aim_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_aim", "Right hand aim");
-    let item_menu_action = xrutil::make_action::<bool>(&right_hand_subaction_path, &xr_controller_actionset, "item_menu", "Interact with item menu");
-    let player_move_action = xrutil::make_action::<xr::Vector2f>(&left_hand_subaction_path, &xr_controller_actionset, "player_move", "Player movement");
-
-    //Suggest interaction profile bindings
-    match (&xr_instance,
-           &left_hand_pose_action,
-           &left_hand_aim_action,
-           &left_trigger_action,
-           &right_trigger_action,
-           &right_hand_grip_action,
-           &player_move_action,
-           &left_grip_pose_path,
-           &left_aim_pose_path,
-           &left_trigger_float_path,
-           &right_trigger_float_path,
-           &right_grip_pose_path,
-           &left_stick_vector_path,
-           &left_trackpad_vector_path,
-           &right_trackpad_force_path,
-           &item_menu_action,
-           &right_hand_aim_action,
-           &right_aim_pose_path,
-           &right_trackpad_click_path) {
-        (Some(inst),
-         Some(l_grip_action),
-         Some(l_aim_action),
-         Some(l_trigger_action),
-         Some(r_trigger_action),
-         Some(r_action),
-         Some(move_action),
-         Some(l_grip_path),
-         Some(l_aim_path),
-         Some(l_trigger_path),
-         Some(r_trigger_path),
-         Some(r_path),
-         Some(l_stick_path),
-         Some(l_trackpad_path),
-         Some(r_trackpad_force),
-         Some(i_menu_action),
-         Some(r_aim_action),
-         Some(r_aim_path),
-         Some(r_track_click_path)) => {
-             //Valve Index bindings
-            {
-                let profile = inst.string_to_path(VALVE_INDEX_INTERACTION_PROFILE).unwrap();
-                let bindings = [
-                    xr::Binding::new(l_grip_action, *l_grip_path),
-                    xr::Binding::new(l_aim_action, *l_aim_path),
-                    xr::Binding::new(r_aim_action, *r_aim_path),
-                    xr::Binding::new(l_trigger_action, *l_trigger_path),
-                    xr::Binding::new(r_trigger_action, *r_trigger_path),
-                    xr::Binding::new(r_action, *r_path),
-                    xr::Binding::new(move_action, *l_stick_path),
-                    xr::Binding::new(i_menu_action, *r_trackpad_force)
-                ];
-                if let Err(e) = inst.suggest_interaction_profile_bindings(profile, &bindings) {
-                    println!("Error setting interaction profile bindings: {}", e);
-                }
-            }
-            //HTC Vive bindings
-            {
-               let profile = inst.string_to_path(HTC_VIVE_INTERACTION_PROFILE).unwrap();
-               let bindings = [
-                   xr::Binding::new(l_grip_action, *l_grip_path),
-                   xr::Binding::new(l_aim_action, *l_aim_path),
-                   xr::Binding::new(r_aim_action, *r_aim_path),
-                   xr::Binding::new(l_trigger_action, *l_trigger_path),
-                   xr::Binding::new(r_trigger_action, *r_trigger_path),
-                   xr::Binding::new(r_action, *r_path),
-                   xr::Binding::new(move_action, *l_trackpad_path),                   
-                   xr::Binding::new(i_menu_action, *r_track_click_path)
-               ];
-               if let Err(e) = inst.suggest_interaction_profile_bindings(profile, &bindings) {
-                   println!("Error setting interaction profile bindings: {}", e);
-               }
-            }
-        }
-        _ => {}
-    }
 
     //Set controller actionset as active
     match (&xr_session, &xr_controller_actionset) {
@@ -482,9 +483,9 @@ fn main() {
     let skybox_program = unsafe { glutil::compile_program_from_files("shaders/skybox.vert", "shaders/skybox.frag") };
     
     //Initialize default framebuffer
-    let default_framebuffer = Framebuffer {
+    let mut default_framebuffer = Framebuffer {
         name: 0,
-        size: (window_size.x as GLsizei, window_size.y as GLsizei),
+        size: (screen_state.get_window_size().x as GLsizei, screen_state.get_window_size().y as GLsizei),
         clear_flags: gl::DEPTH_BUFFER_BIT | gl::COLOR_BUFFER_BIT,
         cull_face: gl::BACK
     };
@@ -496,25 +497,6 @@ fn main() {
     let mut camera_orientation = glm::vec2(0.0, -glm::half_pi::<f32>() * 0.6);
     let mut camera_speed = 5.0;
     let camera_hit_sphere_radius = 0.2;
-
-    //Initialize screen state
-    let fov_radians = glm::half_pi();
-    let mut screen_state = ScreenState::new(window_size, glm::identity(), glm::perspective_zo(aspect_ratio, fov_radians, NEAR_DISTANCE, FAR_DISTANCE));
-
-    //Fullscreen the window
-    /*
-    glfw.with_primary_monitor_mut(|_, opt_monitor| {
-        if let Some(monitor) = opt_monitor {
-            let pos = monitor.get_pos();
-            if let Some(mode) = monitor.get_video_mode() {
-                window_size = glm::vec2(mode.width, mode.height);
-                default_framebuffer.size = (window_size.x as GLsizei, window_size.y as GLsizei);
-                screen_state = ScreenState::new(window_size, glm::identity(), glm::perspective_zo(aspect_ratio, glm::half_pi(), NEAR_DISTANCE, FAR_DISTANCE));
-                window.set_monitor(WindowMode::FullScreen(monitor), pos.0, pos.1, mode.width, mode.height, Some(144));
-            }
-        }
-    });
-    */
 
     //Initialize shadow data
     let mut shadow_view;
@@ -556,7 +538,7 @@ fn main() {
         let button_program = unsafe { glutil::compile_program_from_files("shaders/ui/button.vert", "shaders/ui/button.frag") };
         let glyph_program = unsafe { glutil::compile_program_from_files("shaders/ui/glyph.vert", "shaders/ui/glyph.frag") };
 
-        let mut state = ozy::ui::UIState::new(FONT_BYTES, (window_size.x, window_size.y), [button_program, glyph_program]);
+        let mut state = ozy::ui::UIState::new(FONT_BYTES, (screen_state.get_window_size().x, screen_state.get_window_size().y), [button_program, glyph_program]);
         pause_menu_chain_index = state.create_menu_chain();
         graphics_menu_chain_index = state.create_menu_chain();
         
@@ -564,6 +546,7 @@ fn main() {
         topbar_menu.push(("Graphics options", Some(Command::ToggleMenu(graphics_menu_chain_index, graphics_menu_index))));
 
         let mut graphics_menu = vec![
+            ("Toggle fullscreen", Some(Command::ToggleFullScreen)),
             ("Visualize normals", Some(Command::ToggleNormalVis)),
             ("Complex normals", Some(Command::ToggleComplexNormals)),
             ("Wireframe view", Some(Command::ToggleWireframe))
@@ -579,7 +562,7 @@ fn main() {
 
         let menus = vec![
             ozy::ui::Menu::new(topbar_menu, ozy::ui::UIAnchor::LeftAlignedRow((0.0, 0.0)), 24.0),
-            ozy::ui::Menu::new(graphics_menu, ozy::ui::UIAnchor::RightAlignedColumn((window_size.x as f32, 0.0)), 24.0)
+            ozy::ui::Menu::new(graphics_menu, ozy::ui::UIAnchor::RightAlignedColumn((0.0, 0.0)), 24.0)
         ];
 
         state.set_menus(menus);
@@ -653,6 +636,7 @@ fn main() {
         right_wand_entity_index = scene_data.push_single_entity(wand_mesh);
     }
 
+    let mut is_fullscreen = false;
     let mut wireframe = false;
     let mut placing = false;
     let mut hmd_pov = false;
@@ -808,7 +792,7 @@ fn main() {
                     screen_space_mouse = glm::vec2(x as f32, y as f32);
                     if mouselook_enabled {
                         const CAMERA_SENSITIVITY_DAMPENING: f32 = 0.002;
-                        let offset = glm::vec2(screen_space_mouse.x as f32 - window_size.x as f32 / 2.0, screen_space_mouse.y as f32 - window_size.y as f32 / 2.0);
+                        let offset = glm::vec2(screen_space_mouse.x as f32 - screen_state.get_window_size().x as f32 / 2.0, screen_space_mouse.y as f32 - screen_state.get_window_size().y as f32 / 2.0);
                         camera_orientation += offset * CAMERA_SENSITIVITY_DAMPENING;
                         if camera_orientation.y < -glm::pi::<f32>() {
                             camera_orientation.y = -glm::pi::<f32>();
@@ -834,6 +818,30 @@ fn main() {
                 Command::ToggleHMDPov => { hmd_pov = !hmd_pov; }
                 Command::ToggleAllMenus => { ui_state.toggle_hide_all_menus(); }
                 Command::ToggleWireframe => { wireframe = !wireframe; }
+                Command::ToggleFullScreen => {
+                    //Fullscreen the window
+                    if !is_fullscreen {
+                        is_fullscreen = true;
+                        glfw.with_primary_monitor_mut(|_, opt_monitor| {
+                            if let Some(monitor) = opt_monitor {
+                                let pos = monitor.get_pos();
+                                if let Some(mode) = monitor.get_video_mode() {
+                                    default_framebuffer.size = (mode.width as GLsizei, mode.height as GLsizei);
+                                    screen_state = ScreenState::new(glm::vec2(mode.width, mode.height), glm::identity(), glm::half_pi(), NEAR_DISTANCE, FAR_DISTANCE);
+                                    window.set_monitor(WindowMode::FullScreen(monitor), pos.0, pos.1, mode.width, mode.height, Some(144));
+                                    ui_state.resize((mode.width, mode.height));
+                                }
+                            }
+                        });
+                    } else {
+                        is_fullscreen = false;
+                        let window_size = get_window_size(&config);
+                        default_framebuffer.size = (window_size.x as i32, window_size.y as i32);
+                        screen_state = ScreenState::new(glm::vec2(window_size.x, window_size.y), glm::identity(), glm::half_pi(), NEAR_DISTANCE, FAR_DISTANCE);
+                        window.set_monitor(WindowMode::Windowed, 200, 200, window_size.x, window_size.y, Some(144));
+                        ui_state.resize((window_size.x, window_size.y));
+                    }
+                }
                 Command::ResetPlayerPosition => {
                     player.tracking_position = glm::vec3(0.0, 0.0, 3.0);
                     player.tracking_velocity = glm::zero();
@@ -935,7 +943,7 @@ fn main() {
 
         //If the user is controlling the camera, force the mouse cursor into the center of the screen
         if mouselook_enabled {
-            window.set_cursor_pos(window_size.x as f64 / 2.0, window_size.y as f64 / 2.0);
+            window.set_cursor_pos(screen_state.get_window_size().x as f64 / 2.0, screen_state.get_window_size().y as f64 / 2.0);
         }
 
         let camera_velocity = camera_speed * glm::vec4_to_vec3(&(glm::affine_inverse(*screen_state.get_view_from_world()) * camera_input));
@@ -943,16 +951,16 @@ fn main() {
 
         //Place dragon at clicking position
         if placing {
-            let fovx_radians = 2.0 * f32::atan(f32::tan(fov_radians / 2.0) * aspect_ratio);
+            let fovx_radians = 2.0 * f32::atan(f32::tan(screen_state.get_fov_radians() / 2.0) * screen_state.get_aspect_ratio());
             let max_coords = glm::vec4(
                 NEAR_DISTANCE * f32::tan(fovx_radians / 2.0),
-                NEAR_DISTANCE * f32::tan(fov_radians / 2.0),
+                NEAR_DISTANCE * f32::tan(screen_state.get_fov_radians() / 2.0),
                 -NEAR_DISTANCE,
                 1.0
             );
             let normalized_coords = glm::vec4(
-                screen_space_mouse.x * 2.0 / window_size.x as f32 - 1.0,
-                -screen_space_mouse.y * 2.0 / window_size.y as f32 + 1.0,
+                screen_space_mouse.x * 2.0 / screen_state.get_window_size().x as f32 - 1.0,
+                -screen_space_mouse.y * 2.0 / screen_state.get_window_size().y as f32 + 1.0,
                 1.0,
                 1.0
             );
@@ -1256,7 +1264,7 @@ fn main() {
         tracking_from_world = glm::affine_inverse(world_from_tracking);
 
         //Make the light dance around
-        scene_data.uniform_light = glm::normalize(&glm::vec3(4.0 * f32::cos(-0.5 * elapsed_time), 4.0 * f32::sin(-0.5 * elapsed_time), 2.0));
+        //scene_data.uniform_light = glm::normalize(&glm::vec3(4.0 * f32::cos(-0.5 * elapsed_time), 4.0 * f32::sin(-0.5 * elapsed_time), 2.0));
         //scene_data.uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(0.5 * elapsed_time), 0.0, 2.0, 0.0));
         shadow_view = glm::look_at(&scene_data.uniform_light, &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
         scene_data.shadow_matrix = shadow_projection * shadow_view;
