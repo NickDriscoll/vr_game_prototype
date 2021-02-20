@@ -516,9 +516,6 @@ fn main() {
     });
     */
 
-    //Uniform light source
-    let mut uniform_light = glm::normalize(&glm::vec4(1.0, 0.6, 1.0, 0.0));
-
     //Initialize shadow data
     let mut shadow_view;
     let shadow_proj_size = 30.0;
@@ -530,7 +527,7 @@ fn main() {
     let mut scene_data = SceneData {
         shadow_texture: shadow_rendertarget.texture,
         programs: [complex_3D, complex_instanced_3D, skybox_program, shadow_3D, shadow_instanced_3D],
-        uniform_light,
+        uniform_light: glm::normalize(&glm::vec4(1.0, 0.6, 1.0, 0.0)),
         ..Default::default()
     };
 
@@ -567,7 +564,6 @@ fn main() {
         topbar_menu.push(("Graphics options", Some(Command::ToggleMenu(graphics_menu_chain_index, graphics_menu_index))));
 
         let mut graphics_menu = vec![
-            ("Highlight spheres", Some(Command::ToggleOutline)),
             ("Visualize normals", Some(Command::ToggleNormalVis)),
             ("Complex normals", Some(Command::ToggleComplexNormals)),
             ("Wireframe view", Some(Command::ToggleWireframe))
@@ -835,7 +831,6 @@ fn main() {
                 Command::ToggleMenu(chain_index, menu_index) => { ui_state.toggle_menu(chain_index, menu_index); }
                 Command::ToggleNormalVis => { scene_data.visualize_normals = !scene_data.visualize_normals; }
                 Command::ToggleComplexNormals => { scene_data.complex_normals = !scene_data.complex_normals; }
-                Command::ToggleOutline => { scene_data.outlining = !scene_data.outlining; }
                 Command::ToggleHMDPov => { hmd_pov = !hmd_pov; }
                 Command::ToggleAllMenus => { ui_state.toggle_hide_all_menus(); }
                 Command::ToggleWireframe => { wireframe = !wireframe; }
@@ -1261,9 +1256,9 @@ fn main() {
         tracking_from_world = glm::affine_inverse(world_from_tracking);
 
         //Make the light dance around
-        //uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(-0.5 * elapsed_time), 4.0 * f32::sin(-0.5 * elapsed_time), 2.0, 0.0));
-        //uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(0.5 * elapsed_time), 0.0, 2.0, 0.0));
-        shadow_view = glm::look_at(&glm::vec4_to_vec3(&uniform_light), &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
+        scene_data.uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(-0.5 * elapsed_time), 4.0 * f32::sin(-0.5 * elapsed_time), 2.0, 0.0));
+        //scene_data.uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(0.5 * elapsed_time), 0.0, 2.0, 0.0));
+        shadow_view = glm::look_at(&glm::vec4_to_vec3(&scene_data.uniform_light), &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
         scene_data.shadow_matrix = shadow_projection * shadow_view;
 
         player.last_tracked_segment = player.tracked_segment.clone();

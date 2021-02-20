@@ -8,7 +8,6 @@ pub enum Command {
     ToggleNormalVis,
     ToggleComplexNormals,
     ToggleWireframe,
-    ToggleOutline,
     ToggleHMDPov,
     ResetPlayerPosition
 }
