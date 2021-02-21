@@ -48,11 +48,19 @@ fn write_matrix_to_buffer(buffer: &mut [f32], index: usize, matrix: glm::TMat4<f
 fn main() {
     //Initialize the configuration data
     let config = {
-        let mut int_options = HashMap::new();
-        int_options.insert(Configuration::WINDOWED_WIDTH, 1920);
-        int_options.insert(Configuration::WINDOWED_HEIGHT, 1080);
-        Configuration {
-            int_options
+        match Configuration::from_file("chickens.cfg") {
+            Some(cfg) => { cfg }
+            None => {
+                let mut int_options = HashMap::new();
+                let mut string_options = HashMap::new();
+                int_options.insert(String::from(Configuration::WINDOWED_WIDTH), 1920);
+                int_options.insert(String::from(Configuration::WINDOWED_HEIGHT), 1080);
+                string_options.insert(String::from(Configuration::LEVEL_NAME), String::from("testmap"));
+                Configuration {
+                    int_options,
+                    string_options
+                }
+            }
         }
     };
 
@@ -571,7 +579,10 @@ fn main() {
     };
 
     //Load terrain data
-    let terrain_name = "testmap";
+    let terrain_name = match config.string_options.get(Configuration::LEVEL_NAME) {
+        Some(name) => { name }
+        None => { "terrain" }
+    };
     let terrain = Terrain::from_ozt(&format!("models/{}.ozt", terrain_name));
     let terrain_mesh = SimpleMesh::from_ozy(&format!("models/{}.ozy", terrain_name), &mut texture_keeper, &tex_params);
     let terrain_entity_index = scene_data.push_single_entity(terrain_mesh);
@@ -841,6 +852,9 @@ fn main() {
                         window.set_monitor(WindowMode::Windowed, 200, 200, window_size.x, window_size.y, Some(144));
                         ui_state.resize((window_size.x, window_size.y));
                     }
+
+                    //Update the config file
+                    config.to_file("chickens.cfg");
                 }
                 Command::ResetPlayerPosition => {
                     player.tracking_position = glm::vec3(0.0, 0.0, 3.0);
