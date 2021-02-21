@@ -53,6 +53,8 @@ impl Configuration {
     pub const WINDOWED_HEIGHT: &'static str = "windowed_height";
     pub const LEVEL_NAME: &'static str = "level_name";
 
+    pub const CONFIG_FILEPATH: &'static str = "settings.cfg";
+
     const INTS: [&'static str; 2] = [Self::WINDOWED_WIDTH, Self::WINDOWED_HEIGHT];
     const STRS: [&'static str; 1] = [Self::LEVEL_NAME];
 
@@ -92,7 +94,6 @@ impl Configuration {
                                 }
                             }
 
-                            println!("{}", tokens[2]);
                             match token_type {
                                 TokenType::Int => {
                                     let int = u32::from_str_radix(tokens[2], 10).unwrap();
@@ -114,7 +115,8 @@ impl Configuration {
                 }
             }
             Err(e) => {
-                panic!("Couldn't open config file: {}", e)
+                println!("Couldn't open config file: {}", e);
+                return None;
             }
         }
 

@@ -48,18 +48,20 @@ fn write_matrix_to_buffer(buffer: &mut [f32], index: usize, matrix: glm::TMat4<f
 fn main() {
     //Initialize the configuration data
     let config = {
-        match Configuration::from_file("chickens.cfg") {
+        match Configuration::from_file(Configuration::CONFIG_FILEPATH) {
             Some(cfg) => { cfg }
             None => {
                 let mut int_options = HashMap::new();
                 let mut string_options = HashMap::new();
-                int_options.insert(String::from(Configuration::WINDOWED_WIDTH), 1920);
-                int_options.insert(String::from(Configuration::WINDOWED_HEIGHT), 1080);
+                int_options.insert(String::from(Configuration::WINDOWED_WIDTH), 1280);
+                int_options.insert(String::from(Configuration::WINDOWED_HEIGHT), 720);
                 string_options.insert(String::from(Configuration::LEVEL_NAME), String::from("testmap"));
-                Configuration {
+                let c = Configuration {
                     int_options,
                     string_options
-                }
+                };
+                c.to_file(Configuration::CONFIG_FILEPATH);
+                c
             }
         }
     };
@@ -854,7 +856,7 @@ fn main() {
                     }
 
                     //Update the config file
-                    config.to_file("chickens.cfg");
+                    config.to_file(Configuration::CONFIG_FILEPATH);
                 }
                 Command::ResetPlayerPosition => {
                     player.tracking_position = glm::vec3(0.0, 0.0, 3.0);
