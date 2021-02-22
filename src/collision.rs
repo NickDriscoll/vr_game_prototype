@@ -51,6 +51,11 @@ pub struct AABB {
     pub height: f32
 }
 
+pub struct Sphere {
+    focus: glm::TVec3<f32>,
+    radius: f32
+}
+
 #[derive(Debug)]
 pub struct Terrain {
     pub vertices: Vec<glm::TVec3<f32>>,
