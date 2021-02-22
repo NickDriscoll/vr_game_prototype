@@ -11,7 +11,7 @@ mod xrutil;
 use render::{render_main_scene, render_shadows, SceneData, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
-use glfw::{Action, Context, Key, WindowEvent, WindowMode};
+use glfw::{Action, Context, Key, SwapInterval, VidMode, Window, WindowEvent, WindowMode};
 use gl::types::*;
 use std::collections::HashMap;
 use std::process::exit;
@@ -23,15 +23,23 @@ use ozy::{glutil};
 use ozy::glutil::ColorSpace;
 use ozy::render::{Framebuffer, InstancedMesh, RenderTarget, ScreenState, SimpleMesh, TextureKeeper};
 use ozy::structs::OptionVec;
+use ozy::ui::UIState;
 
 use crate::collision::*;
 use crate::structs::*;
 
 #[cfg(windows)]
-use winapi::{shared::windef::HWND, um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
+use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
 
 //The font data is baked at compile time
 const FONT_BYTES: &'static [u8; 212276] = include_bytes!("../fonts/Constantia.ttf");
+
+fn resize_main_window<T: Copy>(window: &mut Window, framebuffer: &mut Framebuffer, screen_state: &mut ScreenState, ui_state: &mut UIState<T>, size: glm::TVec2<u32>, pos: (i32, i32), window_mode: WindowMode) {    
+    framebuffer.size = (size.x as GLsizei, size.y as GLsizei);
+    *screen_state = ScreenState::new(glm::vec2(size.x, size.y), glm::identity(), glm::half_pi(), NEAR_DISTANCE, FAR_DISTANCE);
+    window.set_monitor(window_mode, pos.0, pos.1, size.x, size.y, Some(144));
+    ui_state.resize((size.x, size.y));
+}
 
 fn clamp<T: PartialOrd>(x: T, min: T, max: T) -> T {
     if x < min { min }
@@ -337,6 +345,7 @@ fn main() {
 			gl::DebugMessageControl(gl::DONT_CARE, gl::DONT_CARE, gl::DONT_CARE, 0, ptr::null(), gl::TRUE);
 		}
     }
+    //glfw.set_swap_interval(SwapInterval::None);
 
     //Initialize OpenXR session
     let (xr_session, mut xr_framewaiter, mut xr_framestream): (Option<xr::Session<xr::OpenGL>>, Option<xr::FrameWaiter>, Option<xr::FrameStream<xr::OpenGL>>) = match &xr_instance {
@@ -548,7 +557,7 @@ fn main() {
         let button_program = unsafe { glutil::compile_program_from_files("shaders/ui/button.vert", "shaders/ui/button.frag") };
         let glyph_program = unsafe { glutil::compile_program_from_files("shaders/ui/glyph.vert", "shaders/ui/glyph.frag") };
 
-        let mut state = ozy::ui::UIState::new(FONT_BYTES, (screen_state.get_window_size().x, screen_state.get_window_size().y), [button_program, glyph_program]);
+        let mut state = UIState::new(FONT_BYTES, (screen_state.get_window_size().x, screen_state.get_window_size().y), [button_program, glyph_program]);
         pause_menu_chain_index = state.create_menu_chain();
         graphics_menu_chain_index = state.create_menu_chain();
         
@@ -839,24 +848,15 @@ fn main() {
                             if let Some(monitor) = opt_monitor {
                                 let pos = monitor.get_pos();
                                 if let Some(mode) = monitor.get_video_mode() {
-                                    default_framebuffer.size = (mode.width as GLsizei, mode.height as GLsizei);
-                                    screen_state = ScreenState::new(glm::vec2(mode.width, mode.height), glm::identity(), glm::half_pi(), NEAR_DISTANCE, FAR_DISTANCE);
-                                    window.set_monitor(WindowMode::FullScreen(monitor), pos.0, pos.1, mode.width, mode.height, Some(144));
-                                    ui_state.resize((mode.width, mode.height));
+                                    resize_main_window(&mut window, &mut default_framebuffer, &mut screen_state, &mut ui_state, glm::vec2(mode.width, mode.height), pos, WindowMode::FullScreen(monitor));
                                 }
                             }
                         });
                     } else {
                         is_fullscreen = false;
                         let window_size = get_window_size(&config);
-                        default_framebuffer.size = (window_size.x as i32, window_size.y as i32);
-                        screen_state = ScreenState::new(glm::vec2(window_size.x, window_size.y), glm::identity(), glm::half_pi(), NEAR_DISTANCE, FAR_DISTANCE);
-                        window.set_monitor(WindowMode::Windowed, 200, 200, window_size.x, window_size.y, Some(144));
-                        ui_state.resize((window_size.x, window_size.y));
+                        resize_main_window(&mut window, &mut default_framebuffer, &mut screen_state, &mut ui_state, window_size, (200, 200), WindowMode::Windowed);
                     }
-
-                    //Update the config file
-                    config.to_file(Configuration::CONFIG_FILEPATH);
                 }
                 Command::ResetPlayerPosition => {
                     player.tracking_position = glm::vec3(0.0, 0.0, 3.0);
