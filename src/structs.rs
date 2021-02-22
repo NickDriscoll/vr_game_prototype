@@ -51,12 +51,12 @@ pub struct Configuration {
 impl Configuration {
     pub const WINDOWED_WIDTH: &'static str = "windowed_width";
     pub const WINDOWED_HEIGHT: &'static str = "windowed_height";
+    const INTS: [&'static str; 2] = [Self::WINDOWED_WIDTH, Self::WINDOWED_HEIGHT];
+
     pub const LEVEL_NAME: &'static str = "level_name";
+    const STRS: [&'static str; 1] = [Self::LEVEL_NAME];
 
     pub const CONFIG_FILEPATH: &'static str = "settings.cfg";
-
-    const INTS: [&'static str; 2] = [Self::WINDOWED_WIDTH, Self::WINDOWED_HEIGHT];
-    const STRS: [&'static str; 1] = [Self::LEVEL_NAME];
 
     pub fn from_file(filepath: &str) -> Option<Self> {
         let mut int_options = HashMap::with_capacity(Self::INTS.len());
@@ -68,9 +68,19 @@ impl Configuration {
                 for line in reader.lines() {
                     match line {
                         Ok(s) => {
+                            //Ignore blank or commented lines
+                            if s.is_empty() {
+                                continue;
+                            }
+
                             let mut tokens = Vec::new();
                             for token in s.split_whitespace() {
                                 tokens.push(token);
+                            }
+
+                            //Continue if this is a comment line
+                            if tokens[0].chars().next().unwrap() == '#' {
+                                continue;
                             }
 
                             if tokens.len() != 3 {
