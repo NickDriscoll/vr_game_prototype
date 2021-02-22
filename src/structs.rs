@@ -1,8 +1,8 @@
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::BufReader;
 use std::io::prelude::*;
-use crate::collision::LineSegment;
+use crate::collision::*;
 
 #[derive(Clone, Copy)]
 pub enum Command {
@@ -24,6 +24,13 @@ pub enum MoveState {
     Sliding
 }
 
+#[derive(PartialEq, Eq)]
+enum TokenType {
+    Int,
+    Float,
+    String
+}
+
 pub struct Player {
     pub tracking_position: glm::TVec3<f32>,
     pub tracking_velocity: glm::TVec3<f32>,
@@ -31,7 +38,8 @@ pub struct Player {
     pub last_tracked_segment: LineSegment,
     pub movement_state: MoveState,
     pub radius: f32,
-    pub jumps_remaining: usize
+    pub jumps_remaining: usize,
+    pub was_holding_left_trigger: bool
 }
 
 impl Player {
@@ -40,7 +48,7 @@ impl Player {
 
 pub fn set_player_falling(player: &mut Player) {
     player.jumps_remaining -= 1;
-    player.movement_state = MoveState::Falling;    
+    player.movement_state = MoveState::Falling;
 }
 
 pub struct Configuration {
@@ -164,13 +172,6 @@ impl Configuration {
             }
         }
     }
-}
-
-#[derive(PartialEq, Eq)]
-enum TokenType {
-    Int,
-    Float,
-    String
 }
 
 pub fn get_window_size(config: &Configuration) -> glm::TVec2<u32> {

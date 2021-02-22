@@ -11,7 +11,7 @@ mod xrutil;
 use render::{render_main_scene, render_shadows, SceneData, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
-use glfw::{Action, Context, Key, SwapInterval, VidMode, Window, WindowEvent, WindowMode};
+use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowMode};
 use gl::types::*;
 use std::collections::HashMap;
 use std::process::exit;
@@ -541,6 +541,29 @@ fn main() {
 	    (gl::TEXTURE_MAG_FILTER, gl::LINEAR)
     ];
 
+    //Player state
+    let mut player = Player {
+        tracking_position: glm::vec3(0.0, 0.0, 1.0),
+        tracking_velocity: glm::zero(),
+        tracked_segment: LineSegment::zero(),
+        last_tracked_segment: LineSegment::zero(),
+        movement_state: MoveState::Grounded,
+        radius: 0.15,
+        jumps_remaining: Player::MAX_JUMPS,
+        was_holding_left_trigger: false
+    };
+
+    //Water gun state
+    const MAX_WATER_PRESSURE: f32 = 40.0;
+    const MAX_WATER_REMAINING: f32 = 75.0;
+    let mut water_gun_force = glm::zero();
+    let mut remaining_water = MAX_WATER_REMAINING;
+    let mut water_pillar_scale = glm::vec3(1.0, 1.0, 1.0);
+    
+    //Matrices for relating tracking space and world space
+    let mut world_from_tracking = glm::identity();
+    let mut tracking_from_world = glm::affine_inverse(world_from_tracking);
+
     //OptionVec to hold all AABBs used for collision
     let mut collision_aabbs: OptionVec<AABB> = OptionVec::new();
 
@@ -663,28 +686,6 @@ fn main() {
     let mut placing = false;
     let mut hmd_pov = false;
     if let Some(_) = &xr_instance { hmd_pov = true; }
-
-    //Player state
-    let mut player = Player {
-        tracking_position: glm::vec3(0.0, 0.0, 1.0),
-        tracking_velocity: glm::zero(),
-        tracked_segment: LineSegment::zero(),
-        last_tracked_segment: LineSegment::zero(),
-        movement_state: MoveState::Grounded,
-        radius: 0.15,
-        jumps_remaining: Player::MAX_JUMPS
-    };
-    let mut was_holding_left_trigger = false;
-
-    const MAX_WATER_PRESSURE: f32 = 40.0;
-    const MAX_WATER_REMAINING: f32 = 75.0;
-    let mut water_gun_force = glm::zero();
-    let mut remaining_water = MAX_WATER_REMAINING;
-    let mut water_pillar_scale = glm::vec3(1.0, 1.0, 1.0);
-    
-    //Matrices for relating tracking space and world space
-    let mut world_from_tracking = glm::identity();
-    let mut tracking_from_world = glm::affine_inverse(world_from_tracking);
 
     //Main loop
     let mut frame_count = 0;
@@ -907,15 +908,15 @@ fn main() {
             if let Some(state) = &left_trigger_state {
                 let holding = state.current_state == 1.0;
 
-                if holding && !was_holding_left_trigger && player.jumps_remaining > 0 {
+                if holding && !player.was_holding_left_trigger && player.jumps_remaining > 0 {
                     player.tracking_velocity = glm::vec3(player.tracking_velocity.x, player.tracking_velocity.y, 10.0);
 
                     set_player_falling(&mut player);
-                } else if state.current_state < 1.0 && was_holding_left_trigger && player.tracking_velocity.z > 0.0 {
+                } else if state.current_state < 1.0 && player.was_holding_left_trigger && player.tracking_velocity.z > 0.0 {
                     player.tracking_velocity.z /= 2.0;
                 }
 
-                was_holding_left_trigger = holding;
+                player.was_holding_left_trigger = holding;
             }
 
             //Calculate the force of shooting the water gun
