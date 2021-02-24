@@ -10,23 +10,30 @@ layout (location = 4) in vec2 uv;
 //Instanced array
 layout (location = 5) in mat4 model_matrix;
 
-out mat3 tangent_matrix;
-out vec4 world_space_pos;
+out vec3 tangent_sun_direction;
+out vec3 tangent_view_position;
+out vec3 tangent_space_pos;
 out vec4 shadow_space_pos;
 out vec2 f_uvs;
 
 uniform mat4 view_projection;
 uniform mat4 shadow_matrix;
+uniform vec3 sun_direction;
+uniform vec3 view_position;
 
 void main() {
     mat4 normal_matrix = transpose(mat4(inverse(mat3(model_matrix))));
     vec3 T = normalize(vec3(normal_matrix * vec4(tangent, 0.0)));
     vec3 B = normalize(vec3(normal_matrix * vec4(bitangent, 0.0)));
     vec3 N = normalize(vec3(normal_matrix * vec4(normal, 0.0)));
-    tangent_matrix = mat3(T, B, N);
+    mat3 tangent_matrix = transpose(mat3(T, B, N));
 
-    world_space_pos = model_matrix * vec4(position, 1.0);    
+    vec4 world_space_pos = model_matrix * vec4(position, 1.0);    
     shadow_space_pos = shadow_matrix * world_space_pos;
+
+    tangent_space_pos = tangent_matrix * vec3(world_space_pos);
+    tangent_sun_direction = tangent_matrix * sun_direction;
+    tangent_view_position = tangent_matrix * view_position;
     
     f_uvs = uv;
     gl_Position = view_projection * world_space_pos;

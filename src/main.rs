@@ -24,6 +24,7 @@ use ozy::glutil::ColorSpace;
 use ozy::render::{Framebuffer, InstancedMesh, RenderTarget, ScreenState, SimpleMesh, TextureKeeper};
 use ozy::structs::OptionVec;
 use ozy::ui::UIState;
+use ozy::routines::uniform_scale;
 
 use crate::collision::*;
 use crate::structs::*;
@@ -631,6 +632,34 @@ fn main() {
     //Create water cylinder
     let water_cylinder_mesh = SimpleMesh::from_ozy("models/water_cylinder.ozy", &mut texture_keeper, &tex_params);
     let water_cylinder_entity_index = scene_data.push_single_entity(water_cylinder_mesh);
+
+    //Create staircase
+    let cube_count = 16;
+    let mut cube_transform_buffer = vec![0.0; cube_count * 16];
+    let cube_entity_index = unsafe {
+        let mesh = SimpleMesh::from_ozy("models/cube.ozy", &mut texture_keeper, &tex_params);
+        scene_data.push_single_entity(mesh.clone());
+
+        let mesh = InstancedMesh::from_simplemesh(&mesh, cube_count, render::INSTANCED_ATTRIBUTE);
+
+        for i in 0..cube_count {
+            let position = glm::vec4(-20.0, i as f32 * 10.0, i as f32 * 5.0, 1.0);
+            let matrix = glm::translation(&glm::vec4_to_vec3(&position)) * uniform_scale(3.0);
+
+            write_matrix_to_buffer(&mut cube_transform_buffer, i, matrix);
+
+            let aabb = AABB {
+                position,
+                width: 3.0,
+                depth: 3.0,
+                height: 3.0,
+            };
+            collision_aabbs.insert(aabb);
+        }
+
+        scene_data.push_instanced_entity(mesh)
+    };
+    scene_data.instanced_entities[cube_entity_index].mesh.update_buffer(&cube_transform_buffer);
 
     //Create the cube that will be user to render the skybox
 	scene_data.skybox_vao = ozy::prims::skybox_cube_vao();

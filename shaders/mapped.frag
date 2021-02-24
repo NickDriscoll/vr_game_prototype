@@ -35,7 +35,7 @@ void main() {
     vec3 tangent_space_normal;
     if (complex_normals) {
         vec3 sampled_normal = texture(normal_map, scaled_uvs).xyz;
-        tangent_space_normal = sampled_normal * 2.0 - 1.0;
+        tangent_space_normal = normalize(sampled_normal * 2.0 - 1.0);
     } else {
         tangent_space_normal = vec3(0.0, 0.0, 1.0);
     }
