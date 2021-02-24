@@ -634,18 +634,15 @@ fn main() {
     let water_cylinder_entity_index = scene_data.push_single_entity(water_cylinder_mesh);
 
     //Create staircase
-    let cube_count = 16;
+    let cube_count = 1024;
     let mut cube_transform_buffer = vec![0.0; cube_count * 16];
     let cube_entity_index = unsafe {
         let mesh = SimpleMesh::from_ozy("models/cube.ozy", &mut texture_keeper, &tex_params);
-        scene_data.push_single_entity(mesh.clone());
-
         let mesh = InstancedMesh::from_simplemesh(&mesh, cube_count, render::INSTANCED_ATTRIBUTE);
 
         for i in 0..cube_count {
             let position = glm::vec4(-20.0, i as f32 * 10.0, i as f32 * 5.0, 1.0);
             let matrix = glm::translation(&glm::vec4_to_vec3(&position)) * uniform_scale(3.0);
-
             write_matrix_to_buffer(&mut cube_transform_buffer, i, matrix);
 
             let aabb = AABB {
@@ -1043,7 +1040,7 @@ fn main() {
                 let closest_point = glm::vec3(
                     clamp(camera_position.x, aabb.position.x - aabb.width, aabb.position.x + aabb.width),
                     clamp(camera_position.y, aabb.position.y - aabb.depth, aabb.position.y + aabb.depth),
-                    clamp(camera_position.z, aabb.position.z - aabb.height, aabb.position.z + aabb.height)
+                    clamp(camera_position.z, aabb.position.z, aabb.position.z + aabb.height * 2.0)
                 );
 
                 let distance = glm::distance(&camera_position, &closest_point);
@@ -1063,8 +1060,8 @@ fn main() {
                         Plane::new(aabb.position + glm::vec4(-aabb.width, 0.0, 0.0, 0.0), glm::vec4(-1.0, 0.0, 0.0, 0.0)),
                         Plane::new(aabb.position + glm::vec4(0.0, aabb.depth, 0.0, 0.0), glm::vec4(0.0, 1.0, 0.0, 0.0)),
                         Plane::new(aabb.position + glm::vec4(0.0, -aabb.depth, 0.0, 0.0), glm::vec4(0.0, -1.0, 0.0, 0.0)),
-                        Plane::new(aabb.position + glm::vec4(0.0, 0.0, aabb.height, 0.0), glm::vec4(0.0, 0.0, 1.0, 0.0)),
-                        Plane::new(aabb.position + glm::vec4(0.0, 0.0, -aabb.height, 0.0), glm::vec4(0.0, 0.0, -1.0, 0.0)),
+                        Plane::new(aabb.position + glm::vec4(0.0, 0.0, aabb.height * 2.0, 0.0), glm::vec4(0.0, 0.0, 1.0, 0.0)),
+                        Plane::new(aabb.position + glm::vec4(0.0, 0.0, 0.0, 0.0), glm::vec4(0.0, 0.0, -1.0, 0.0)),
                     ];
 
                     //Check if the line segment hit any of the AABB planes
@@ -1086,7 +1083,8 @@ fn main() {
         //We reduce this to a circle vs rectangle in the xy plane
         for opt_aabb in collision_aabbs.iter() {
             if let Some(aabb) = opt_aabb {
-                if player.tracking_position.z + glm::epsilon::<f32>() < aabb.position.z + aabb.height {
+                if player.tracking_position.z + glm::epsilon::<f32>() < aabb.position.z + aabb.height &&
+                   player.tracked_segment.p0.z - glm::epsilon::<f32>() > aabb.position.z {
                     let closest_point_on_aabb = glm::vec3(
                         clamp(player.tracked_segment.p1.x, aabb.position.x - aabb.width, aabb.position.x + aabb.width),
                         clamp(player.tracked_segment.p1.y, aabb.position.y - aabb.depth, aabb.position.y + aabb.depth),
@@ -1098,6 +1096,8 @@ fn main() {
                     if distance > 0.0 && distance < player.radius {
                         let vec = glm::normalize(&(focus - closest_point_on_aabb));
                         player.tracking_position += (player.radius - distance) * vec;
+                    } else {
+                        
                     }
                 }
             }
@@ -1145,13 +1145,34 @@ fn main() {
                     p1: 0.5 * player.last_tracked_segment.p0 + 0.5 * player.last_tracked_segment.p1
                 };
 
-                //Check for AABB collision
+                //Check for AABB top collision
                 if !done_checking {
                     for opt_aabb in collision_aabbs.iter() {
                         if let Some(aabb) = opt_aabb {
                             let (plane, aabb_boundaries) = aabb_get_top_plane(&aabb);
-                            if let Some(point) = standing_on_plane(&plane, &standing_segment, &aabb_boundaries) {
-                                resolve_collision(&mut player, &point);
+                            if let Some(point) = segment_hit_bounded_plane(&plane, &standing_segment, &aabb_boundaries) {
+                                resolve_collision_floor(&mut player, &point);
+                                done_checking = true;
+                            }
+                        }
+                    }
+                }
+
+                //Check for AABB bottom collision
+                if !done_checking {
+                    let head_segment = LineSegment {
+                        p0: player.last_tracked_segment.p0,
+                        p1: player.tracked_segment.p0 + glm::vec4(0.0, 0.0, player.radius, 0.0)
+                    };
+
+                    for opt_aabb in collision_aabbs.iter() {
+                        if let Some(aabb) = opt_aabb {
+                            let (plane, aabb_boundaries) = aabb_get_bottom_plane(&aabb);
+                            if let Some(point) = segment_hit_bounded_plane(&plane, &head_segment, &aabb_boundaries) {
+                                let len = glm::length(&(point - head_segment.p1));
+                                player.tracking_velocity.z = 0.0;
+                                player.tracking_position += glm::vec3(0.0, 0.0, -len - player.radius);
+                                
                                 done_checking = true;
                             }
                         }
@@ -1162,7 +1183,7 @@ fn main() {
                 //Check walkable tris
                 if !done_checking {
                     if let Some(collision_plane) = segment_plane_tallest_collision(&standing_segment, &walkable_tris) {
-                        resolve_collision(&mut player, &collision_plane.point);
+                        resolve_collision_floor(&mut player, &collision_plane.point);
                         done_checking = true;
                     }
                 }
@@ -1178,7 +1199,7 @@ fn main() {
                 //Check walkable tris with the swept segment
                 if !done_checking {                    
                     if let Some(collision_plane) = segment_plane_tallest_collision(&swept_segment, &walkable_tris) {
-                        resolve_collision(&mut player, &collision_plane.point);
+                        resolve_collision_floor(&mut player, &collision_plane.point);
                         done_checking = true;
                     }
                 }
@@ -1192,7 +1213,7 @@ fn main() {
                 }
 
                 //Local collision resolution function
-                fn resolve_collision(player: &mut Player, collision_point: &glm::TVec4<f32>,) {
+                fn resolve_collision_floor(player: &mut Player, collision_point: &glm::TVec4<f32>,) {
                     player.tracking_velocity = glm::zero();
                     player.tracking_position += glm::vec4_to_vec3(&(collision_point - player.tracked_segment.p1));
                     player.jumps_remaining = Player::MAX_JUMPS;
@@ -1250,7 +1271,7 @@ fn main() {
                     for opt_aabb in collision_aabbs.iter() {
                         if let Some(aabb) = opt_aabb {
                             let (plane, aabb_boundaries) = aabb_get_top_plane(&aabb);
-                            if let Some(point) = standing_on_plane(&plane, &standing_segment, &aabb_boundaries) {
+                            if let Some(point) = segment_hit_bounded_plane(&plane, &standing_segment, &aabb_boundaries) {
                                 resolve_collision_walkable(&mut player, &point, &mut done_checking);
                                 break;
                             }

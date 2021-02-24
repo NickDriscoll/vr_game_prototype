@@ -68,7 +68,7 @@ impl Terrain {
         let mut terrain_file = match File::open(path) {
             Ok(file) => { file }
             Err(e) => {
-                panic!("Error reading terrain file: {}", e);
+                panic!("Error reading {}: {}", path, e);
             }
         };
 
@@ -193,7 +193,7 @@ pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec4<f32>, ray_dire
     closest_intersection
 }
 
-pub fn standing_on_plane(plane: &Plane, segment: &LineSegment, boundaries: &PlaneBoundaries) -> Option<glm::TVec4<f32>> {
+pub fn segment_hit_bounded_plane(plane: &Plane, segment: &LineSegment, boundaries: &PlaneBoundaries) -> Option<glm::TVec4<f32>> {
     let collision_point = segment_hit_plane(&plane, &segment);
     if let Some(point) = collision_point {
         let on_aabb = point.x > boundaries.xmin &&
@@ -221,8 +221,21 @@ pub fn sign(test: &glm::TVec2<f32>, p0: &glm::TVec2<f32>, p1: &glm::TVec2<f32>) 
 
 pub fn aabb_get_top_plane(aabb: &AABB) -> (Plane, PlaneBoundaries) {    
     let mut pos = aabb.position;
-    pos.z += aabb.height;
+    pos.z += aabb.height * 2.0;
     let plane = Plane::new(pos, glm::vec4(0.0, 0.0, 1.0, 0.0));
+    let aabb_boundaries = PlaneBoundaries {
+        xmin: -aabb.width + aabb.position.x,
+        xmax: aabb.width + aabb.position.x,
+        ymin: -aabb.depth + aabb.position.y,
+        ymax: aabb.depth + aabb.position.y
+    };
+
+    (plane, aabb_boundaries)
+}
+
+pub fn aabb_get_bottom_plane(aabb: &AABB) -> (Plane, PlaneBoundaries) {
+    let mut pos = aabb.position;
+    let plane = Plane::new(pos, glm::vec4(0.0, 0.0, -1.0, 0.0));
     let aabb_boundaries = PlaneBoundaries {
         xmin: -aabb.width + aabb.position.x,
         xmax: aabb.width + aabb.position.x,
