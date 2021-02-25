@@ -164,7 +164,7 @@ pub fn segment_hit_plane(plane: &Plane, segment: &LineSegment) -> Option<glm::TV
     }
 }
 
-pub fn point_in_triangle(test_point: &glm::TVec2<f32>, p0: &glm::TVec2<f32>, p1: &glm::TVec2<f32>, p2: &glm::TVec2<f32>) -> bool {
+pub fn simple_point_in_triangle(test_point: &glm::TVec2<f32>, p0: &glm::TVec2<f32>, p1: &glm::TVec2<f32>, p2: &glm::TVec2<f32>) -> bool {
     //Check if this collision point is actually in the triangle
     let d1 = sign(&test_point, &p0, &p1);
     let d2 = sign(&test_point, &p1, &p2);
@@ -174,6 +174,46 @@ pub fn point_in_triangle(test_point: &glm::TVec2<f32>, p0: &glm::TVec2<f32>, p1:
     let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
 
     !(has_neg && has_pos)
+}
+
+//Precondition: point is in plane of triangle
+pub fn robust_point_in_triangle(test_point: &glm::TVec3<f32>, a: &glm::TVec3<f32>, b: &glm::TVec3<f32>, c: &glm::TVec3<f32>) -> bool {
+    //First get normal of (a, b, intersection)
+    let n1 = {
+        let n = glm::cross(&(a - b), &(test_point - b));
+        let l = glm::length(&n);
+        if l < glm::epsilon::<f32>() && l > -glm::epsilon::<f32>() {
+            return true;
+        }
+        glm::normalize(&n)
+    };
+
+    //Then get normal of (b, c, intersection)
+    let n2 = {
+        let n = glm::cross(&(b - c), &(test_point - c));
+        let l = glm::length(&n);
+        if l < glm::epsilon::<f32>() && l > -glm::epsilon::<f32>() {
+            return true;
+        }
+        glm::normalize(&n)
+    };
+
+    //Then get normal of (c, a, intersection)
+    let n3 = {
+        let n = glm::cross(&(c - a), &(test_point - a));
+        let l = glm::length(&n);
+        if l < glm::epsilon::<f32>() && l > -glm::epsilon::<f32>() {
+            return true;
+        }
+        glm::normalize(&n)
+    };
+
+    let upper = 1.0 + glm::epsilon::<f32>();
+    let lower = 1.0 - glm::epsilon::<f32>();
+    let dot1 = glm::dot(&n1, &n2);
+    let dot2 = glm::dot(&n2, &n3);
+
+    dot1 > lower && dot1 < upper && dot2 > lower && dot2 < upper
 }
 
 //Returns the first intersection point between a ray and terrain mesh
@@ -196,7 +236,14 @@ pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec4<f32>, ray_dire
         let t = glm::dot(&(plane.point - ray_origin), &plane.normal) / denominator;
         let intersection = ray_origin + t * ray_direction;
 
+        //Robust triangle-point collision in 3D
+        if robust_point_in_triangle(&glm::vec4_to_vec3(&intersection), &a, &b, &c) && t > 0.0 && t < smallest_t {
+            smallest_t = t;
+            closest_intersection = Some(intersection);            
+        }
+
         //This sucks
+        /*
         let (test_point, a, b, c) = if glm::dot(&plane.normal, &glm::vec4(0.0, 0.0, 1.0, 0.0)) > glm::epsilon::<f32>() {
             (glm::vec2(intersection.x, intersection.y), glm::vec2(a.x, a.y), glm::vec2(b.x, b.y), glm::vec2(c.x, c.y))
         } else if glm::dot(&plane.normal, &glm::vec4(0.0, 1.0, 0.0, 0.0)) > glm::epsilon::<f32>() {
@@ -206,10 +253,11 @@ pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec4<f32>, ray_dire
         };
 
         //If the intersection is in the triangle, check if it's the closest intersection to the camera so far
-        if point_in_triangle(&test_point, &a, &b, &c) && t > 0.0 && t < smallest_t {
+        if simple_point_in_triangle(&test_point, &a, &b, &c) && t > 0.0 && t < smallest_t {
             smallest_t = t;
             closest_intersection = Some(intersection);
         }
+        */
     }
 
     closest_intersection
@@ -256,7 +304,7 @@ pub fn aabb_get_top_plane(aabb: &AABB) -> (Plane, PlaneBoundaries) {
 }
 
 pub fn aabb_get_bottom_plane(aabb: &AABB) -> (Plane, PlaneBoundaries) {
-    let mut pos = aabb.position;
+    let pos = aabb.position;
     let plane = Plane::new(pos, glm::vec4(0.0, 0.0, -1.0, 0.0));
     let aabb_boundaries = PlaneBoundaries {
         xmin: -aabb.width + aabb.position.x,

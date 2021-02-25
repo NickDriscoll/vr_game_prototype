@@ -1,5 +1,7 @@
 from py7zr import SevenZipFile
-import subprocess, os, shutil
+import subprocess, os, shutil, time
+
+start_time = time.time()
 
 staging_dir = "dist"
 dirs = ["materials", "models", "shaders", "skyboxes"]
@@ -24,4 +26,4 @@ with SevenZipFile("hot_chickens.7z", "w") as archive:
 #Cleanup
 shutil.rmtree(staging_dir)
 
-print("Done!")
+print("Done! in %.4f seconds" % (time.time() - start_time))

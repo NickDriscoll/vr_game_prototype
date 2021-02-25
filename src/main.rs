@@ -815,6 +815,7 @@ fn main() {
                         Action::Release => {
                             mouse_lbutton_pressed = false;
                             placing = false;
+                            println!("Dragon moved to ({}, {}, {})", dragon_position.x, dragon_position.y, dragon_position.z);
                         }
                         Action::Repeat => {}
                     }
@@ -1007,7 +1008,6 @@ fn main() {
             //Update dragon's position if the ray hit
             if let Some(point) = ray_hit_terrain(&terrain, &ray_origin, &mouse_ray_dir) {
                 dragon_position = glm::vec4_to_vec3(&point);
-                println!("Dragon moved to ({}, {}, {})", dragon_position.x, dragon_position.y, dragon_position.z);
             }
         }
 
@@ -1100,7 +1100,7 @@ fn main() {
         let mut too_steep_tris = Vec::new();
         for i in (0..terrain.indices.len()).step_by(3) {
             let (a, b, c) = get_terrain_triangle(&terrain, i);
-            if point_in_triangle(&glm::vec2(player.tracked_segment.p1.x, player.tracked_segment.p1.y), &glm::vec2(a.x, a.y), &glm::vec2(b.x, b.y), &glm::vec2(c.x, c.y)) {
+            if simple_point_in_triangle(&glm::vec2(player.tracked_segment.p1.x, player.tracked_segment.p1.y), &glm::vec2(a.x, a.y), &glm::vec2(b.x, b.y), &glm::vec2(c.x, c.y)) {
                 let triangle_normal = terrain.face_normals[i / 3];
                 let triangle_plane = Plane::new(glm::vec4(a.x, a.y, a.z, 1.0), glm::vec4(triangle_normal.x, triangle_normal.y, triangle_normal.z, 0.0));
                 let dot = glm::dot(&triangle_normal, &glm::vec3(0.0, 0.0, 1.0));
