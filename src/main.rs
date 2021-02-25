@@ -751,16 +751,6 @@ fn main() {
             }
         }
 
-        //Poll for OpenXR events
-        /*
-        if let Some(instance) = &xr_instance {
-            let mut buffer = xr::EventDataBuffer::new();
-            if let Ok(Some(event)) = instance.poll_event(&mut buffer) {
-                
-            }
-        }
-        */
-
         //Poll window events and handle them
         glfw.poll_events();
         for (_, event) in glfw::flush_messages(&events) {
@@ -957,20 +947,15 @@ fn main() {
                 water_gun_force = glm::vec4_to_vec3(&(-state.current_state * world_space_vec));
 
                 //Calculate scale of water pillar
-                match ray_hit_terrain(&terrain, &hand_origin, &world_space_vec) {
-                    Some(point) => {
-                        water_pillar_scale.y = glm::length(&(point - hand_origin));
-                    }
-                    None => {
-
-                    }
+                if let Some(point) = ray_hit_terrain(&terrain, &hand_origin, &world_space_vec) {
+                    water_pillar_scale.y = glm::length(&(point - hand_origin)); 
                 }
             }
 
             //Do water gun stuff
             if water_gun_force != glm::zero() && remaining_water > 0.0 {
                 let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
-                remaining_water -= glm::length(&update_force);
+                //remaining_water -= glm::length(&update_force);
                 let xz_scale = remaining_water / MAX_WATER_REMAINING;
                 water_pillar_scale.x = xz_scale;
                 water_pillar_scale.z = xz_scale;
