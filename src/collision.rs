@@ -241,23 +241,6 @@ pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec4<f32>, ray_dire
             smallest_t = t;
             closest_intersection = Some(intersection);            
         }
-
-        //This sucks
-        /*
-        let (test_point, a, b, c) = if glm::dot(&plane.normal, &glm::vec4(0.0, 0.0, 1.0, 0.0)) > glm::epsilon::<f32>() {
-            (glm::vec2(intersection.x, intersection.y), glm::vec2(a.x, a.y), glm::vec2(b.x, b.y), glm::vec2(c.x, c.y))
-        } else if glm::dot(&plane.normal, &glm::vec4(0.0, 1.0, 0.0, 0.0)) > glm::epsilon::<f32>() {
-            (glm::vec2(intersection.x, intersection.z), glm::vec2(a.x, a.z), glm::vec2(b.x, b.z), glm::vec2(c.x, c.z))
-        } else {
-            (glm::vec2(intersection.y, intersection.z), glm::vec2(a.y, a.z), glm::vec2(b.y, b.z), glm::vec2(c.y, c.z))
-        };
-
-        //If the intersection is in the triangle, check if it's the closest intersection to the camera so far
-        if simple_point_in_triangle(&test_point, &a, &b, &c) && t > 0.0 && t < smallest_t {
-            smallest_t = t;
-            closest_intersection = Some(intersection);
-        }
-        */
     }
 
     closest_intersection
