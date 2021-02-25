@@ -625,7 +625,7 @@ fn main() {
     scene_data.single_entities[terrain_entity_index].model_matrix = ozy::routines::uniform_scale(1.0);
 
     //Create dragon
-    let mut dragon_position = glm::vec3(0.0, -14.0, 0.0);
+    let mut dragon_position = glm::vec3(60.9917, 16.528427, 96.644905);
     let dragon_mesh = SimpleMesh::from_ozy("models/dragon.ozy", &mut texture_keeper, &tex_params);
     let dragon_entity_index = scene_data.push_single_entity(dragon_mesh);
 
@@ -1007,6 +1007,7 @@ fn main() {
             //Update dragon's position if the ray hit
             if let Some(point) = ray_hit_terrain(&terrain, &ray_origin, &mouse_ray_dir) {
                 dragon_position = glm::vec4_to_vec3(&point);
+                println!("Dragon moved to ({}, {}, {})", dragon_position.x, dragon_position.y, dragon_position.z);
             }
         }
 
@@ -1087,8 +1088,6 @@ fn main() {
                     if distance > 0.0 && distance < player.radius {
                         let vec = glm::normalize(&(focus - closest_point_on_aabb));
                         player.tracking_position += (player.radius - distance) * vec;
-                    } else {
-                        
                     }
                 }
             }

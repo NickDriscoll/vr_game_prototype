@@ -176,6 +176,7 @@ pub fn point_in_triangle(test_point: &glm::TVec2<f32>, p0: &glm::TVec2<f32>, p1:
     !(has_neg && has_pos)
 }
 
+//Returns the first intersection point between a ray and terrain mesh
 pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec4<f32>, ray_direction: &glm::TVec4<f32>) -> Option<glm::TVec4<f32>> {
     let mut smallest_t = f32::INFINITY;
     let mut closest_intersection = None;
@@ -195,10 +196,13 @@ pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec4<f32>, ray_dire
         let t = glm::dot(&(plane.point - ray_origin), &plane.normal) / denominator;
         let intersection = ray_origin + t * ray_direction;
 
+        //This sucks
         let (test_point, a, b, c) = if glm::dot(&plane.normal, &glm::vec4(0.0, 0.0, 1.0, 0.0)) > glm::epsilon::<f32>() {
             (glm::vec2(intersection.x, intersection.y), glm::vec2(a.x, a.y), glm::vec2(b.x, b.y), glm::vec2(c.x, c.y))
-        } else {
+        } else if glm::dot(&plane.normal, &glm::vec4(0.0, 1.0, 0.0, 0.0)) > glm::epsilon::<f32>() {
             (glm::vec2(intersection.x, intersection.z), glm::vec2(a.x, a.z), glm::vec2(b.x, b.z), glm::vec2(c.x, c.z))
+        } else {
+            (glm::vec2(intersection.y, intersection.z), glm::vec2(a.y, a.z), glm::vec2(b.y, b.z), glm::vec2(c.y, c.z))
         };
 
         //If the intersection is in the triangle, check if it's the closest intersection to the camera so far

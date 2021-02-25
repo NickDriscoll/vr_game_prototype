@@ -1,4 +1,6 @@
 /target
+/dist
 /.idea
 /.vscode
 settings.cfg
+*.7z
