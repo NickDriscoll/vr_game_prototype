@@ -164,6 +164,18 @@ pub fn segment_hit_plane(plane: &Plane, segment: &LineSegment) -> Option<glm::TV
     }
 }
 
+pub fn point_in_triangle(test_point: &glm::TVec2<f32>, p0: &glm::TVec2<f32>, p1: &glm::TVec2<f32>, p2: &glm::TVec2<f32>) -> bool {
+    //Check if this collision point is actually in the triangle
+    let d1 = sign(&test_point, &p0, &p1);
+    let d2 = sign(&test_point, &p1, &p2);
+    let d3 = sign(&test_point, &p2, &p0);
+
+    let has_neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+    let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+
+    !(has_neg && has_pos)
+}
+
 pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec4<f32>, ray_direction: &glm::TVec4<f32>) -> Option<glm::TVec4<f32>> {
     let mut smallest_t = f32::INFINITY;
     let mut closest_intersection = None;
@@ -182,9 +194,15 @@ pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec4<f32>, ray_dire
         //Compute ray-plane intersection
         let t = glm::dot(&(plane.point - ray_origin), &plane.normal) / denominator;
         let intersection = ray_origin + t * ray_direction;
-                        
+
+        let (test_point, a, b, c) = if glm::dot(&plane.normal, &glm::vec4(0.0, 0.0, 1.0, 0.0)) > glm::epsilon::<f32>() {
+            (glm::vec2(intersection.x, intersection.y), glm::vec2(a.x, a.y), glm::vec2(b.x, b.y), glm::vec2(c.x, c.y))
+        } else {
+            (glm::vec2(intersection.x, intersection.z), glm::vec2(a.x, a.z), glm::vec2(b.x, b.z), glm::vec2(c.x, c.z))
+        };
+
         //If the intersection is in the triangle, check if it's the closest intersection to the camera so far
-        if point_in_triangle(&glm::vec2(intersection.x, intersection.y), &a, &b, &c) && t > 0.0 && t < smallest_t {
+        if point_in_triangle(&test_point, &a, &b, &c) && t > 0.0 && t < smallest_t {
             smallest_t = t;
             closest_intersection = Some(intersection);
         }
@@ -259,18 +277,6 @@ pub fn segment_plane_tallest_collision(segment: &LineSegment, planes: &[Plane]) 
         }
     }
     collision
-}
-
-pub fn point_in_triangle(test_point: &glm::TVec2<f32>, p0: &glm::TVec3<f32>, p1: &glm::TVec3<f32>, p2: &glm::TVec3<f32>) -> bool {
-    //Check if this collision point is actually in the triangle
-    let d1 = sign(&test_point, &glm::vec3_to_vec2(&p0), &glm::vec3_to_vec2(&p1));
-    let d2 = sign(&test_point, &glm::vec3_to_vec2(&p1), &glm::vec3_to_vec2(&p2));
-    let d3 = sign(&test_point, &glm::vec3_to_vec2(&p2), &glm::vec3_to_vec2(&p0));
-
-    let has_neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
-    let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
-
-    !(has_neg && has_pos)
 }
 
 pub fn get_terrain_triangle(terrain: &Terrain, triangle_index: usize) -> (glm::TVec3<f32>, glm::TVec3<f32>, glm::TVec3<f32>) {    

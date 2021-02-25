@@ -937,7 +937,7 @@ fn main() {
 
             //Calculate the force of shooting the water gun
             if let (Some(state), Some(pose)) = (right_trigger_state, xrutil::locate_space(&right_hand_aim_space, &tracking_space, last_xr_render_time)) {
-                if state.current_state > 0.0 && player.movement_state != MoveState::Falling { set_player_falling(&mut player); }
+
                 let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
                 let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
                 let world_space_vec = hand_transform * hand_space_vec;
@@ -946,9 +946,15 @@ fn main() {
                 //Calculate water gun force vector
                 water_gun_force = glm::vec4_to_vec3(&(-state.current_state * world_space_vec));
 
-                //Calculate scale of water pillar
-                if let Some(point) = ray_hit_terrain(&terrain, &hand_origin, &world_space_vec) {
-                    water_pillar_scale.y = glm::length(&(point - hand_origin)); 
+                if state.current_state > 0.0 {
+                    //Calculate scale of water pillar
+                    if let Some(point) = ray_hit_terrain(&terrain, &hand_origin, &world_space_vec) {
+                        water_pillar_scale.y = glm::length(&(point - hand_origin)); 
+                    }
+
+                    if player.movement_state != MoveState::Falling {
+                        set_player_falling(&mut player);
+                    }
                 }
             }
 
@@ -1095,7 +1101,7 @@ fn main() {
         let mut too_steep_tris = Vec::new();
         for i in (0..terrain.indices.len()).step_by(3) {
             let (a, b, c) = get_terrain_triangle(&terrain, i);
-            if point_in_triangle(&glm::vec2(player.tracked_segment.p1.x, player.tracked_segment.p1.y), &a, &b, &c) {
+            if point_in_triangle(&glm::vec2(player.tracked_segment.p1.x, player.tracked_segment.p1.y), &glm::vec2(a.x, a.y), &glm::vec2(b.x, b.y), &glm::vec2(c.x, c.y)) {
                 let triangle_normal = terrain.face_normals[i / 3];
                 let triangle_plane = Plane::new(glm::vec4(a.x, a.y, a.z, 1.0), glm::vec4(triangle_normal.x, triangle_normal.y, triangle_normal.z, 0.0));
                 let dot = glm::dot(&triangle_normal, &glm::vec3(0.0, 0.0, 1.0));
