@@ -11,7 +11,7 @@ mod xrutil;
 use render::{render_main_scene, render_shadows, SceneData, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
-use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowMode};
+use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
 use gl::types::*;
 use std::collections::HashMap;
 use std::process::exit;
@@ -304,7 +304,6 @@ fn main() {
         Some(r) => { glfw.window_hint(glfw::WindowHint::ContextVersion(r.min_api_version_supported.major() as u32, r.min_api_version_supported.minor() as u32)); }
         None => { glfw.window_hint(glfw::WindowHint::ContextVersion(4, 3)); }
     }
-	glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
 
     //Initialize screen state
     let mut screen_state = {
@@ -314,6 +313,8 @@ fn main() {
     };
 
     //Create the window
+	glfw.window_hint(WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
+	glfw.window_hint(WindowHint::Samples(Some(render::MSAA_SAMPLES)));
     let (mut window, events) = match glfw.create_window(screen_state.get_window_size().x, screen_state.get_window_size().y, "THCATO", glfw::WindowMode::Windowed) {
         Some(stuff) => { stuff }
         None => {
@@ -469,6 +470,11 @@ fn main() {
         p
     };
 
+    let xr_swapchain_rendertarget = match xr_swapchain_size {
+        Some(size) => unsafe { Some(RenderTarget::new_multisampled((size.x as GLint, size.y as GLint), render::MSAA_SAMPLES as GLint)) }
+        None => { None }
+    };
+
     let mut xr_image_count = 0;
     let xr_swapchain_images = match &xr_swapchains {
         Some(chains) => {
@@ -493,7 +499,7 @@ fn main() {
         }
         None => { None }
     };    
-    let mut xr_depth_textures = vec![None; xr_image_count];
+    //let mut xr_depth_textures = vec![None; xr_image_count];
 
     //Compile shader programs
     let complex_3D = unsafe { glutil::compile_program_from_files("shaders/mapped.vert", "shaders/mapped.frag") };
@@ -634,7 +640,7 @@ fn main() {
     let water_cylinder_entity_index = scene_data.push_single_entity(water_cylinder_mesh);
 
     //Create staircase
-    let cube_count = 1024;
+    let cube_count = 32;
     let mut cube_transform_buffer = vec![0.0; cube_count * 16];
     let cube_entity_index = unsafe {
         let mesh = SimpleMesh::from_ozy("models/cube.ozy", &mut texture_keeper, &tex_params);
@@ -1349,8 +1355,8 @@ fn main() {
             if wireframe { gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE); }
 
             //Render into HMD
-            match (&xr_session, &mut xr_swapchains, &xr_swapchain_size, &xr_swapchain_images, &mut xr_framewaiter, &mut xr_framestream, &tracking_space) {
-                (Some(session), Some(swapchains), Some(sc_size), Some(sc_images), Some(framewaiter), Some(framestream), Some(t_space)) => {
+            match (&xr_session, &mut xr_swapchains, &xr_swapchain_size, &xr_swapchain_rendertarget, &xr_swapchain_images, &mut xr_framewaiter, &mut xr_framestream, &tracking_space) {
+                (Some(session), Some(swapchains), Some(sc_size), Some(sc_rendertarget), Some(sc_images), Some(framewaiter), Some(framestream), Some(t_space)) => {
                     let swapchain_size = glm::vec2(sc_size.x as GLint, sc_size.y as GLint);
                     match framewaiter.wait() {
                         Ok(wait_info) => {
@@ -1385,46 +1391,6 @@ fn main() {
                                 gl::BindFramebuffer(gl::FRAMEBUFFER, xr_swapchain_framebuffer);
                                 gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, color_texture, 0);
 
-                                //Bind depth texture to the framebuffer, but create it if it hasn't been yet
-                                let depth_index = i * xr_image_count / views.len() + sc_indices[i] as usize;
-                                match xr_depth_textures[depth_index] {
-                                    Some(tex) => { gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::DEPTH_ATTACHMENT, gl::TEXTURE_2D, tex, 0); }
-                                    None => {
-                                        let mut width = 0;
-                                        let mut height = 0;
-                                        gl::BindTexture(gl::TEXTURE_2D, color_texture);
-                                        gl::GetTexLevelParameteriv(gl::TEXTURE_2D, 0, gl::TEXTURE_WIDTH, &mut width);
-                                        gl::GetTexLevelParameteriv(gl::TEXTURE_2D, 0, gl::TEXTURE_HEIGHT, &mut height);
-
-                                        //Create depth texture
-                                        let mut tex = 0;
-                                        gl::GenTextures(1, &mut tex);
-                                        gl::BindTexture(gl::TEXTURE_2D, tex);
-
-                                        let params = [
-                                            (gl::TEXTURE_MAG_FILTER, gl::NEAREST),
-                                            (gl::TEXTURE_MIN_FILTER, gl::NEAREST),
-                                            (gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE),
-                                            (gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE),
-                                        ];
-                                        glutil::apply_texture_parameters(&params);
-                                        gl::TexImage2D(
-                                            gl::TEXTURE_2D,
-                                            0,
-                                            gl::DEPTH_COMPONENT as GLint,
-                                            width,
-                                            height,
-                                            0,
-                                            gl::DEPTH_COMPONENT,
-                                            gl::FLOAT,
-                                            ptr::null()
-                                        );
-
-                                        xr_depth_textures[depth_index] = Some(tex);
-                                        gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::DEPTH_ATTACHMENT, gl::TEXTURE_2D, tex, 0);
-                                    }
-                                }
-
                                 //Compute view projection matrix
                                 //We have to translate to right-handed z-up from right-handed y-up
                                 let eye_pose = views[i].pose;
@@ -1447,6 +1413,7 @@ fn main() {
                                 );
 
                                 //Actually rendering
+                                sc_rendertarget.bind();   //Rendering into an MSAA rendertarget
                                 let view_data = ViewData::new(
                                     glm::vec3(eye_world_matrix[12], eye_world_matrix[13], eye_world_matrix[14]),
                                     view_matrix,
@@ -1455,6 +1422,10 @@ fn main() {
                                 gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
                                 gl::Viewport(0, 0, swapchain_size.x, swapchain_size.y);
                                 render_main_scene(&scene_data, &view_data);
+
+                                //Blit the MSAA image into the swapchain image
+                                gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, xr_swapchain_framebuffer);
+                                gl::BlitFramebuffer(0, 0, sc_size.x as GLint, sc_size.y as GLint, 0, 0, sc_size.x as GLint, sc_size.y as GLint, gl::COLOR_BUFFER_BIT, gl::NEAREST);
 
                                 swapchains[i].release_image().unwrap();
                             }

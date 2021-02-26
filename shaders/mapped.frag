@@ -22,7 +22,7 @@ uniform vec2 uv_offset = vec2(0.0, 0.0);
 uniform bool complex_normals = false;
 uniform bool visualize_normals = false;
 
-const float AMBIENT = 0.1;
+const float AMBIENT = 0.2;
 
 void main() {
     vec2 scaled_uvs = f_uvs * uv_scale + uv_offset;

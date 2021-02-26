@@ -6,6 +6,7 @@ use gl::types::*;
 pub const NEAR_DISTANCE: f32 = 0.0625;
 pub const FAR_DISTANCE: f32 = 100000.0;
 pub const INSTANCED_ATTRIBUTE: GLuint = 5;
+pub const MSAA_SAMPLES: u32 = 4;
 
 pub struct SingleEntity {
     pub mesh: SimpleMesh,
