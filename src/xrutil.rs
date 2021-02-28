@@ -4,6 +4,7 @@ use crate::collision::LineSegment;
 
 pub const VALVE_INDEX_INTERACTION_PROFILE: &str =           "/interaction_profiles/valve/index_controller";
 pub const HTC_VIVE_INTERACTION_PROFILE: &str =              "/interaction_profiles/htc/vive_controller";
+pub const OCULUS_TOUCH_INTERACTION_PROFILE: &str =          "/interaction_profiles/oculus/touch_controller";
 
 pub const LEFT_GRIP_POSE: &str =                            "/user/hand/left/input/grip/pose";
 pub const LEFT_AIM_POSE: &str =                             "/user/hand/left/input/aim/pose";
@@ -15,9 +16,17 @@ pub const RIGHT_TRACKPAD_FORCE: &str =                      "/user/hand/right/in
 pub const RIGHT_TRIGGER_FLOAT: &str =                       "/user/hand/right/input/trigger/value";
 pub const RIGHT_GRIP_POSE: &str =                           "/user/hand/right/input/grip/pose";
 pub const RIGHT_AIM_POSE: &str =                            "/user/hand/right/input/aim/pose";
+pub const RIGHT_A_BUTTON_BOOL: &str =                       "/user/hand/right/input/a/click";
 
 pub fn print_pose(pose: xr::Posef) {
     println!("Position: ({}, {}, {})", pose.position.x, pose.position.y, pose.position.z);
+}
+
+pub fn suggest_bindings(inst: &xr::Instance, interaction_path: &str, bindings: &[xr::Binding]) {    
+    let profile = inst.string_to_path(interaction_path).unwrap();
+    if let Err(e) = inst.suggest_interaction_profile_bindings(profile, &bindings) {
+        println!("Error suggesting interaction profile bindings for \"{}\": {}", interaction_path, e);
+    }    
 }
 
 pub fn pose_to_viewmat(pose: &xr::Posef, tracking_from_world: &glm::TMat4<f32>) -> glm::TMat4<f32> {

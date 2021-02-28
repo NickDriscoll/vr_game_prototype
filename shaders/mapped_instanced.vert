@@ -1,4 +1,4 @@
-#version 330 core
+#version 430 core
 
 //Vertex data
 layout (location = 0) in vec3 position;
@@ -14,12 +14,15 @@ out vec3 tangent_sun_direction;
 out vec3 tangent_view_position;
 out vec3 tangent_space_pos;
 out vec4 shadow_space_pos;
-out vec2 f_uvs;
+out vec3 f_world_pos;
+out vec2 scaled_uvs;
 
 uniform mat4 view_projection;
 uniform mat4 shadow_matrix;
 uniform vec3 sun_direction;
 uniform vec3 view_position;
+uniform vec2 uv_scale = vec2(1.0, 1.0);
+uniform vec2 uv_offset = vec2(0.0, 0.0);
 
 void main() {
     mat4 normal_matrix = transpose(mat4(inverse(mat3(model_matrix))));
@@ -34,7 +37,9 @@ void main() {
     tangent_space_pos = tangent_matrix * vec3(world_space_pos);
     tangent_sun_direction = tangent_matrix * sun_direction;
     tangent_view_position = tangent_matrix * view_position;
+    f_world_pos = vec3(world_space_pos);
     
-    f_uvs = uv;
+    scaled_uvs = uv * uv_scale + uv_offset;
+    
     gl_Position = view_projection * world_space_pos;
 }

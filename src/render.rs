@@ -6,7 +6,7 @@ use gl::types::*;
 pub const NEAR_DISTANCE: f32 = 0.0625;
 pub const FAR_DISTANCE: f32 = 100000.0;
 pub const INSTANCED_ATTRIBUTE: GLuint = 5;
-pub const MSAA_SAMPLES: u32 = 4;
+pub const MSAA_SAMPLES: u32 = 8;
 
 pub struct SingleEntity {
     pub mesh: SimpleMesh,
@@ -25,6 +25,7 @@ pub struct InstancedEntity {
 
 pub struct SceneData {
     pub visualize_normals: bool,
+    pub visualize_lod: bool,
     pub complex_normals: bool,
     pub outlining: bool,
     pub shadow_texture: GLuint,
@@ -74,6 +75,7 @@ impl Default for SceneData {
     fn default() -> Self {
         SceneData {
             visualize_normals: false,
+            visualize_lod: false,
             complex_normals: true,
             outlining: false,
             shadow_texture: 0,
@@ -121,6 +123,7 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
         glutil::bind_vector3(*program, "sun_direction", &scene_data.uniform_light);
         glutil::bind_int(*program, "shadow_map", ozy::render::TEXTURE_MAP_COUNT as GLint);
         glutil::bind_int(*program, "visualize_normals", scene_data.visualize_normals as GLint);
+        glutil::bind_int(*program, "visualize_lod", scene_data.visualize_lod as GLint);
         glutil::bind_int(*program, "complex_normals", scene_data.complex_normals as GLint);
         glutil::bind_int(*program, "outlining", scene_data.outlining as GLint);
         glutil::bind_vector3(*program, "view_position", &view_data.view_position);

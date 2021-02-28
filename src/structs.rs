@@ -10,6 +10,7 @@ pub enum Command {
     ToggleMenu(usize, usize),
     ToggleAllMenus,
     ToggleNormalVis,
+    ToggleLodVis,
     ToggleComplexNormals,
     ToggleWireframe,
     ToggleHMDPov,

@@ -201,6 +201,7 @@ fn main() {
     let right_trackpad_click_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_TRACKPAD_CLICK);
     let left_stick_vector_path = xrutil::make_path(&xr_instance, xrutil::LEFT_STICK_VECTOR2);
     let left_trackpad_vector_path = xrutil::make_path(&xr_instance, xrutil::LEFT_TRACKPAD_VECTOR2);
+    let right_a_button_bool_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_A_BUTTON_BOOL);
 
     //Create the hand subaction paths
     let left_hand_subaction_path = xrutil::make_path(&xr_instance, xr::USER_HAND_LEFT);
@@ -235,7 +236,8 @@ fn main() {
            &item_menu_action,
            &right_hand_aim_action,
            &right_aim_pose_path,
-           &right_trackpad_click_path) {
+           &right_trackpad_click_path,
+           &right_a_button_bool_path) {
         (Some(inst),
          Some(l_grip_action),
          Some(l_aim_action),
@@ -254,41 +256,46 @@ fn main() {
          Some(i_menu_action),
          Some(r_aim_action),
          Some(r_aim_path),
-         Some(r_track_click_path)) => {
-             //Valve Index bindings
-            {
-                let profile = inst.string_to_path(xrutil::VALVE_INDEX_INTERACTION_PROFILE).unwrap();
-                let bindings = [
-                    xr::Binding::new(l_grip_action, *l_grip_path),
-                    xr::Binding::new(l_aim_action, *l_aim_path),
-                    xr::Binding::new(r_aim_action, *r_aim_path),
-                    xr::Binding::new(l_trigger_action, *l_trigger_path),
-                    xr::Binding::new(r_trigger_action, *r_trigger_path),
-                    xr::Binding::new(r_action, *r_path),
-                    xr::Binding::new(move_action, *l_stick_path),
-                    xr::Binding::new(i_menu_action, *r_trackpad_force)
-                ];
-                if let Err(e) = inst.suggest_interaction_profile_bindings(profile, &bindings) {
-                    println!("Error setting interaction profile bindings: {}", e);
-                }
-            }
-            //HTC Vive bindings
-            {
-               let profile = inst.string_to_path(xrutil::HTC_VIVE_INTERACTION_PROFILE).unwrap();
-               let bindings = [
-                   xr::Binding::new(l_grip_action, *l_grip_path),
-                   xr::Binding::new(l_aim_action, *l_aim_path),
-                   xr::Binding::new(r_aim_action, *r_aim_path),
-                   xr::Binding::new(l_trigger_action, *l_trigger_path),
-                   xr::Binding::new(r_trigger_action, *r_trigger_path),
-                   xr::Binding::new(r_action, *r_path),
-                   xr::Binding::new(move_action, *l_trackpad_path),                   
-                   xr::Binding::new(i_menu_action, *r_track_click_path)
-               ];
-               if let Err(e) = inst.suggest_interaction_profile_bindings(profile, &bindings) {
-                   println!("Error setting interaction profile bindings: {}", e);
-               }
-            }
+         Some(r_track_click_path),
+         Some(r_a_button_path)) => {
+            //Valve Index
+            let bindings = [
+                xr::Binding::new(l_grip_action, *l_grip_path),
+                xr::Binding::new(l_aim_action, *l_aim_path),
+                xr::Binding::new(r_aim_action, *r_aim_path),
+                xr::Binding::new(l_trigger_action, *l_trigger_path),
+                xr::Binding::new(r_trigger_action, *r_trigger_path),
+                xr::Binding::new(r_action, *r_path),
+                xr::Binding::new(move_action, *l_stick_path),
+                xr::Binding::new(i_menu_action, *r_trackpad_force)
+            ];
+            xrutil::suggest_bindings(inst, xrutil::VALVE_INDEX_INTERACTION_PROFILE, &bindings);
+
+            //HTC Vive
+            let bindings = [
+                xr::Binding::new(l_grip_action, *l_grip_path),
+                xr::Binding::new(l_aim_action, *l_aim_path),
+                xr::Binding::new(r_aim_action, *r_aim_path),
+                xr::Binding::new(l_trigger_action, *l_trigger_path),
+                xr::Binding::new(r_trigger_action, *r_trigger_path),
+                xr::Binding::new(r_action, *r_path),
+                xr::Binding::new(move_action, *l_trackpad_path),                   
+                xr::Binding::new(i_menu_action, *r_track_click_path)
+            ];
+            xrutil::suggest_bindings(inst, xrutil::HTC_VIVE_INTERACTION_PROFILE, &bindings);
+
+            //Oculus Touch
+            let bindings = [
+                xr::Binding::new(l_grip_action, *l_grip_path),
+                xr::Binding::new(l_aim_action, *l_aim_path),
+                xr::Binding::new(r_aim_action, *r_aim_path),
+                xr::Binding::new(l_trigger_action, *l_trigger_path),
+                xr::Binding::new(r_trigger_action, *r_trigger_path),
+                xr::Binding::new(r_action, *r_path),
+                xr::Binding::new(move_action, *l_stick_path),
+                xr::Binding::new(i_menu_action, *r_a_button_path)
+            ];
+            xrutil::suggest_bindings(inst, xrutil::OCULUS_TOUCH_INTERACTION_PROFILE, &bindings);
         }
         _ => {}
     }
@@ -437,7 +444,7 @@ fn main() {
             for viewconfig in viewconfig_views {
                 let create_info = xr::SwapchainCreateInfo {
                     create_flags: xr::SwapchainCreateFlags::EMPTY,
-                    usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT | xr::SwapchainUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                    usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT | xr::SwapchainUsageFlags::TRANSFER_DST,
                     format: gl::SRGB8_ALPHA8,
                     sample_count: viewconfig.recommended_swapchain_sample_count,
                     width: viewconfig.recommended_image_rect_width,
@@ -470,12 +477,13 @@ fn main() {
         p
     };
 
+    //MSAA rendertarget which will have the scene rendered into it before blitting to the actual HMD swapchain image
+    //This gets around the fact that SteamVR refuses to allocate MSAA images :) :) :)
     let xr_swapchain_rendertarget = match xr_swapchain_size {
         Some(size) => unsafe { Some(RenderTarget::new_multisampled((size.x as GLint, size.y as GLint), render::MSAA_SAMPLES as GLint)) }
         None => { None }
     };
 
-    let mut xr_image_count = 0;
     let xr_swapchain_images = match &xr_swapchains {
         Some(chains) => {
             let mut failed = false;
@@ -483,7 +491,6 @@ fn main() {
             for chain in chains.iter() {
                 match chain.enumerate_images() {
                     Ok(images) => {
-                        xr_image_count += images.len();
                         image_arr.push(images);
                     }
                     Err(e) => {
@@ -498,8 +505,7 @@ fn main() {
             else { Some(image_arr) }
         }
         None => { None }
-    };    
-    //let mut xr_depth_textures = vec![None; xr_image_count];
+    };
 
     //Compile shader programs
     let complex_3D = unsafe { glutil::compile_program_from_files("shaders/mapped.vert", "shaders/mapped.frag") };
@@ -597,6 +603,7 @@ fn main() {
         let mut graphics_menu = vec![
             ("Toggle fullscreen", Some(Command::ToggleFullScreen)),
             ("Visualize normals", Some(Command::ToggleNormalVis)),
+            ("Visualize LOD zones", Some(Command::ToggleLodVis)),
             ("Complex normals", Some(Command::ToggleComplexNormals)),
             ("Wireframe view", Some(Command::ToggleWireframe))
         ];
@@ -631,7 +638,7 @@ fn main() {
     scene_data.single_entities[terrain_entity_index].model_matrix = ozy::routines::uniform_scale(1.0);
 
     //Create dragon
-    let mut dragon_position = glm::vec3(60.9917, 16.528427, 96.644905);
+    let mut dragon_position = glm::vec3(19.209993, 0.5290663, 132.3208);
     let dragon_mesh = SimpleMesh::from_ozy("models/dragon.ozy", &mut texture_keeper, &tex_params);
     let dragon_entity_index = scene_data.push_single_entity(dragon_mesh);
 
@@ -860,6 +867,7 @@ fn main() {
                 Command::Quit => { window.set_should_close(true); }
                 Command::ToggleMenu(chain_index, menu_index) => { ui_state.toggle_menu(chain_index, menu_index); }
                 Command::ToggleNormalVis => { scene_data.visualize_normals = !scene_data.visualize_normals; }
+                Command::ToggleLodVis => { scene_data.visualize_lod = !scene_data.visualize_lod; }
                 Command::ToggleComplexNormals => { scene_data.complex_normals = !scene_data.complex_normals; }
                 Command::ToggleHMDPov => { hmd_pov = !hmd_pov; }
                 Command::ToggleAllMenus => { ui_state.toggle_hide_all_menus(); }
@@ -1024,7 +1032,7 @@ fn main() {
         scene_data.single_entities[water_cylinder_entity_index].uv_offset += glm::vec2(0.0, 5.0) * delta_time;
         scene_data.single_entities[water_cylinder_entity_index].uv_scale.y = water_pillar_scale.y;
 
-        scene_data.single_entities[terrain_entity_index].uv_offset += glm::vec2(0.001, 0.001) * delta_time;
+        scene_data.single_entities[terrain_entity_index].uv_offset += glm::vec2(0.01, 0.01) * delta_time;
 
         //Update tracking space location
         player.tracking_position += player.tracking_velocity * delta_time;
@@ -1381,15 +1389,9 @@ fn main() {
                             shadow_rendertarget.bind();
                             render_shadows(&scene_data);
 
-                            let mut sc_indices = vec![0; views.len()];
                             for i in 0..views.len() {
-                                sc_indices[i] = swapchains[i].acquire_image().unwrap();
+                                let image_index = swapchains[i].acquire_image().unwrap();
                                 swapchains[i].wait_image(xr::Duration::INFINITE).unwrap();
-
-                                //Bind the framebuffer and bind the swapchain image to its first color attachment
-                                let color_texture = sc_images[i][sc_indices[i] as usize];
-                                gl::BindFramebuffer(gl::FRAMEBUFFER, xr_swapchain_framebuffer);
-                                gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, color_texture, 0);
 
                                 //Compute view projection matrix
                                 //We have to translate to right-handed z-up from right-handed y-up
@@ -1419,15 +1421,53 @@ fn main() {
                                     view_matrix,
                                     perspective
                                 );
-                                gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
-                                gl::Viewport(0, 0, swapchain_size.x, swapchain_size.y);
                                 render_main_scene(&scene_data, &view_data);
 
                                 //Blit the MSAA image into the swapchain image
-                                gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, xr_swapchain_framebuffer);
+                                let color_texture = sc_images[i][image_index as usize];
+                                gl::BindFramebuffer(gl::FRAMEBUFFER, xr_swapchain_framebuffer);
+                                gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, color_texture, 0);
+                                gl::BindFramebuffer(gl::READ_FRAMEBUFFER, sc_rendertarget.framebuffer.name);
                                 gl::BlitFramebuffer(0, 0, sc_size.x as GLint, sc_size.y as GLint, 0, 0, sc_size.x as GLint, sc_size.y as GLint, gl::COLOR_BUFFER_BIT, gl::NEAREST);
 
                                 swapchains[i].release_image().unwrap();
+                            }
+
+                            //End the frame
+                            let end_result = framestream.end(wait_info.predicted_display_time, xr::EnvironmentBlendMode::OPAQUE,
+                                &[&xr::CompositionLayerProjection::new()
+                                    .space(t_space)
+                                    .views(&[
+                                        xr::CompositionLayerProjectionView::new()
+                                            .pose(views[0].pose)
+                                            .fov(views[0].fov)
+                                            .sub_image( 
+                                                xr::SwapchainSubImage::new()
+                                                    .swapchain(&swapchains[0])
+                                                    .image_array_index(0)
+                                                    .image_rect(xr::Rect2Di {
+                                                        offset: xr::Offset2Di { x: 0, y: 0 },
+                                                        extent: xr::Extent2Di {width: swapchain_size.x, height: swapchain_size.y}
+                                                    })
+                                            ),
+                                        xr::CompositionLayerProjectionView::new()
+                                            .pose(views[1].pose)
+                                            .fov(views[1].fov)
+                                            .sub_image(
+                                                xr::SwapchainSubImage::new()
+                                                    .swapchain(&swapchains[1])
+                                                    .image_array_index(0)
+                                                    .image_rect(xr::Rect2Di {
+                                                        offset: xr::Offset2Di { x: 0, y: 0 },
+                                                        extent: xr::Extent2Di {width: swapchain_size.x, height: swapchain_size.y}
+                                                    })
+                                            )
+                                    ])
+                                ]
+                            );
+
+                            if let Err(e) = end_result {
+                                println!("Framestream end error: {}", e);
                             }
 
                             //Draw the companion view if we're showing HMD POV
@@ -1444,43 +1484,6 @@ fn main() {
                                     render_main_scene(&scene_data, &view_state);
                                 }
                             }
-
-                            //End the frame
-                            let end_result = framestream.end(wait_info.predicted_display_time, xr::EnvironmentBlendMode::OPAQUE,
-                                &[&xr::CompositionLayerProjection::new()
-                                    .space(t_space)
-                                    .views(&[
-                                        xr::CompositionLayerProjectionView::new()
-                                            .pose(views[0].pose)
-                                            .fov(views[0].fov)
-                                            .sub_image( 
-                                                xr::SwapchainSubImage::new()
-                                                    .swapchain(&swapchains[0])
-                                                    .image_array_index(sc_indices[0])
-                                                    .image_rect(xr::Rect2Di {
-                                                        offset: xr::Offset2Di { x: 0, y: 0 },
-                                                        extent: xr::Extent2Di {width: swapchain_size.x, height: swapchain_size.y}
-                                                    })
-                                            ),
-                                        xr::CompositionLayerProjectionView::new()
-                                            .pose(views[1].pose)
-                                            .fov(views[1].fov)
-                                            .sub_image(
-                                                xr::SwapchainSubImage::new()
-                                                    .swapchain(&swapchains[1])
-                                                    .image_array_index(sc_indices[1])
-                                                    .image_rect(xr::Rect2Di {
-                                                        offset: xr::Offset2Di { x: 0, y: 0 },
-                                                        extent: xr::Extent2Di {width: swapchain_size.x, height: swapchain_size.y}
-                                                    })
-                                            )
-                                    ])
-                                ]
-                            );
-
-                            if let Err(e) = end_result {
-                                println!("{}", e);
-                            }
                         }
                         Err(e) => {
                             println!("Error doing framewaiter.wait(): {}", e);
@@ -1492,7 +1495,7 @@ fn main() {
 
             //Main window rendering
             if !hmd_pov {
-                //Render shadow map
+                //Render shadows
                 shadow_rendertarget.bind();
                 render_shadows(&scene_data);
 
@@ -1507,8 +1510,8 @@ fn main() {
             }
 
             //Render 2D elements
-            gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
-            gl::Disable(gl::DEPTH_TEST);        //Disable depth testing for 2D rendering
+            gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);  //Make sure we're not doing wireframe rendering
+            gl::Disable(gl::DEPTH_TEST);                    //Disable depth testing
             ui_state.draw(&screen_state);
         }
 
