@@ -20,15 +20,24 @@ uniform sampler2D shadow_map;
 uniform vec3 view_position;
 
 uniform bool complex_normals = false;
+
 uniform bool visualize_normals = false;
 uniform bool visualize_lod = false;
+uniform bool visualize_shadowed = false;
 
 const float AMBIENT = 0.2;
 const float SHININESS_LOWER_BOUND = 16.0;
 const float SHININESS_UPPER_BOUND = 128.0;
 const float LOD_DIST0 = 20.0;
 const float LOD_DIST1 = 40.0;
-const float LOD_DIST2 = 70.0;
+const float LOD_DIST2 = 170.0;
+const float LOD_DIST3 = 240.0;
+
+float determine_shadowed(vec3 f_shadow_pos) {
+    const float BIAS = 0.0001;
+    float sampled_depth = texture(shadow_map, f_shadow_pos.xy).r;
+    return sampled_depth + BIAS < f_shadow_pos.z ? 1.0 : 0.0;
+}
 
 void main() {
     float dist_from_camera = distance(f_world_pos, view_position);    
@@ -36,8 +45,10 @@ void main() {
         if (dist_from_camera < LOD_DIST0) {
             frag_color = vec4(1.0, 0.0, 0.0, 1.0);
         } else if (dist_from_camera < LOD_DIST1) {
-            frag_color = vec4(0.0, 1.0, 0.0, 1.0);
+            frag_color = vec4(1.0, 0.57, 0.0, 1.0);
         } else if (dist_from_camera < LOD_DIST2) {
+            frag_color = vec4(0.0, 1.0, 0.0, 1.0);
+        } else if (dist_from_camera < LOD_DIST3) {
             frag_color = vec4(1.0, 0.0, 1.0, 1.0);
         } else {
             frag_color = vec4(0.0, 0.0, 1.0, 1.0);
@@ -45,6 +56,7 @@ void main() {
         return;
     }
 
+    //Sample the fragment's base color
     vec3 albedo = texture(albedo_map, scaled_uvs).xyz;
 
     vec3 tangent_space_normal;
@@ -55,6 +67,7 @@ void main() {
         tangent_space_normal = vec3(0.0, 0.0, 1.0);
     }
     
+    //Early exit if we're visualizing normals
     if (visualize_normals) {
         frag_color = vec4(tangent_space_normal * 0.5 + 0.5, 1.0);
         return;
@@ -64,7 +77,7 @@ void main() {
     float diffuse = max(0.0, dot(tangent_sun_direction, tangent_space_normal));
 
     //Early exit if we're too far from the camera
-    if (dist_from_camera > LOD_DIST2) {
+    if (dist_from_camera > LOD_DIST3) {
         frag_color = vec4((diffuse + AMBIENT) * albedo, 1.0);
         return;
     }
@@ -75,21 +88,29 @@ void main() {
     vec2 texel_size = 1.0 / textureSize(shadow_map, 0);
     
     //Check if this fragment can even receive shadows before doing this expensive calculation
-    if (!(adj_shadow_space_pos.z > 1.0 || adj_shadow_space_pos.x < 0.0 || adj_shadow_space_pos.x > 1.0 || adj_shadow_space_pos.y < 0.0 || adj_shadow_space_pos.y > 1.0)) {
-        //Do PCF
-        //Average the nxn block of shadow texels centered at this pixel
-        float bias = 0.0001;
-        int bound = 1;
-        for (int x = -bound; x <= bound; x++) {
-            for (int y = -bound; y <= bound; y++) {
-                float sampled_depth = texture(shadow_map, adj_shadow_space_pos.xy + vec2(x, y) * texel_size).r;
-                shadow += sampled_depth + bias < adj_shadow_space_pos.z ? 1.0 : 0.0;
+    if (!(adj_shadow_space_pos.z < 0.0 || adj_shadow_space_pos.z > 1.0 || adj_shadow_space_pos.x < 0.0 || adj_shadow_space_pos.x > 1.0 || adj_shadow_space_pos.y < 0.0 || adj_shadow_space_pos.y > 1.0)) {
+        if (dist_from_camera < LOD_DIST0 && false) {
+            //Do PCF
+            //Average the nxn block of shadow texels centered at this pixel
+            int bound = 1;
+            for (int x = -bound; x <= bound; x++) {
+                for (int y = -bound; y <= bound; y++) {
+                    shadow += determine_shadowed(vec3(adj_shadow_space_pos.xy + vec2(x, y) * texel_size, adj_shadow_space_pos.z));
+                }
             }
+            shadow /= 9.0;
+        } else {
+            shadow = determine_shadowed(adj_shadow_space_pos.xyz);
         }
-        shadow /= 9.0;
     }
-    
-    //Compute specular light    
+
+    //Early exit for shadow visualization
+    if (visualize_shadowed) {
+        frag_color = vec4(vec3(shadow), 1.0);
+        return;
+    }
+
+    //Compute specular light w/ blinn-phong
     float roughness = texture(roughness_map, scaled_uvs).x;
     vec3 view_direction = normalize(tangent_view_position - tangent_space_pos);
     vec3 halfway = normalize(view_direction + tangent_sun_direction);

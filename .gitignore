@@ -2,5 +2,6 @@
 /dist
 /.idea
 /.vscode
+/source_maps
 settings.cfg
 *.7z

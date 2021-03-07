@@ -11,6 +11,7 @@ pub enum Command {
     ToggleAllMenus,
     ToggleNormalVis,
     ToggleLodVis,
+    ToggleShadowedVis,
     ToggleComplexNormals,
     ToggleWireframe,
     ToggleHMDPov,

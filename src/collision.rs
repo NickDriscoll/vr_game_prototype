@@ -73,9 +73,11 @@ impl Terrain {
         };
 
         let vertices = {
-            let byte_count = match io::read_u32(&mut terrain_file, "Error reading byte_count.") {
-                Some(count) => { count as usize }
-                None => { panic!("Couldn't read byte count"); }
+            let byte_count = match io::read_u32(&mut terrain_file) {
+                Ok(count) => { count as usize }
+                Err(e) => {
+                     panic!("Couldn't read byte count: {}", e);
+                }
             };
 
             let mut bytes = vec![0; byte_count];
@@ -100,22 +102,22 @@ impl Terrain {
         };
         
         let indices = {
-            let index_count = match io::read_u32(&mut terrain_file, "Error reading index_count") {
-                Some(n) => { (n / 2) as usize }
-                None => { panic!("Couldn't read byte count"); }
+            let index_count = match io::read_u32(&mut terrain_file) {
+                Ok(n) => { (n / 2) as usize }
+                Err(e) => { panic!("Couldn't read byte count: {}", e); }
             };
             
             let indices = match io::read_u16_data(&mut terrain_file, index_count) {
-                Some(n) => { n }
-                None => { panic!("Couldn't read byte count"); }
+                Ok(n) => { n }
+                Err(e) => { panic!("Couldn't read byte count: {}", e); }
             };
             indices
         };
 
         let face_normals = {
-            let byte_count = match io::read_u32(&mut terrain_file, "Error reading byte_count") {
-                Some(n) => { n as usize }
-                None => { panic!("Couldn't read byte count"); }
+            let byte_count = match io::read_u32(&mut terrain_file) {
+                Ok(n) => { n as usize }
+                Err(e) => { panic!("Couldn't read byte count: {}", e); }
             };
 
             let mut bytes = vec![0; byte_count];
@@ -237,7 +239,7 @@ pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec4<f32>, ray_dire
         let intersection = ray_origin + t * ray_direction;
 
         //Robust triangle-point collision in 3D
-        if robust_point_in_triangle(&glm::vec4_to_vec3(&intersection), &a, &b, &c) && t > 0.0 && t < smallest_t {
+        if t > 0.0 && t < smallest_t && robust_point_in_triangle(&glm::vec4_to_vec3(&intersection), &a, &b, &c) {
             smallest_t = t;
             closest_intersection = Some(intersection);            
         }

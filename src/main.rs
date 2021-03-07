@@ -14,8 +14,10 @@ use render::{NEAR_DISTANCE, FAR_DISTANCE};
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
 use gl::types::*;
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{ErrorKind, Read};
 use std::process::exit;
-use std::ptr;
+use std::mem::size_of;
 use std::os::raw::c_void;
 use std::time::Instant;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
@@ -23,6 +25,7 @@ use ozy::{glutil};
 use ozy::glutil::ColorSpace;
 use ozy::render::{Framebuffer, InstancedMesh, RenderTarget, ScreenState, SimpleMesh, TextureKeeper};
 use ozy::structs::OptionVec;
+use ozy::io;
 use ozy::ui::UIState;
 use ozy::routines::uniform_scale;
 
@@ -533,7 +536,7 @@ fn main() {
     //Initialize shadow data
     let mut shadow_view;
     let shadow_proj_size = 30.0;
-    let shadow_projection = glm::ortho(-shadow_proj_size * 2.0, shadow_proj_size * 2.0, -shadow_proj_size * 2.0, shadow_proj_size * 2.0, 2.0 * -shadow_proj_size, 2.0 * shadow_proj_size);
+    let shadow_projection = glm::ortho(-shadow_proj_size * 2.0, shadow_proj_size * 2.0, -shadow_proj_size * 2.0, shadow_proj_size * 2.0, 3.0 * -shadow_proj_size, 2.0 * shadow_proj_size);
     let shadow_size = 8192;
     let shadow_rendertarget = unsafe { RenderTarget::new_shadow((shadow_size, shadow_size)) };
 
@@ -572,6 +575,8 @@ fn main() {
     let mut water_gun_force = glm::zero();
     let mut remaining_water = MAX_WATER_REMAINING;
     let mut water_pillar_scale = glm::vec3(1.0, 1.0, 1.0);
+    let water_cylinder_mesh = SimpleMesh::from_ozy("models/water_cylinder.ozy", &mut texture_keeper, &tex_params);
+    let water_cylinder_entity_index = scene_data.push_single_entity(water_cylinder_mesh);
     
     //Matrices for relating tracking space and world space
     let mut world_from_tracking = glm::identity();
@@ -604,6 +609,7 @@ fn main() {
             ("Toggle fullscreen", Some(Command::ToggleFullScreen)),
             ("Visualize normals", Some(Command::ToggleNormalVis)),
             ("Visualize LOD zones", Some(Command::ToggleLodVis)),
+            ("Visualize how shadowed", Some(Command::ToggleShadowedVis)),
             ("Complex normals", Some(Command::ToggleComplexNormals)),
             ("Wireframe view", Some(Command::ToggleWireframe))
         ];
@@ -626,28 +632,75 @@ fn main() {
         state
     };
 
+    
     //Load terrain data
-    let terrain_name = match config.string_options.get(Configuration::LEVEL_NAME) {
-        Some(name) => { name }
-        None => { "terrain" }
-    };
-    let terrain = Terrain::from_ozt(&format!("models/{}.ozt", terrain_name));
-    let terrain_mesh = SimpleMesh::from_ozy(&format!("models/{}.ozy", terrain_name), &mut texture_keeper, &tex_params);
-    let terrain_entity_index = scene_data.push_single_entity(terrain_mesh);
-    scene_data.single_entities[terrain_entity_index].uv_scale = glm::vec2(3.0, 3.0);
-    scene_data.single_entities[terrain_entity_index].model_matrix = ozy::routines::uniform_scale(1.0);
+    let terrain;
+    {
+        let terrain_name = match config.string_options.get(Configuration::LEVEL_NAME) {
+            Some(name) => { name }
+            None => { "terrain" }
+        };
+        terrain = Terrain::from_ozt(&format!("models/{}.ozt", terrain_name));
+
+        //Load the scene data from the level file
+        match File::open(&format!("maps/{}.lvl", terrain_name)) {
+            Ok(mut file) => {
+                loop {
+                    //Read ozy name
+                    let mut ozy_name = match io::read_pascal_strings(&mut file, 1) {
+                        Ok(v) => { v[0].clone() }
+                        Err(e) => {
+                            if e.kind() == ErrorKind::UnexpectedEof {
+                                break;
+                            }
+                            panic!("Error reading from level file: {}", e);                            
+                        }
+                    };
+
+                    //Read number of matrices
+                    let matrices_count = match io::read_u32(&mut file) {
+                        Ok(count) => { count } 
+                        Err(e) => {
+                            panic!("Error reading from level file: {}", e);
+                        }
+                    };
+                    let matrix_floats = match io::read_f32_data(&mut file, matrices_count as usize * 16) {
+                        Ok(floats) => { floats }
+                        Err(e) => {
+                            panic!("Error reading from level file: {}", e);
+                        }
+                    };
+                    let mesh = SimpleMesh::from_ozy(&format!("models/{}", ozy_name), &mut texture_keeper, &tex_params);
+
+                    if matrices_count == 1 {
+                        let idx = scene_data.push_single_entity(mesh);
+                        scene_data.single_entities[idx].model_matrix = glm::mat4(
+                            matrix_floats[0], matrix_floats[4], matrix_floats[8], matrix_floats[12], 
+                            matrix_floats[1], matrix_floats[5], matrix_floats[9], matrix_floats[13], 
+                            matrix_floats[2], matrix_floats[6], matrix_floats[10], matrix_floats[14], 
+                            matrix_floats[3], matrix_floats[7], matrix_floats[11], matrix_floats[15]
+                        );
+                    } else {
+                        let in_mesh = unsafe { InstancedMesh::from_simplemesh(&mesh, matrices_count as usize, render::INSTANCED_ATTRIBUTE) };
+                        let idx = scene_data.push_instanced_entity(in_mesh);
+                        scene_data.instanced_entities[idx].mesh.update_buffer(&matrix_floats);
+                    }
+                }
+                
+            }
+            Err(e) => {
+                panic!("Couldn't open level file: {}", e);
+            }
+        }
+    }
 
     //Create dragon
     let mut dragon_position = glm::vec3(19.209993, 0.5290663, 132.3208);
     let dragon_mesh = SimpleMesh::from_ozy("models/dragon.ozy", &mut texture_keeper, &tex_params);
     let dragon_entity_index = scene_data.push_single_entity(dragon_mesh);
 
-    //Create water cylinder
-    let water_cylinder_mesh = SimpleMesh::from_ozy("models/water_cylinder.ozy", &mut texture_keeper, &tex_params);
-    let water_cylinder_entity_index = scene_data.push_single_entity(water_cylinder_mesh);
-
     //Create staircase
-    let cube_count = 32;
+    let cube_count = 2048;
     let mut cube_transform_buffer = vec![0.0; cube_count * 16];
     let cube_entity_index = unsafe {
         let mesh = SimpleMesh::from_ozy("models/cube.ozy", &mut texture_keeper, &tex_params);
@@ -868,6 +921,7 @@ fn main() {
                 Command::ToggleMenu(chain_index, menu_index) => { ui_state.toggle_menu(chain_index, menu_index); }
                 Command::ToggleNormalVis => { scene_data.visualize_normals = !scene_data.visualize_normals; }
                 Command::ToggleLodVis => { scene_data.visualize_lod = !scene_data.visualize_lod; }
+                Command::ToggleShadowedVis => { scene_data.visualize_shadowed = !scene_data.visualize_shadowed; }
                 Command::ToggleComplexNormals => { scene_data.complex_normals = !scene_data.complex_normals; }
                 Command::ToggleHMDPov => { hmd_pov = !hmd_pov; }
                 Command::ToggleAllMenus => { ui_state.toggle_hide_all_menus(); }
@@ -1032,7 +1086,7 @@ fn main() {
         scene_data.single_entities[water_cylinder_entity_index].uv_offset += glm::vec2(0.0, 5.0) * delta_time;
         scene_data.single_entities[water_cylinder_entity_index].uv_scale.y = water_pillar_scale.y;
 
-        scene_data.single_entities[terrain_entity_index].uv_offset += glm::vec2(0.01, 0.01) * delta_time;
+        //scene_data.single_entities[terrain_entity_index].uv_offset += glm::vec2(0.01, 0.01) * delta_time;
 
         //Update tracking space location
         player.tracking_position += player.tracking_velocity * delta_time;
@@ -1434,6 +1488,7 @@ fn main() {
                             }
 
                             //End the frame
+                            //TODO: Figure out why image_array_index has to always be zero now
                             let end_result = framestream.end(wait_info.predicted_display_time, xr::EnvironmentBlendMode::OPAQUE,
                                 &[&xr::CompositionLayerProjection::new()
                                     .space(t_space)
@@ -1511,7 +1566,7 @@ fn main() {
 
             //Render 2D elements
             gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);  //Make sure we're not doing wireframe rendering
-            gl::Disable(gl::DEPTH_TEST);                    //Disable depth testing
+            //gl::Disable(gl::DEPTH_TEST);                    //Disable depth testing
             ui_state.draw(&screen_state);
         }
 
