@@ -1,5 +1,6 @@
 use std::ptr;
 use ozy::render::{InstancedMesh, RenderTarget, SimpleMesh};
+use ozy::structs::OptionVec;
 use crate::glutil;
 use gl::types::*;
 
@@ -34,9 +35,9 @@ pub struct SceneData {
     pub skybox_vao: GLuint,
     pub uniform_light: glm::TVec3<f32>,
     pub shadow_matrix: glm::TMat4<f32>,
-    pub programs: [GLuint; 5],              //non-instanced , instanced  , skybox , single-shadow , instanced-shadow
-    pub single_entities: Vec<SingleEntity>,
-    pub instanced_entities: Vec<InstancedEntity>,
+    pub programs: [GLuint; Self::PROGRAMS_COUNT],              //non-instanced , instanced  , skybox , single-shadow , instanced-shadow
+    single_entities: OptionVec<SingleEntity>,
+    instanced_entities: OptionVec<InstancedEntity>,
 }
 
 impl SceneData {
@@ -45,6 +46,17 @@ impl SceneData {
     const SKYBOX_PROGRAM_INDEX: usize = 2;
     const SINGLE_SHADOW_PROGRAM_INDEX: usize = 3;
     const INSTANCED_SHADOW_PROGRAM_INDEX: usize = 4;
+
+    const PROGRAMS_COUNT: usize = 5;
+
+    pub fn new(programs: [GLuint; Self::PROGRAMS_COUNT], shadow_texture: GLuint) -> Self {
+        SceneData {
+            shadow_texture,
+            programs,
+            uniform_light: glm::normalize(&glm::vec3(1.0, 0.6, 1.0)),
+            ..Default::default()
+        }
+    }
 
     //Returns the entity's index
     pub fn push_single_entity(&mut self, mesh: SimpleMesh) -> usize {
@@ -55,7 +67,7 @@ impl SceneData {
             uv_offset: glm::zero(),
             model_matrix: glm::identity()
         };
-        self.single_entities.push(entity);
+        self.single_entities.insert(entity);
         self.single_entities.len() - 1
     }
 
@@ -67,8 +79,18 @@ impl SceneData {
             uv_offset: glm::zero(),
             uv_scale: glm::vec2(1.0, 1.0)
         };
-        self.instanced_entities.push(entity);
+        self.instanced_entities.insert(entity);
         self.instanced_entities.len() - 1
+    }
+
+    //Gets a mutable reference to a single entity
+    pub fn get_single_entity(&mut self, idx: usize) -> Option<&mut SingleEntity> {
+        self.single_entities.get_mut_element(idx)
+    }
+
+    //Gets a mutable reference to an instanced entity
+    pub fn get_instanced_entity(&mut self, idx: usize) -> Option<&mut InstancedEntity> {
+        self.instanced_entities.get_mut_element(idx)
     }
 }
 
@@ -86,8 +108,8 @@ impl Default for SceneData {
             uniform_light: glm::vec3(0.0, 0.0, 1.0),
             shadow_matrix: glm::identity(),
             programs: [0; 5],
-            single_entities: Vec::new(),
-            instanced_entities: Vec::new()
+            single_entities: OptionVec::new(),
+            instanced_entities: OptionVec::new()
         }
     }
 }
@@ -138,30 +160,34 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
 
     //Render non-instanced entities
     gl::UseProgram(scene_data.programs[SceneData::SINGULAR_PROGRAM_INDEX]);
-    for entity in scene_data.single_entities.iter() {
-        if entity.visible {
-            for i in 0..ozy::render::TEXTURE_MAP_COUNT {
-                gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
-                gl::BindTexture(gl::TEXTURE_2D, entity.mesh.texture_maps[i]);
+    for opt_entity in scene_data.single_entities.iter() {
+        if let Some(entity) = opt_entity {
+            if entity.visible {
+                for i in 0..ozy::render::TEXTURE_MAP_COUNT {
+                    gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
+                    gl::BindTexture(gl::TEXTURE_2D, entity.mesh.texture_maps[i]);
+                }
+                glutil::bind_matrix4(scene_data.programs[SceneData::SINGULAR_PROGRAM_INDEX], "model_matrix", &entity.model_matrix);
+                glutil::bind_vector2(scene_data.programs[SceneData::SINGULAR_PROGRAM_INDEX], "uv_scale", &entity.uv_scale);
+                glutil::bind_vector2(scene_data.programs[SceneData::SINGULAR_PROGRAM_INDEX], "uv_offset", &entity.uv_offset);
+                entity.mesh.draw();
             }
-            glutil::bind_matrix4(scene_data.programs[SceneData::SINGULAR_PROGRAM_INDEX], "model_matrix", &entity.model_matrix);
-            glutil::bind_vector2(scene_data.programs[SceneData::SINGULAR_PROGRAM_INDEX], "uv_scale", &entity.uv_scale);
-            glutil::bind_vector2(scene_data.programs[SceneData::SINGULAR_PROGRAM_INDEX], "uv_offset", &entity.uv_offset);
-            entity.mesh.draw();
         }
     }
 
     //Instanced entity rendering
     gl::UseProgram(scene_data.programs[SceneData::INSTANCED_PROGRAM_INDEX]);
-    for entity in scene_data.instanced_entities.iter() {
-        if entity.visible {
-            for i in 0..ozy::render::TEXTURE_MAP_COUNT {
-                gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
-                gl::BindTexture(gl::TEXTURE_2D, entity.mesh.texture_maps()[i]);
+    for opt_entity in scene_data.instanced_entities.iter() {
+        if let Some(entity) = opt_entity {
+            if entity.visible {
+                for i in 0..ozy::render::TEXTURE_MAP_COUNT {
+                    gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
+                    gl::BindTexture(gl::TEXTURE_2D, entity.mesh.texture_maps()[i]);
+                }
+                glutil::bind_vector2(scene_data.programs[SceneData::INSTANCED_PROGRAM_INDEX], "uv_offset", &entity.uv_offset);
+                glutil::bind_vector2(scene_data.programs[SceneData::INSTANCED_PROGRAM_INDEX], "uv_scale", &entity.uv_scale);
+                entity.mesh.draw();
             }
-            glutil::bind_vector2(scene_data.programs[SceneData::INSTANCED_PROGRAM_INDEX], "uv_offset", &entity.uv_offset);
-            glutil::bind_vector2(scene_data.programs[SceneData::INSTANCED_PROGRAM_INDEX], "uv_scale", &entity.uv_scale);
-            entity.mesh.draw();
         }
     }
 
@@ -184,18 +210,22 @@ pub unsafe fn render_shadows(scene_data: &SceneData) {
     //Draw instanced meshes into shadow map
     glutil::bind_matrix4(scene_data.programs[SceneData::INSTANCED_SHADOW_PROGRAM_INDEX], "view_projection", &scene_data.shadow_matrix);
     gl::UseProgram(scene_data.programs[SceneData::INSTANCED_SHADOW_PROGRAM_INDEX]);
-    for entity in &scene_data.instanced_entities {
-        if entity.visible {
-            entity.mesh.draw();
+    for opt_entity in scene_data.instanced_entities.iter() {
+        if let Some(entity) = opt_entity {
+            if entity.visible {
+                entity.mesh.draw();
+            }
         }
     }
 
     //Draw simple meshes into shadow map
     gl::UseProgram(scene_data.programs[SceneData::SINGLE_SHADOW_PROGRAM_INDEX]);
-    for entity in &scene_data.single_entities {
-        if entity.visible {
-            glutil::bind_matrix4(scene_data.programs[SceneData::SINGLE_SHADOW_PROGRAM_INDEX], "mvp", &(scene_data.shadow_matrix * entity.model_matrix));
-            entity.mesh.draw();
+    for opt_entity in scene_data.single_entities.iter() {
+        if let Some(entity) = opt_entity {
+            if entity.visible {
+                glutil::bind_matrix4(scene_data.programs[SceneData::SINGLE_SHADOW_PROGRAM_INDEX], "mvp", &(scene_data.shadow_matrix * entity.model_matrix));
+                entity.mesh.draw();
+            }
         }
     }
 }

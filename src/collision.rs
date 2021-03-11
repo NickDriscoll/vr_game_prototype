@@ -183,30 +183,18 @@ pub fn robust_point_in_triangle(test_point: &glm::TVec3<f32>, a: &glm::TVec3<f32
     //First get normal of (a, b, intersection)
     let n1 = {
         let n = glm::cross(&(a - b), &(test_point - b));
-        let l = glm::length(&n);
-        if l < glm::epsilon::<f32>() && l > -glm::epsilon::<f32>() {
-            return true;
-        }
         glm::normalize(&n)
     };
 
     //Then get normal of (b, c, intersection)
     let n2 = {
         let n = glm::cross(&(b - c), &(test_point - c));
-        let l = glm::length(&n);
-        if l < glm::epsilon::<f32>() && l > -glm::epsilon::<f32>() {
-            return true;
-        }
         glm::normalize(&n)
     };
 
     //Then get normal of (c, a, intersection)
     let n3 = {
         let n = glm::cross(&(c - a), &(test_point - a));
-        let l = glm::length(&n);
-        if l < glm::epsilon::<f32>() && l > -glm::epsilon::<f32>() {
-            return true;
-        }
         glm::normalize(&n)
     };
 
@@ -240,6 +228,8 @@ pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec4<f32>, ray_dire
 
         //Robust triangle-point collision in 3D
         if t > 0.0 && t < smallest_t && robust_point_in_triangle(&glm::vec4_to_vec3(&intersection), &a, &b, &c) {
+        //if t > 0.0 && t < smallest_t && simple_point_in_triangle(&glm::vec4_to_vec2(&intersection), &glm::vec3_to_vec2(&a), &glm::vec3_to_vec2(&b), &glm::vec3_to_vec2(&c)) {
+            //println!("{} smaller than {}", t, smallest_t);
             smallest_t = t;
             closest_intersection = Some(intersection);            
         }

@@ -85,7 +85,6 @@ void main() {
     //Determine how shadowed the fragment is
     float shadow = 0.0;
     vec4 adj_shadow_space_pos = shadow_space_pos * 0.5 + 0.5;
-    vec2 texel_size = 1.0 / textureSize(shadow_map, 0);
     
     //Check if this fragment can even receive shadows before doing this expensive calculation
     if (!(adj_shadow_space_pos.z < 0.0 || adj_shadow_space_pos.z > 1.0 || adj_shadow_space_pos.x < 0.0 || adj_shadow_space_pos.x > 1.0 || adj_shadow_space_pos.y < 0.0 || adj_shadow_space_pos.y > 1.0)) {
@@ -93,6 +92,7 @@ void main() {
             //Do PCF
             //Average the nxn block of shadow texels centered at this pixel
             int bound = 1;
+            vec2 texel_size = 1.0 / textureSize(shadow_map, 0);
             for (int x = -bound; x <= bound; x++) {
                 for (int y = -bound; y <= bound; y++) {
                     shadow += determine_shadowed(vec3(adj_shadow_space_pos.xy + vec2(x, y) * texel_size, adj_shadow_space_pos.z));
@@ -111,12 +111,15 @@ void main() {
     }
 
     //Compute specular light w/ blinn-phong
-    float roughness = texture(roughness_map, scaled_uvs).x;
-    vec3 view_direction = normalize(tangent_view_position - tangent_space_pos);
-    vec3 halfway = normalize(view_direction + tangent_sun_direction);
-    float specular_angle = max(0.0, dot(halfway, tangent_space_normal));
-    float shininess = (1.0 - roughness) * (SHININESS_UPPER_BOUND - SHININESS_LOWER_BOUND) + SHININESS_LOWER_BOUND;
-    float specular = pow(specular_angle, shininess);
+    float specular = 0.0;
+    if (dist_from_camera < LOD_DIST1) {
+        float roughness = texture(roughness_map, scaled_uvs).x;
+        vec3 view_direction = normalize(tangent_view_position - tangent_space_pos);
+        vec3 halfway = normalize(view_direction + tangent_sun_direction);
+        float specular_angle = max(0.0, dot(halfway, tangent_space_normal));
+        float shininess = (1.0 - roughness) * (SHININESS_UPPER_BOUND - SHININESS_LOWER_BOUND) + SHININESS_LOWER_BOUND;
+        specular = pow(specular_angle, shininess);
+    }
 
     vec3 final_color = ((specular + diffuse) * (1.0 - shadow) + AMBIENT) * albedo;
     frag_color = vec4(final_color, 1.0);

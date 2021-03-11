@@ -13,11 +13,13 @@ use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
 use gl::types::*;
+use imgui::{DrawCmd, FontAtlasRefMut, TextureId, im_str};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{ErrorKind, Read};
 use std::process::exit;
 use std::mem::size_of;
+use std::ptr;
 use std::os::raw::c_void;
 use std::time::Instant;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
@@ -217,7 +219,7 @@ fn main() {
     let right_trigger_action = xrutil::make_action::<f32>(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_trigger", "Right hand trigger");
     let right_hand_grip_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_pose", "Right hand pose");
     let right_hand_aim_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_aim", "Right hand aim");
-    let item_menu_action = xrutil::make_action::<bool>(&right_hand_subaction_path, &xr_controller_actionset, "item_menu", "Interact with item menu");
+    let go_home_action = xrutil::make_action::<bool>(&right_hand_subaction_path, &xr_controller_actionset, "item_menu", "Interact with item menu");
     let player_move_action = xrutil::make_action::<xr::Vector2f>(&left_hand_subaction_path, &xr_controller_actionset, "player_move", "Player movement");
 
     //Suggest interaction profile bindings
@@ -236,7 +238,7 @@ fn main() {
            &left_stick_vector_path,
            &left_trackpad_vector_path,
            &right_trackpad_force_path,
-           &item_menu_action,
+           &go_home_action,
            &right_hand_aim_action,
            &right_aim_pose_path,
            &right_trackpad_click_path,
@@ -473,7 +475,7 @@ fn main() {
         _ => { None }
     };
 
-    //Create swapchain framebuffer
+    //Create swapchain FBO
     let xr_swapchain_framebuffer = unsafe {
         let mut p = 0;
         gl::GenFramebuffers(1, &mut p);
@@ -516,6 +518,9 @@ fn main() {
     let shadow_3D = unsafe { glutil::compile_program_from_files("shaders/shadow.vert", "shaders/shadow.frag") };
     let shadow_instanced_3D = unsafe { glutil::compile_program_from_files("shaders/shadow_instanced.vert", "shaders/shadow.frag") };
     let skybox_program = unsafe { glutil::compile_program_from_files("shaders/skybox.vert", "shaders/skybox.frag") };
+
+    //Special program for rendering Dear ImGui
+    let imgui_program = unsafe { glutil::compile_program_from_files("shaders/ui/imgui.vert", "shaders/ui/imgui.frag") };
     
     //Initialize default framebuffer
     let mut default_framebuffer = Framebuffer {
@@ -537,16 +542,11 @@ fn main() {
     let mut shadow_view;
     let shadow_proj_size = 30.0;
     let shadow_projection = glm::ortho(-shadow_proj_size * 2.0, shadow_proj_size * 2.0, -shadow_proj_size * 2.0, shadow_proj_size * 2.0, 3.0 * -shadow_proj_size, 2.0 * shadow_proj_size);
-    let shadow_size = 8192;
+    let shadow_size = 4096;
     let shadow_rendertarget = unsafe { RenderTarget::new_shadow((shadow_size, shadow_size)) };
 
     //Initialize scene data struct
-    let mut scene_data = SceneData {
-        shadow_texture: shadow_rendertarget.texture,
-        programs: [complex_3D, complex_instanced_3D, skybox_program, shadow_3D, shadow_instanced_3D],
-        uniform_light: glm::normalize(&glm::vec3(1.0, 0.6, 1.0)),
-        ..Default::default()
-    };
+    let mut scene_data = SceneData::new([complex_3D, complex_instanced_3D, skybox_program, shadow_3D, shadow_instanced_3D], shadow_rendertarget.texture);
 
     //Initialize texture caching struct
     let mut texture_keeper = TextureKeeper::new();
@@ -570,9 +570,10 @@ fn main() {
     };
 
     //Water gun state
-    const MAX_WATER_PRESSURE: f32 = 40.0;
+    const MAX_WATER_PRESSURE: f32 = 30.0;
     const MAX_WATER_REMAINING: f32 = 75.0;
     let mut water_gun_force = glm::zero();
+    let mut infinite_ammo = false;
     let mut remaining_water = MAX_WATER_REMAINING;
     let mut water_pillar_scale = glm::vec3(1.0, 1.0, 1.0);
     let water_cylinder_mesh = SimpleMesh::from_ozy("models/water_cylinder.ozy", &mut texture_keeper, &tex_params);
@@ -588,6 +589,29 @@ fn main() {
     let mut mouse_lbutton_pressed = false;
     let mut mouse_lbutton_pressed_last_frame = false;
     let mut screen_space_mouse = glm::zero();
+
+    //Creating Dear ImGui context
+    let mut imgui_context = imgui::Context::create();
+    imgui_context.style_mut().use_dark_colors();
+    imgui_context.io_mut().display_size[0] = screen_state.get_window_size().x as f32;
+    imgui_context.io_mut().display_size[1] = screen_state.get_window_size().y as f32;
+
+    //Create Dear IMGUI font atlas
+    match imgui_context.fonts() {
+        FontAtlasRefMut::Owned(atlas) => unsafe {
+            let mut tex = 0;
+            let font_atlas = atlas.build_alpha8_texture();
+            
+            gl::GenTextures(1, &mut tex);
+            gl::BindTexture(gl::TEXTURE_2D, tex);            
+            glutil::apply_texture_parameters(&tex_params);
+            gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RED as GLsizei, font_atlas.width as GLsizei, font_atlas.height as GLsizei, 0, gl::RED, gl::UNSIGNED_BYTE, font_atlas.data.as_ptr() as _);
+            atlas.tex_id = TextureId::new(tex as usize);
+        }
+        FontAtlasRefMut::Shared(_) => {
+            panic!("Not dealing with this case.");
+        }
+    };
 
     //Initialize UI system
     let pause_menu_index = 0;
@@ -631,14 +655,13 @@ fn main() {
         state.toggle_menu(pause_menu_chain_index, pause_menu_index);
         state
     };
-
     
     //Load terrain data
     let terrain;
     {
         let terrain_name = match config.string_options.get(Configuration::LEVEL_NAME) {
             Some(name) => { name }
-            None => { "terrain" }
+            None => { "testmap" }
         };
         terrain = Terrain::from_ozt(&format!("models/{}.ozt", terrain_name));
 
@@ -647,9 +670,10 @@ fn main() {
             Ok(mut file) => {
                 loop {
                     //Read ozy name
-                    let mut ozy_name = match io::read_pascal_strings(&mut file, 1) {
+                    let ozy_name = match io::read_pascal_strings(&mut file, 1) {
                         Ok(v) => { v[0].clone() }
                         Err(e) => {
+                            //We expect this call to eventually return EOF
                             if e.kind() == ErrorKind::UnexpectedEof {
                                 break;
                             }
@@ -674,7 +698,7 @@ fn main() {
 
                     if matrices_count == 1 {
                         let idx = scene_data.push_single_entity(mesh);
-                        scene_data.single_entities[idx].model_matrix = glm::mat4(
+                        scene_data.get_single_entity(idx).unwrap().model_matrix = glm::mat4(
                             matrix_floats[0], matrix_floats[4], matrix_floats[8], matrix_floats[12], 
                             matrix_floats[1], matrix_floats[5], matrix_floats[9], matrix_floats[13], 
                             matrix_floats[2], matrix_floats[6], matrix_floats[10], matrix_floats[14], 
@@ -683,7 +707,7 @@ fn main() {
                     } else {
                         let in_mesh = unsafe { InstancedMesh::from_simplemesh(&mesh, matrices_count as usize, render::INSTANCED_ATTRIBUTE) };
                         let idx = scene_data.push_instanced_entity(in_mesh);
-                        scene_data.instanced_entities[idx].mesh.update_buffer(&matrix_floats);
+                        scene_data.get_instanced_entity(idx).unwrap().mesh.update_buffer(&matrix_floats);
                     }
                 }
                 
@@ -722,7 +746,7 @@ fn main() {
 
         scene_data.push_instanced_entity(mesh)
     };
-    scene_data.instanced_entities[cube_entity_index].mesh.update_buffer(&cube_transform_buffer);
+    scene_data.get_instanced_entity(cube_entity_index).unwrap().mesh.update_buffer(&cube_transform_buffer);
 
     //Create the cube that will be user to render the skybox
 	scene_data.skybox_vao = ozy::prims::skybox_cube_vao();
@@ -779,12 +803,13 @@ fn main() {
     let mut hmd_pov = false;
     if let Some(_) = &xr_instance { hmd_pov = true; }
 
-    //Main loop
     let mut frame_count = 0;
     let mut last_frame_instant = Instant::now();
     let mut last_xr_render_time = xr::Time::from_nanos(0);
     let mut elapsed_time = 0.0;
     let mut command_buffer = Vec::new();
+
+    //Main loop
     while !window.should_close() {
         //Compute the number of seconds since the start of the last frame (i.e at 60fps, delta_time ~= 0.016667)
         let delta_time = {
@@ -808,7 +833,7 @@ fn main() {
         let left_stick_state = xrutil::get_actionstate(&xr_session, &player_move_action);
         let left_trigger_state = xrutil::get_actionstate(&xr_session, &left_trigger_action);
         let right_trigger_state = xrutil::get_actionstate(&xr_session, &right_trigger_action);
-        let right_trackpad_force_state = xrutil::get_actionstate(&xr_session, &item_menu_action);
+        let right_trackpad_force_state = xrutil::get_actionstate(&xr_session, &go_home_action);
 
         //Emergency escape button
         if let Some(state) = right_trackpad_force_state {
@@ -1003,7 +1028,10 @@ fn main() {
 
                 player.was_holding_left_trigger = holding;
             }
+        }
 
+        //Do water gun stuff
+        {
             //Calculate the force of shooting the water gun
             if let (Some(state), Some(pose)) = (right_trigger_state, xrutil::locate_space(&right_hand_aim_space, &tracking_space, last_xr_render_time)) {
 
@@ -1027,17 +1055,22 @@ fn main() {
                 }
             }
 
-            //Do water gun stuff
             if water_gun_force != glm::zero() && remaining_water > 0.0 {
                 let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
-                //remaining_water -= glm::length(&update_force);
+                if !infinite_ammo {
+                    remaining_water -= glm::length(&update_force);
+                }
                 let xz_scale = remaining_water / MAX_WATER_REMAINING;
                 water_pillar_scale.x = xz_scale;
                 water_pillar_scale.z = xz_scale;
                 player.tracking_velocity += update_force;
-                scene_data.single_entities[water_cylinder_entity_index].visible = true;
+                if let Some(entity) = scene_data.get_single_entity(water_cylinder_entity_index) {
+                    entity.visible = true;
+                }
             } else {
-                scene_data.single_entities[water_cylinder_entity_index].visible = false;
+                if let Some(entity) = scene_data.get_single_entity(water_cylinder_entity_index) {
+                    entity.visible = false;
+                }
             }
             if player.movement_state != MoveState::Falling {
                 remaining_water = MAX_WATER_REMAINING;
@@ -1080,13 +1113,15 @@ fn main() {
         }
 
         //Spin the dragon
-        scene_data.single_entities[dragon_entity_index].model_matrix = glm::translation(&dragon_position) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
+        if let Some(entity) = scene_data.get_single_entity(dragon_entity_index) {
+            entity.model_matrix = glm::translation(&dragon_position) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
+        }
 
         //Update the water gun's pillar of water
-        scene_data.single_entities[water_cylinder_entity_index].uv_offset += glm::vec2(0.0, 5.0) * delta_time;
-        scene_data.single_entities[water_cylinder_entity_index].uv_scale.y = water_pillar_scale.y;
-
-        //scene_data.single_entities[terrain_entity_index].uv_offset += glm::vec2(0.01, 0.01) * delta_time;
+        if let Some(entity) = scene_data.get_single_entity(water_cylinder_entity_index) {
+            entity.uv_offset += glm::vec2(0.0, 5.0) * delta_time;
+            entity.uv_scale.y = water_pillar_scale.y;
+        }
 
         //Update tracking space location
         player.tracking_position += player.tracking_velocity * delta_time;
@@ -1309,6 +1344,7 @@ fn main() {
                     }
                 }
 
+                //Set player falling if not colliding with any tris
                 if !done_checking {
                     set_player_falling(&mut player);
                 }
@@ -1388,15 +1424,19 @@ fn main() {
         world_from_tracking = glm::translation(&player.tracking_position);
         tracking_from_world = glm::affine_inverse(world_from_tracking);
 
-        //Make the light dance around
-        //scene_data.uniform_light = glm::normalize(&glm::vec3(4.0 * f32::cos(-0.5 * elapsed_time), 4.0 * f32::sin(-0.5 * elapsed_time), 2.0));
-        //scene_data.uniform_light = glm::normalize(&glm::vec4(4.0 * f32::cos(0.5 * elapsed_time), 0.0, 2.0, 0.0));
         shadow_view = glm::look_at(&scene_data.uniform_light, &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
         scene_data.shadow_matrix = shadow_projection * shadow_view;
 
         player.last_tracked_segment = player.tracked_segment.clone();
         last_camera_position = camera_position;
+
         //Pre-render phase
+
+        //Draw ImGui
+        let mut ui = imgui_context.frame();
+        ui.text(im_str!("Just trying this out."));
+        ui.separator();
+        ui.text(im_str!("Frame: {}", frame_count));
 
         //Create a view matrix from the camera state
         {
@@ -1411,8 +1451,9 @@ fn main() {
 
         //Render
         unsafe {
-            //Enable depth test for 3D rendering
+            //Enable depth test and backface culling for 3D rendering
             gl::Enable(gl::DEPTH_TEST);
+            gl::Enable(gl::CULL_FACE);
 
             if wireframe { gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE); }
 
@@ -1436,7 +1477,9 @@ fn main() {
                             xrutil::entity_pose_update(&mut scene_data, right_wand_entity_index, right_hand_pose, &world_from_tracking);
 
                             if let Some(p) = right_hand_aim_pose {
-                                scene_data.single_entities[water_cylinder_entity_index].model_matrix = xrutil::pose_to_mat4(&p, &world_from_tracking) * glm::scaling(&water_pillar_scale);
+                                if let Some(entity) = scene_data.get_single_entity(water_cylinder_entity_index) {
+                                    entity.model_matrix = xrutil::pose_to_mat4(&p, &world_from_tracking) * glm::scaling(&water_pillar_scale);
+                                }
                             }
 
                             //Render shadow map
@@ -1566,8 +1609,99 @@ fn main() {
 
             //Render 2D elements
             gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);  //Make sure we're not doing wireframe rendering
-            //gl::Disable(gl::DEPTH_TEST);                    //Disable depth testing
+            gl::Disable(gl::DEPTH_TEST);                    //Disable depth testing
+            gl::Disable(gl::CULL_FACE);                     //Disable any face culling
             ui_state.draw(&screen_state);
+
+            //Render Dear IMGUI
+            gl::UseProgram(imgui_program);
+            glutil::bind_matrix4(imgui_program, "projection", screen_state.get_clipping_from_screen());
+            {
+                let draw_data = ui.render();
+                let vert_size = 8;
+                let mut verts = vec![0.0; draw_data.total_vtx_count as usize * vert_size];
+                let mut inds = vec![0; draw_data.total_idx_count as usize];
+
+                let mut current_vertex = 0;
+                let mut current_index = 0;
+                for list in draw_data.draw_lists() {
+                    let vtx_buffer = list.vtx_buffer();
+                    for vtx in vtx_buffer.iter() {
+                        verts[current_vertex * vert_size] = vtx.pos[0];
+                        verts[current_vertex * vert_size + 1] = vtx.pos[1];
+                        verts[current_vertex * vert_size + 2] = vtx.uv[0];
+                        verts[current_vertex * vert_size + 3] = vtx.uv[1];
+
+                        verts[current_vertex * vert_size + 4] = vtx.col[0] as f32 / 255.0;
+                        verts[current_vertex * vert_size + 5] = vtx.col[1] as f32 / 255.0;
+                        verts[current_vertex * vert_size + 6] = vtx.col[2] as f32 / 255.0;
+                        verts[current_vertex * vert_size + 7] = vtx.col[3] as f32 / 255.0;
+
+                        current_vertex += 1;
+                    }
+
+                    let idx_buffer = list.idx_buffer();
+                    for idx in idx_buffer.iter() {
+                        inds[current_index] = *idx;
+                        current_index += 1;
+                    }
+                }
+                
+                if draw_data.total_vtx_count > 0 {
+                    let imgui_vao = glutil::create_vertex_array_object(&verts, &inds, &[2, 2, 4]);
+                
+                    let mut idx_offset = 0;
+                    for list in draw_data.draw_lists() {
+                        for command in list.commands() {
+                            match command {
+                                DrawCmd::Elements {count, cmd_params} => {
+                                    let atlas_texture = cmd_params.texture_id.id() as GLuint;
+    
+                                    gl::BindVertexArray(imgui_vao);
+                                    gl::ActiveTexture(gl::TEXTURE0);
+                                    gl::BindTexture(gl::TEXTURE_2D, atlas_texture);
+                                    gl::DrawElements(gl::TRIANGLES, count as GLint, gl::UNSIGNED_SHORT, (idx_offset * size_of::<GLushort>()) as _);
+    
+                                    idx_offset += count;
+                                }
+                                DrawCmd::ResetRenderState => {
+                                    println!("DrawCmd::ResetRenderState.");
+                                }
+                                DrawCmd::RawCallback {..} => {
+                                    println!("DrawCmd::RawCallback.");
+                                }
+                            }
+                        }
+                    }
+
+                    gl::DeleteVertexArrays(1, &imgui_vao);
+                }
+
+                /*
+                //Have Dear IMGUI regenerate the font atlas
+                let imgui_font_atlas = match imgui_context.fonts() {
+                    FontAtlasRefMut::Owned(atlas) => {
+                        atlas.build_alpha8_texture()
+                    }
+                    FontAtlasRefMut::Shared(_) => {
+                        panic!("Not dealing with this case.");
+                    }
+                };
+                
+                //Upload the updated font atlas
+                {
+                    if imgui_atlas_tex == 0 {
+                        gl::GenTextures(1, &mut imgui_atlas_tex);
+                        gl::BindTexture(gl::TEXTURE_2D, imgui_atlas_tex);
+                        gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RED as GLsizei, imgui_font_atlas.width as GLsizei, imgui_font_atlas.height as GLsizei, 0, gl::RED, gl::UNSIGNED_BYTE, imgui_font_atlas.data.as_ptr() as _);
+    
+                    } else {
+                        gl::BindTexture(gl::TEXTURE_2D, imgui_atlas_tex);
+                        gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, 0, imgui_font_atlas.width as GLint, imgui_font_atlas.height as GLint, gl::RED, gl::UNSIGNED_BYTE, imgui_font_atlas.data.as_ptr() as _);
+                    }
+                }
+                */
+            }
         }
 
         window.swap_buffers();
