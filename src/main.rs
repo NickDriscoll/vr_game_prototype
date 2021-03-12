@@ -593,8 +593,12 @@ fn main() {
     //Creating Dear ImGui context
     let mut imgui_context = imgui::Context::create();
     imgui_context.style_mut().use_dark_colors();
-    imgui_context.io_mut().display_size[0] = screen_state.get_window_size().x as f32;
-    imgui_context.io_mut().display_size[1] = screen_state.get_window_size().y as f32;
+    {
+        let io = imgui_context.io_mut();
+        io.display_size[0] = screen_state.get_window_size().x as f32;
+        io.display_size[1] = screen_state.get_window_size().y as f32;
+
+    }
 
     //Create Dear IMGUI font atlas
     match imgui_context.fonts() {
@@ -719,7 +723,7 @@ fn main() {
     }
 
     //Create dragon
-    let mut dragon_position = glm::vec3(19.209993, 0.5290663, 132.3208);
+    let mut dragon_position = glm::vec3(19.209993, 0.5290663, 0.0);
     let dragon_mesh = SimpleMesh::from_ozy("models/dragon.ozy", &mut texture_keeper, &tex_params);
     let dragon_entity_index = scene_data.push_single_entity(dragon_mesh);
 
@@ -844,6 +848,7 @@ fn main() {
 
         //Poll window events and handle them
         glfw.poll_events();
+        let imgui_io = imgui_context.io_mut();
         for (_, event) in glfw::flush_messages(&events) {
             match event {
                 WindowEvent::Close => { window.set_should_close(true); }
@@ -901,17 +906,20 @@ fn main() {
                     match action {
                         Action::Press => {
                             mouse_lbutton_pressed = true;
-                            placing = true;
+                            imgui_io.mouse_down[0] = true;
                         }
                         Action::Release => {
                             mouse_lbutton_pressed = false;
-                            placing = false;
-                            println!("Dragon moved to ({}, {}, {})", dragon_position.x, dragon_position.y, dragon_position.z);
+                            imgui_io.mouse_down[0] = false;
                         }
                         Action::Repeat => {}
                     }
                 }
+                WindowEvent::MouseButton(glfw::MouseButtonRight, glfw::Action::Press, ..) => {
+                    imgui_io.mouse_down[1] = true;
+                }
                 WindowEvent::MouseButton(glfw::MouseButtonRight, glfw::Action::Release, ..) => {
+                    imgui_io.mouse_down[1] = false;
                     if mouselook_enabled {
                         window.set_cursor_mode(glfw::CursorMode::Normal);
                     } else {
@@ -920,6 +928,7 @@ fn main() {
                     mouselook_enabled = !mouselook_enabled;
                 }
                 WindowEvent::CursorPos(x, y) => {
+                    imgui_io.mouse_pos = [x as f32, y as f32];
                     screen_space_mouse = glm::vec2(x as f32, y as f32);
                     if mouselook_enabled {
                         const CAMERA_SENSITIVITY_DAMPENING: f32 = 0.002;
@@ -932,9 +941,14 @@ fn main() {
                         }
                     }
                 }
+                WindowEvent::FramebufferSize(width, height) => {
+                    imgui_io.display_size[0] = width as f32;
+                    imgui_io.display_size[1] = height as f32;
+                }
                 _ => {  }
             }
         }
+        drop(imgui_io);
 
         //Update the state of the ui
         ui_state.update_buttons(screen_space_mouse, mouse_lbutton_pressed, mouse_lbutton_pressed_last_frame, &mut command_buffer);
@@ -952,22 +966,6 @@ fn main() {
                 Command::ToggleAllMenus => { ui_state.toggle_hide_all_menus(); }
                 Command::ToggleWireframe => { wireframe = !wireframe; }
                 Command::ToggleFullScreen => {
-                    //Fullscreen the window
-                    if !is_fullscreen {
-                        is_fullscreen = true;
-                        glfw.with_primary_monitor_mut(|_, opt_monitor| {
-                            if let Some(monitor) = opt_monitor {
-                                let pos = monitor.get_pos();
-                                if let Some(mode) = monitor.get_video_mode() {
-                                    resize_main_window(&mut window, &mut default_framebuffer, &mut screen_state, &mut ui_state, glm::vec2(mode.width, mode.height), pos, WindowMode::FullScreen(monitor));
-                                }
-                            }
-                        });
-                    } else {
-                        is_fullscreen = false;
-                        let window_size = get_window_size(&config);
-                        resize_main_window(&mut window, &mut default_framebuffer, &mut screen_state, &mut ui_state, window_size, (200, 200), WindowMode::Windowed);
-                    }
                 }
                 Command::ResetPlayerPosition => {
                     player.tracking_position = glm::vec3(0.0, 0.0, 3.0);
@@ -1433,10 +1431,63 @@ fn main() {
         //Pre-render phase
 
         //Draw ImGui
-        let mut ui = imgui_context.frame();
-        ui.text(im_str!("Just trying this out."));
-        ui.separator();
+        let ui = imgui_context.frame();
+        if ui.button(im_str!("Fullscreen"), [0.0, 32.0]) {
+            //Toggle window fullscreen
+            if !is_fullscreen {
+                is_fullscreen = true;
+                glfw.with_primary_monitor_mut(|_, opt_monitor| {
+                    if let Some(monitor) = opt_monitor {
+                        let pos = monitor.get_pos();
+                        if let Some(mode) = monitor.get_video_mode() {
+                            resize_main_window(&mut window, &mut default_framebuffer, &mut screen_state, &mut ui_state, glm::vec2(mode.width, mode.height), pos, WindowMode::FullScreen(monitor));
+                        }
+                    }
+                });
+            } else {
+                is_fullscreen = false;
+                let window_size = get_window_size(&config);
+                resize_main_window(&mut window, &mut default_framebuffer, &mut screen_state, &mut ui_state, window_size, (200, 200), WindowMode::Windowed);
+            }
+        }
         ui.text(im_str!("Frame: {}", frame_count));
+        ui.checkbox(im_str!("Wireframe view"), &mut wireframe);
+        ui.checkbox(im_str!("Complex normals"), &mut scene_data.complex_normals);
+        ui.separator();
+
+        //Do visualization radio selection
+        if ui.radio_button_bool(im_str!("Visualize normals"), scene_data.visualize_normals) {
+            if scene_data.visualize_normals {
+                scene_data.visualize_normals = false;
+            } else {
+                scene_data.visualize_normals = true;
+                scene_data.visualize_lod = false;
+                scene_data.visualize_shadowed = false;
+            }
+        }        
+        if ui.radio_button_bool(im_str!("Visualize LOD zones"), scene_data.visualize_lod) {
+            if scene_data.visualize_lod {
+                scene_data.visualize_lod = false;
+            } else {
+                scene_data.visualize_lod = true;
+                scene_data.visualize_normals = false;
+                scene_data.visualize_shadowed = false;
+            }
+        }        
+        if ui.radio_button_bool(im_str!("Visualize shadowed"), scene_data.visualize_shadowed) {
+            if scene_data.visualize_shadowed {
+                scene_data.visualize_shadowed = false;
+            } else {
+                scene_data.visualize_shadowed = true;
+                scene_data.visualize_lod = false;
+                scene_data.visualize_normals = false;
+            }
+        }
+        ui.separator();
+
+        //Do quit button
+        if ui.button(im_str!("Quit"), [0.0, 32.0]) { window.set_should_close(true); }
+        
 
         //Create a view matrix from the camera state
         {
@@ -1613,7 +1664,7 @@ fn main() {
             gl::Disable(gl::CULL_FACE);                     //Disable any face culling
             ui_state.draw(&screen_state);
 
-            //Render Dear IMGUI
+            //Render Dear ImGui
             gl::UseProgram(imgui_program);
             glutil::bind_matrix4(imgui_program, "projection", screen_state.get_clipping_from_screen());
             {
@@ -1655,13 +1706,11 @@ fn main() {
                         for command in list.commands() {
                             match command {
                                 DrawCmd::Elements {count, cmd_params} => {
-                                    let atlas_texture = cmd_params.texture_id.id() as GLuint;
-    
+                                    let atlas_texture = cmd_params.texture_id.id() as GLuint;    
                                     gl::BindVertexArray(imgui_vao);
                                     gl::ActiveTexture(gl::TEXTURE0);
                                     gl::BindTexture(gl::TEXTURE_2D, atlas_texture);
-                                    gl::DrawElements(gl::TRIANGLES, count as GLint, gl::UNSIGNED_SHORT, (idx_offset * size_of::<GLushort>()) as _);
-    
+                                    gl::DrawElements(gl::TRIANGLES, count as GLint, gl::UNSIGNED_SHORT, (idx_offset * size_of::<GLushort>()) as _);    
                                     idx_offset += count;
                                 }
                                 DrawCmd::ResetRenderState => {
@@ -1676,31 +1725,6 @@ fn main() {
 
                     gl::DeleteVertexArrays(1, &imgui_vao);
                 }
-
-                /*
-                //Have Dear IMGUI regenerate the font atlas
-                let imgui_font_atlas = match imgui_context.fonts() {
-                    FontAtlasRefMut::Owned(atlas) => {
-                        atlas.build_alpha8_texture()
-                    }
-                    FontAtlasRefMut::Shared(_) => {
-                        panic!("Not dealing with this case.");
-                    }
-                };
-                
-                //Upload the updated font atlas
-                {
-                    if imgui_atlas_tex == 0 {
-                        gl::GenTextures(1, &mut imgui_atlas_tex);
-                        gl::BindTexture(gl::TEXTURE_2D, imgui_atlas_tex);
-                        gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RED as GLsizei, imgui_font_atlas.width as GLsizei, imgui_font_atlas.height as GLsizei, 0, gl::RED, gl::UNSIGNED_BYTE, imgui_font_atlas.data.as_ptr() as _);
-    
-                    } else {
-                        gl::BindTexture(gl::TEXTURE_2D, imgui_atlas_tex);
-                        gl::TexSubImage2D(gl::TEXTURE_2D, 0, 0, 0, imgui_font_atlas.width as GLint, imgui_font_atlas.height as GLint, gl::RED, gl::UNSIGNED_BYTE, imgui_font_atlas.data.as_ptr() as _);
-                    }
-                }
-                */
             }
         }
 
