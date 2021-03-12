@@ -28,7 +28,6 @@ use ozy::glutil::ColorSpace;
 use ozy::render::{Framebuffer, InstancedMesh, RenderTarget, ScreenState, SimpleMesh, TextureKeeper};
 use ozy::structs::OptionVec;
 use ozy::io;
-use ozy::ui::UIState;
 use ozy::routines::uniform_scale;
 
 use crate::collision::*;
@@ -37,14 +36,19 @@ use crate::structs::*;
 #[cfg(windows)]
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
 
-//The font data is baked at compile time
-const FONT_BYTES: &'static [u8; 212276] = include_bytes!("../fonts/Constantia.ttf");
+fn reset_player_position(player: &mut Player) {    
+    player.tracking_position = glm::vec3(0.0, 0.0, 3.0);
+    player.tracking_velocity = glm::zero();
+    player.tracked_segment = LineSegment::zero();
+    player.last_tracked_segment = LineSegment::zero();
+    player.jumps_remaining = Player::MAX_JUMPS;
+    player.movement_state = MoveState::Grounded;
+}
 
-fn resize_main_window<T: Copy>(window: &mut Window, framebuffer: &mut Framebuffer, screen_state: &mut ScreenState, ui_state: &mut UIState<T>, size: glm::TVec2<u32>, pos: (i32, i32), window_mode: WindowMode) {    
+fn resize_main_window(window: &mut Window, framebuffer: &mut Framebuffer, screen_state: &mut ScreenState, size: glm::TVec2<u32>, pos: (i32, i32), window_mode: WindowMode) {    
     framebuffer.size = (size.x as GLsizei, size.y as GLsizei);
     *screen_state = ScreenState::new(glm::vec2(size.x, size.y), glm::identity(), glm::half_pi(), NEAR_DISTANCE, FAR_DISTANCE);
     window.set_monitor(window_mode, pos.0, pos.1, size.x, size.y, Some(144));
-    ui_state.resize((size.x, size.y));
 }
 
 fn clamp<T: PartialOrd>(x: T, min: T, max: T) -> T {
@@ -337,6 +341,7 @@ fn main() {
     window.set_key_polling(true);
     window.set_mouse_button_polling(true);
     window.set_cursor_pos_polling(true);
+    window.set_framebuffer_size_polling(true);
 
     //Load OpenGL function pointers
     gl::load_with(|symbol| window.get_proc_address(symbol));
@@ -587,7 +592,6 @@ fn main() {
     let mut collision_aabbs: OptionVec<AABB> = OptionVec::new();
 
     let mut mouse_lbutton_pressed = false;
-    let mut mouse_lbutton_pressed_last_frame = false;
     let mut screen_space_mouse = glm::zero();
 
     //Creating Dear ImGui context
@@ -615,49 +619,6 @@ fn main() {
         FontAtlasRefMut::Shared(_) => {
             panic!("Not dealing with this case.");
         }
-    };
-
-    //Initialize UI system
-    let pause_menu_index = 0;
-    let graphics_menu_index = 1;
-    let pause_menu_chain_index;
-    let graphics_menu_chain_index;
-    let mut ui_state = {
-        let button_program = unsafe { glutil::compile_program_from_files("shaders/ui/button.vert", "shaders/ui/button.frag") };
-        let glyph_program = unsafe { glutil::compile_program_from_files("shaders/ui/glyph.vert", "shaders/ui/glyph.frag") };
-
-        let mut state = UIState::new(FONT_BYTES, (screen_state.get_window_size().x, screen_state.get_window_size().y), [button_program, glyph_program]);
-        pause_menu_chain_index = state.create_menu_chain();
-        graphics_menu_chain_index = state.create_menu_chain();
-        
-        let mut topbar_menu = Vec::with_capacity(3);
-        topbar_menu.push(("Graphics options", Some(Command::ToggleMenu(graphics_menu_chain_index, graphics_menu_index))));
-
-        let mut graphics_menu = vec![
-            ("Toggle fullscreen", Some(Command::ToggleFullScreen)),
-            ("Visualize normals", Some(Command::ToggleNormalVis)),
-            ("Visualize LOD zones", Some(Command::ToggleLodVis)),
-            ("Visualize how shadowed", Some(Command::ToggleShadowedVis)),
-            ("Complex normals", Some(Command::ToggleComplexNormals)),
-            ("Wireframe view", Some(Command::ToggleWireframe))
-        ];
-
-        //Only display the HMD perspective button if OpenXR was initialized
-        if let Some(_) = xr_session {
-            graphics_menu.push(("Toggle HMD perspective", Some(Command::ToggleHMDPov)));
-            topbar_menu.push(("Reset player position", Some(Command::ResetPlayerPosition)));
-        }
-
-        topbar_menu.push(("Quit", Some(Command::Quit)));
-
-        let menus = vec![
-            ozy::ui::Menu::new(topbar_menu, ozy::ui::UIAnchor::LeftAlignedRow((0.0, 0.0)), 24.0),
-            ozy::ui::Menu::new(graphics_menu, ozy::ui::UIAnchor::RightAlignedColumn((0.0, 0.0)), 24.0)
-        ];
-
-        state.set_menus(menus);
-        state.toggle_menu(pause_menu_chain_index, pause_menu_index);
-        state
     };
     
     //Load terrain data
@@ -811,10 +772,10 @@ fn main() {
     let mut last_frame_instant = Instant::now();
     let mut last_xr_render_time = xr::Time::from_nanos(0);
     let mut elapsed_time = 0.0;
-    let mut command_buffer = Vec::new();
 
     //Main loop
     while !window.should_close() {
+        let imgui_io = imgui_context.io_mut();
         //Compute the number of seconds since the start of the last frame (i.e at 60fps, delta_time ~= 0.016667)
         let delta_time = {
 			let frame_instant = Instant::now();
@@ -823,8 +784,8 @@ fn main() {
 			dur.as_secs_f32()
         };
         elapsed_time += delta_time;
-        mouse_lbutton_pressed_last_frame = mouse_lbutton_pressed;
         frame_count += 1;
+        imgui_io.delta_time;
 
         //Sync OpenXR actions
         if let (Some(session), Some(controller_actionset)) = (&xr_session, &xr_controller_actionset) {
@@ -842,21 +803,17 @@ fn main() {
         //Emergency escape button
         if let Some(state) = right_trackpad_force_state {
             if state.changed_since_last_sync && state.current_state {
-                command_buffer.push(Command::ResetPlayerPosition);
+                reset_player_position(&mut player);
             }
         }
 
         //Poll window events and handle them
         glfw.poll_events();
-        let imgui_io = imgui_context.io_mut();
         for (_, event) in glfw::flush_messages(&events) {
             match event {
                 WindowEvent::Close => { window.set_should_close(true); }
                 WindowEvent::Key(key, _, Action::Press, _) => {
                     match key {
-                        Key::Escape => {
-                            command_buffer.push(Command::ToggleAllMenus);
-                        }
                         Key::Space => { placing = !placing; }
                         Key::W => {
                             camera_input.z += -1.0;
@@ -905,11 +862,9 @@ fn main() {
                 WindowEvent::MouseButton(glfw::MouseButtonLeft, action, ..) => {
                     match action {
                         Action::Press => {
-                            mouse_lbutton_pressed = true;
                             imgui_io.mouse_down[0] = true;
                         }
                         Action::Release => {
-                            mouse_lbutton_pressed = false;
                             imgui_io.mouse_down[0] = false;
                         }
                         Action::Repeat => {}
@@ -949,34 +904,6 @@ fn main() {
             }
         }
         drop(imgui_io);
-
-        //Update the state of the ui
-        ui_state.update_buttons(screen_space_mouse, mouse_lbutton_pressed, mouse_lbutton_pressed_last_frame, &mut command_buffer);
-
-        //Drain the command_buffer and process commands
-        for command in command_buffer.drain(0..command_buffer.len()) {
-            match command {
-                Command::Quit => { window.set_should_close(true); }
-                Command::ToggleMenu(chain_index, menu_index) => { ui_state.toggle_menu(chain_index, menu_index); }
-                Command::ToggleNormalVis => { scene_data.visualize_normals = !scene_data.visualize_normals; }
-                Command::ToggleLodVis => { scene_data.visualize_lod = !scene_data.visualize_lod; }
-                Command::ToggleShadowedVis => { scene_data.visualize_shadowed = !scene_data.visualize_shadowed; }
-                Command::ToggleComplexNormals => { scene_data.complex_normals = !scene_data.complex_normals; }
-                Command::ToggleHMDPov => { hmd_pov = !hmd_pov; }
-                Command::ToggleAllMenus => { ui_state.toggle_hide_all_menus(); }
-                Command::ToggleWireframe => { wireframe = !wireframe; }
-                Command::ToggleFullScreen => {
-                }
-                Command::ResetPlayerPosition => {
-                    player.tracking_position = glm::vec3(0.0, 0.0, 3.0);
-                    player.tracking_velocity = glm::zero();
-                    player.tracked_segment = LineSegment::zero();
-                    player.last_tracked_segment = LineSegment::zero();
-                    player.jumps_remaining = Player::MAX_JUMPS;
-                    player.movement_state = MoveState::Grounded;
-                }
-            }
-        }
 
         //Gravity the player
         const GRAVITY_VELOCITY_CAP: f32 = 10.0;
@@ -1432,62 +1359,69 @@ fn main() {
 
         //Draw ImGui
         let ui = imgui_context.frame();
-        if ui.button(im_str!("Fullscreen"), [0.0, 32.0]) {
-            //Toggle window fullscreen
-            if !is_fullscreen {
-                is_fullscreen = true;
-                glfw.with_primary_monitor_mut(|_, opt_monitor| {
-                    if let Some(monitor) = opt_monitor {
-                        let pos = monitor.get_pos();
-                        if let Some(mode) = monitor.get_video_mode() {
-                            resize_main_window(&mut window, &mut default_framebuffer, &mut screen_state, &mut ui_state, glm::vec2(mode.width, mode.height), pos, WindowMode::FullScreen(monitor));
+        {
+            if ui.button(im_str!("Fullscreen"), [0.0, 32.0]) {
+                //Toggle window fullscreen
+                if !is_fullscreen {
+                    is_fullscreen = true;
+                    glfw.with_primary_monitor_mut(|_, opt_monitor| {
+                        if let Some(monitor) = opt_monitor {
+                            let pos = monitor.get_pos();
+                            if let Some(mode) = monitor.get_video_mode() {
+                                resize_main_window(&mut window, &mut default_framebuffer, &mut screen_state, glm::vec2(mode.width, mode.height), pos, WindowMode::FullScreen(monitor));
+                            }
                         }
-                    }
-                });
-            } else {
-                is_fullscreen = false;
-                let window_size = get_window_size(&config);
-                resize_main_window(&mut window, &mut default_framebuffer, &mut screen_state, &mut ui_state, window_size, (200, 200), WindowMode::Windowed);
+                    });
+                } else {
+                    is_fullscreen = false;
+                    let window_size = get_window_size(&config);
+                    resize_main_window(&mut window, &mut default_framebuffer, &mut screen_state, window_size, (200, 200), WindowMode::Windowed);
+                }
             }
-        }
-        ui.text(im_str!("Frame: {}", frame_count));
-        ui.checkbox(im_str!("Wireframe view"), &mut wireframe);
-        ui.checkbox(im_str!("Complex normals"), &mut scene_data.complex_normals);
-        ui.separator();
+            if ui.button(im_str!("Reset player position"), [0.0, 32.0]) {
+                reset_player_position(&mut player);
+            }
+            ui.text(im_str!("Frame: {}", frame_count));
+            ui.checkbox(im_str!("Wireframe view"), &mut wireframe);
+            ui.checkbox(im_str!("Complex normals"), &mut scene_data.complex_normals);
+            if let Some(_) = &xr_instance {
+                ui.checkbox(im_str!("HMD Point-of-view"), &mut hmd_pov);
+            }
+            ui.separator();
 
-        //Do visualization radio selection
-        if ui.radio_button_bool(im_str!("Visualize normals"), scene_data.visualize_normals) {
-            if scene_data.visualize_normals {
-                scene_data.visualize_normals = false;
-            } else {
-                scene_data.visualize_normals = true;
-                scene_data.visualize_lod = false;
-                scene_data.visualize_shadowed = false;
+            //Do visualization radio selection
+            if ui.radio_button_bool(im_str!("Visualize normals"), scene_data.visualize_normals) {
+                if scene_data.visualize_normals {
+                    scene_data.visualize_normals = false;
+                } else {
+                    scene_data.visualize_normals = true;
+                    scene_data.visualize_lod = false;
+                    scene_data.visualize_shadowed = false;
+                }
+            }        
+            if ui.radio_button_bool(im_str!("Visualize LOD zones"), scene_data.visualize_lod) {
+                if scene_data.visualize_lod {
+                    scene_data.visualize_lod = false;
+                } else {
+                    scene_data.visualize_lod = true;
+                    scene_data.visualize_normals = false;
+                    scene_data.visualize_shadowed = false;
+                }
+            }        
+            if ui.radio_button_bool(im_str!("Visualize shadowed"), scene_data.visualize_shadowed) {
+                if scene_data.visualize_shadowed {
+                    scene_data.visualize_shadowed = false;
+                } else {
+                    scene_data.visualize_shadowed = true;
+                    scene_data.visualize_lod = false;
+                    scene_data.visualize_normals = false;
+                }
             }
-        }        
-        if ui.radio_button_bool(im_str!("Visualize LOD zones"), scene_data.visualize_lod) {
-            if scene_data.visualize_lod {
-                scene_data.visualize_lod = false;
-            } else {
-                scene_data.visualize_lod = true;
-                scene_data.visualize_normals = false;
-                scene_data.visualize_shadowed = false;
-            }
-        }        
-        if ui.radio_button_bool(im_str!("Visualize shadowed"), scene_data.visualize_shadowed) {
-            if scene_data.visualize_shadowed {
-                scene_data.visualize_shadowed = false;
-            } else {
-                scene_data.visualize_shadowed = true;
-                scene_data.visualize_lod = false;
-                scene_data.visualize_normals = false;
-            }
-        }
-        ui.separator();
+            ui.separator();
 
-        //Do quit button
-        if ui.button(im_str!("Quit"), [0.0, 32.0]) { window.set_should_close(true); }
-        
+            //Do quit button
+            if ui.button(im_str!("Quit"), [0.0, 32.0]) { window.set_should_close(true); }
+        }
 
         //Create a view matrix from the camera state
         {
@@ -1497,14 +1431,12 @@ fn main() {
             screen_state.update_view(new_view_matrix);
         }
 
-        //Synchronize ui_state before rendering
-        ui_state.synchronize();
-
         //Render
         unsafe {
             //Enable depth test and backface culling for 3D rendering
             gl::Enable(gl::DEPTH_TEST);
             gl::Enable(gl::CULL_FACE);
+            gl::Disable(gl::SCISSOR_TEST);
 
             if wireframe { gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE); }
 
@@ -1662,7 +1594,7 @@ fn main() {
             gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);  //Make sure we're not doing wireframe rendering
             gl::Disable(gl::DEPTH_TEST);                    //Disable depth testing
             gl::Disable(gl::CULL_FACE);                     //Disable any face culling
-            ui_state.draw(&screen_state);
+            gl::Enable(gl::SCISSOR_TEST);
 
             //Render Dear ImGui
             gl::UseProgram(imgui_program);
@@ -1710,6 +1642,11 @@ fn main() {
                                     gl::BindVertexArray(imgui_vao);
                                     gl::ActiveTexture(gl::TEXTURE0);
                                     gl::BindTexture(gl::TEXTURE_2D, atlas_texture);
+                                    gl::Scissor(cmd_params.clip_rect[0] as GLint,
+                                                screen_state.get_window_size().y as GLint - cmd_params.clip_rect[3] as GLint,
+                                                (cmd_params.clip_rect[2] - cmd_params.clip_rect[0]) as GLint,
+                                                (cmd_params.clip_rect[3] - cmd_params.clip_rect[1]) as GLint
+                                    );
                                     gl::DrawElements(gl::TRIANGLES, count as GLint, gl::UNSIGNED_SHORT, (idx_offset * size_of::<GLushort>()) as _);    
                                     idx_offset += count;
                                 }
