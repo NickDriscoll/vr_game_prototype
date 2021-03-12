@@ -8,7 +8,7 @@ mod structs;
 mod render;
 mod xrutil;
 
-use render::{render_main_scene, render_shadows, SceneData, ViewData};
+use render::{render_main_scene, render_shadows, FragmentFlag, SceneData, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
@@ -35,6 +35,14 @@ use crate::structs::*;
 
 #[cfg(windows)]
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
+
+fn handle_radio_flag<F: Eq>(current_flag: &mut F, new_flag: F, default: F) {
+    if *current_flag != new_flag {
+        *current_flag = new_flag;
+    } else {
+        *current_flag = default;
+    }
+}
 
 fn reset_player_position(player: &mut Player) {    
     player.tracking_position = glm::vec3(0.0, 0.0, 3.0);
@@ -764,6 +772,7 @@ fn main() {
 
     let mut is_fullscreen = false;
     let mut wireframe = false;
+    let mut true_wireframe = false;
     let mut placing = false;
     let mut hmd_pov = false;
     if let Some(_) = &xr_instance { hmd_pov = true; }
@@ -785,7 +794,8 @@ fn main() {
         };
         elapsed_time += delta_time;
         frame_count += 1;
-        imgui_io.delta_time;
+        imgui_io.delta_time = delta_time;
+        let framerate = imgui_io.framerate;
 
         //Sync OpenXR actions
         if let (Some(session), Some(controller_actionset)) = (&xr_session, &xr_controller_actionset) {
@@ -1358,8 +1368,8 @@ fn main() {
         //Pre-render phase
 
         //Draw ImGui
-        let ui = imgui_context.frame();
-        {
+        let ui = {
+            let ui = imgui_context.frame();
             if ui.button(im_str!("Fullscreen"), [0.0, 32.0]) {
                 //Toggle window fullscreen
                 if !is_fullscreen {
@@ -1382,7 +1392,9 @@ fn main() {
                 reset_player_position(&mut player);
             }
             ui.text(im_str!("Frame: {}", frame_count));
+            ui.text(im_str!("FPS: {}", framerate));
             ui.checkbox(im_str!("Wireframe view"), &mut wireframe);
+            ui.checkbox(im_str!("TRUE wireframe view"), &mut true_wireframe);
             ui.checkbox(im_str!("Complex normals"), &mut scene_data.complex_normals);
             if let Some(_) = &xr_instance {
                 ui.checkbox(im_str!("HMD Point-of-view"), &mut hmd_pov);
@@ -1390,38 +1402,16 @@ fn main() {
             ui.separator();
 
             //Do visualization radio selection
-            if ui.radio_button_bool(im_str!("Visualize normals"), scene_data.visualize_normals) {
-                if scene_data.visualize_normals {
-                    scene_data.visualize_normals = false;
-                } else {
-                    scene_data.visualize_normals = true;
-                    scene_data.visualize_lod = false;
-                    scene_data.visualize_shadowed = false;
-                }
-            }        
-            if ui.radio_button_bool(im_str!("Visualize LOD zones"), scene_data.visualize_lod) {
-                if scene_data.visualize_lod {
-                    scene_data.visualize_lod = false;
-                } else {
-                    scene_data.visualize_lod = true;
-                    scene_data.visualize_normals = false;
-                    scene_data.visualize_shadowed = false;
-                }
-            }        
-            if ui.radio_button_bool(im_str!("Visualize shadowed"), scene_data.visualize_shadowed) {
-                if scene_data.visualize_shadowed {
-                    scene_data.visualize_shadowed = false;
-                } else {
-                    scene_data.visualize_shadowed = true;
-                    scene_data.visualize_lod = false;
-                    scene_data.visualize_normals = false;
-                }
-            }
+            if ui.radio_button_bool(im_str!("Visualize normals"), scene_data.fragment_flag == FragmentFlag::Normals) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::Normals, FragmentFlag::Default); }
+            if ui.radio_button_bool(im_str!("Visualize LOD zones"), scene_data.fragment_flag == FragmentFlag::LodZones) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::LodZones, FragmentFlag::Default); }
+            if ui.radio_button_bool(im_str!("Visualize shadowed"), scene_data.fragment_flag == FragmentFlag::Shadowed) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::Shadowed, FragmentFlag::Default); }
             ui.separator();
 
             //Do quit button
             if ui.button(im_str!("Quit"), [0.0, 32.0]) { window.set_should_close(true); }
-        }
+
+            ui
+        };
 
         //Create a view matrix from the camera state
         {
@@ -1595,6 +1585,7 @@ fn main() {
             gl::Disable(gl::DEPTH_TEST);                    //Disable depth testing
             gl::Disable(gl::CULL_FACE);                     //Disable any face culling
             gl::Enable(gl::SCISSOR_TEST);
+            if true_wireframe { gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE); }
 
             //Render Dear ImGui
             gl::UseProgram(imgui_program);

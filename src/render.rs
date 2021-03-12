@@ -25,9 +25,7 @@ pub struct InstancedEntity {
 }
 
 pub struct SceneData {
-    pub visualize_normals: bool,
-    pub visualize_lod: bool,
-    pub visualize_shadowed: bool,
+    pub fragment_flag: FragmentFlag,
     pub complex_normals: bool,
     pub outlining: bool,
     pub shadow_texture: GLuint,
@@ -97,9 +95,7 @@ impl SceneData {
 impl Default for SceneData {
     fn default() -> Self {
         SceneData {
-            visualize_normals: false,
-            visualize_lod: false,
-            visualize_shadowed: false,
+            fragment_flag: FragmentFlag::Default,
             complex_normals: true,
             outlining: false,
             shadow_texture: 0,
@@ -112,6 +108,14 @@ impl Default for SceneData {
             instanced_entities: OptionVec::new()
         }
     }
+}
+
+#[derive(Eq, PartialEq)]
+pub enum FragmentFlag {
+    Default,
+    Normals,
+    LodZones,
+    Shadowed
 }
 
 pub struct ViewData {
@@ -132,6 +136,7 @@ impl ViewData {
     }
 }
 
+//This is the function that renders the image you would actually see on screen/in HMD
 pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
     let texture_map_names = ["albedo_map", "normal_map", "roughness_map", "shadow_map"];
 
@@ -146,12 +151,21 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
         glutil::bind_matrix4(*program, "view_projection", &view_data.view_projection);
         glutil::bind_vector3(*program, "sun_direction", &scene_data.uniform_light);
         glutil::bind_int(*program, "shadow_map", ozy::render::TEXTURE_MAP_COUNT as GLint);
-        glutil::bind_int(*program, "visualize_normals", scene_data.visualize_normals as GLint);
-        glutil::bind_int(*program, "visualize_lod", scene_data.visualize_lod as GLint);
-        glutil::bind_int(*program, "visualize_shadowed", scene_data.visualize_shadowed as GLint);
         glutil::bind_int(*program, "complex_normals", scene_data.complex_normals as GLint);
         glutil::bind_int(*program, "outlining", scene_data.outlining as GLint);
         glutil::bind_vector3(*program, "view_position", &view_data.view_position);
+
+        //fragment flag stuff
+        let flag_names = ["visualize_normals", "visualize_lod", "visualize_shadowed"];
+        for name in flag_names.iter() {
+            glutil::bind_int(*program, name, 0);
+        }
+        match scene_data.fragment_flag {
+            FragmentFlag::Shadowed => { glutil::bind_int(*program, "visualize_shadowed", 1); }
+            FragmentFlag::Normals => { glutil::bind_int(*program, "visualize_normals", 1); }
+            FragmentFlag::LodZones => { glutil::bind_int(*program, "visualize_lod", 1); }
+            FragmentFlag::Default => {}
+        }
 
         for i in 0..ozy::render::TEXTURE_MAP_COUNT {
             glutil::bind_int(*program, texture_map_names[i], i as GLint);
