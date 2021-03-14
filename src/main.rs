@@ -13,7 +13,8 @@ use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
 use gl::types::*;
-use imgui::{ColorEdit, DrawCmd, EditableColor, FontAtlasRefMut, TextureId, im_str};
+use imgui::{ColorEdit, DrawCmd, EditableColor, FontAtlasRefMut, Slider, TextureId, im_str};
+use core::ops::RangeInclusive;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{ErrorKind, Read};
@@ -610,9 +611,8 @@ fn main() {
         let io = imgui_context.io_mut();
         io.display_size[0] = screen_state.get_window_size().x as f32;
         io.display_size[1] = screen_state.get_window_size().y as f32;
-
     }
-    let mut do_imgui = true;
+    let mut do_imgui = false;
 
     //Create and upload Dear IMGUI font atlas
     match imgui_context.fonts() {
@@ -1177,13 +1177,12 @@ fn main() {
 
                 if let Some(collision_point) = segment_hit_plane(&triangle_plane, &seg) {
                     if robust_point_in_triangle(&glm::vec4_to_vec3(&collision_point), &triangle) {
-                        println!("Hit");
-                        camera_position += triangle.normal * (camera_hit_sphere_radius - dist1) * 1.5;
+                        camera_position += triangle.normal * (camera_hit_sphere_radius - dist1);
                     }
                 } else {
                     let closest_point = camera_position + triangle.normal * -dist1;
                     if robust_point_in_triangle(&closest_point, &triangle) && f32::abs(dist1) < camera_hit_sphere_radius {
-                        camera_position += triangle.normal * (camera_hit_sphere_radius - dist1) * 1.5;
+                        camera_position += triangle.normal * (camera_hit_sphere_radius - dist1);
                     }
                 }
             }
@@ -1420,7 +1419,39 @@ fn main() {
         if do_imgui {
             let win = imgui::Window::new(im_str!("Hacking window - (Press ESC to show/hide)"));
             if let Some(win_token) = win.begin(&imgui_ui) {
-                if imgui_ui.button(im_str!("Fullscreen"), [0.0, 32.0]) {
+                if let Some(_) = &xr_instance {
+                    imgui_ui.same_line(0.0);
+                    if imgui_ui.button(im_str!("Reset player position"), [0.0, 32.0]) {
+                        reset_player_position(&mut player);
+                    }
+                }
+                imgui_ui.text(im_str!("FPS: {:.2}\tFrame: {}", framerate, frame_count));
+                imgui_ui.checkbox(im_str!("Wireframe view"), &mut wireframe);
+                imgui_ui.checkbox(im_str!("TRUE wireframe view"), &mut true_wireframe);
+                imgui_ui.checkbox(im_str!("Complex normals"), &mut scene_data.complex_normals);
+                if let Some(_) = &xr_instance {
+                    imgui_ui.checkbox(im_str!("HMD Point-of-view"), &mut hmd_pov);
+                }
+                imgui_ui.separator();
+
+                //Do visualization radio selection
+                imgui_ui.text(im_str!("Debug visualization options:"));
+                if imgui_ui.radio_button_bool(im_str!("Visualize normals"), scene_data.fragment_flag == FragmentFlag::Normals) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::Normals, FragmentFlag::Default); }
+                if imgui_ui.radio_button_bool(im_str!("Visualize LOD zones"), scene_data.fragment_flag == FragmentFlag::LodZones) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::LodZones, FragmentFlag::Default); }
+                if imgui_ui.radio_button_bool(im_str!("Visualize how shadowed"), scene_data.fragment_flag == FragmentFlag::Shadowed) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::Shadowed, FragmentFlag::Default); }
+                imgui_ui.separator();
+
+                imgui_ui.text(im_str!("Lighting controls:"));
+                let ambient_slider = Slider::new(im_str!("Ambient strength")).range(RangeInclusive::new(0.0, 0.5));
+                ambient_slider.build(&imgui_ui, &mut scene_data.ambient_strength);
+
+                let sun_color_editor = ColorEdit::new(im_str!("Sun color"), EditableColor::Float3(&mut scene_data.sun_color));
+                if sun_color_editor.build(&imgui_ui) {}
+
+                imgui_ui.separator();
+
+                //Fullscreen button
+                if imgui_ui.button(im_str!("Toggle fullscreen"), [0.0, 32.0]) {
                     //Toggle window fullscreen
                     if !is_fullscreen {
                         is_fullscreen = true;
@@ -1438,32 +1469,7 @@ fn main() {
                         resize_main_window(&mut window, &mut default_framebuffer, &mut screen_state, window_size, (200, 200), WindowMode::Windowed);
                     }
                 }
-                if let Some(_) = &xr_instance {
-                    imgui_ui.same_line(0.0);
-                    if imgui_ui.button(im_str!("Reset player position"), [0.0, 32.0]) {
-                        reset_player_position(&mut player);
-                    }
-                }
-                imgui_ui.text(im_str!("Frame: {}", frame_count));
-                imgui_ui.text(im_str!("FPS: {}", framerate));
-                imgui_ui.checkbox(im_str!("Wireframe view"), &mut wireframe);
-                imgui_ui.checkbox(im_str!("TRUE wireframe view"), &mut true_wireframe);
-                imgui_ui.checkbox(im_str!("Complex normals"), &mut scene_data.complex_normals);
-                if let Some(_) = &xr_instance {
-                    imgui_ui.checkbox(im_str!("HMD Point-of-view"), &mut hmd_pov);
-                }
-                imgui_ui.separator();
-
-                //Do visualization radio selection
-                imgui_ui.text(im_str!("Debug visualization options:"));
-                if imgui_ui.radio_button_bool(im_str!("Visualize normals"), scene_data.fragment_flag == FragmentFlag::Normals) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::Normals, FragmentFlag::Default); }
-                if imgui_ui.radio_button_bool(im_str!("Visualize LOD zones"), scene_data.fragment_flag == FragmentFlag::LodZones) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::LodZones, FragmentFlag::Default); }
-                if imgui_ui.radio_button_bool(im_str!("Visualize how shadowed"), scene_data.fragment_flag == FragmentFlag::Shadowed) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::Shadowed, FragmentFlag::Default); }
-                imgui_ui.separator();
-
-                let sun_color_editor = ColorEdit::new(im_str!("Sun color"), EditableColor::Float3(&mut scene_data.sun_color));
-                if sun_color_editor.build(&imgui_ui) {}
-                imgui_ui.separator();
+                imgui_ui.same_line(0.0);
 
                 //Do quit button
                 if imgui_ui.button(im_str!("Quit"), [0.0, 32.0]) { window.set_should_close(true); }
@@ -1486,7 +1492,7 @@ fn main() {
             //Enable depth test and backface culling for 3D rendering
             gl::Enable(gl::DEPTH_TEST);
             gl::Enable(gl::CULL_FACE);
-            gl::Disable(gl::SCISSOR_TEST);
+            gl::Disable(gl::SCISSOR_TEST);      //Disabling scissor test because it gets enabled before 2D rendering
 
             if wireframe { gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE); }
 
@@ -1653,39 +1659,7 @@ fn main() {
             {
                 let draw_data = imgui_ui.render();
                 
-                if draw_data.total_vtx_count > 0 {
-                    /*
-                    let mut verts = vec![0.0; draw_data.total_vtx_count as usize * vert_size];
-                    let mut inds = vec![0; draw_data.total_idx_count as usize];
-    
-                    let mut current_vertex = 0;
-                    let mut current_index = 0;
-                    for list in draw_data.draw_lists() {    
-                        let idx_buffer = list.idx_buffer();
-                        for idx in idx_buffer.iter() {
-                            inds[current_index] = *idx + current_vertex as u16;
-                            current_index += 1;
-                        }
-
-                        let vtx_buffer = list.vtx_buffer();
-                        for vtx in vtx_buffer.iter() {
-                            verts[current_vertex * vert_size] = vtx.pos[0];
-                            verts[current_vertex * vert_size + 1] = vtx.pos[1];
-                            verts[current_vertex * vert_size + 2] = vtx.uv[0];
-                            verts[current_vertex * vert_size + 3] = vtx.uv[1];
-    
-                            verts[current_vertex * vert_size + 4] = vtx.col[0] as f32 / 255.0;
-                            verts[current_vertex * vert_size + 5] = vtx.col[1] as f32 / 255.0;
-                            verts[current_vertex * vert_size + 6] = vtx.col[2] as f32 / 255.0;
-                            verts[current_vertex * vert_size + 7] = vtx.col[3] as f32 / 255.0;
-    
-                            current_vertex += 1;
-                        }
-                    }
-                    */
-
-                    //let imgui_vao = glutil::create_vertex_array_object(&verts, &inds, &[2, 2, 4]);
-                    
+                if draw_data.total_vtx_count > 0 {                    
                     for list in draw_data.draw_lists() {
                         let vert_size = 8;
                         let mut verts = vec![0.0; list.vtx_buffer().len() * vert_size];

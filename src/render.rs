@@ -33,6 +33,7 @@ pub struct SceneData {
     pub skybox_vao: GLuint,
     pub sun_direction: glm::TVec3<f32>,
     pub sun_color: [f32; 3],
+    pub ambient_strength: f32,
     pub shadow_matrix: glm::TMat4<f32>,
     pub programs: [GLuint; Self::PROGRAMS_COUNT],              //non-instanced , instanced  , skybox , single-shadow , instanced-shadow
     single_entities: OptionVec<SingleEntity>,
@@ -104,6 +105,7 @@ impl Default for SceneData {
             skybox_vao: 0,
             sun_direction: glm::vec3(0.0, 0.0, 1.0),
             sun_color: [1.0, 1.0, 1.0],
+            ambient_strength: 0.2,
             shadow_matrix: glm::identity(),
             programs: [0; 5],
             single_entities: OptionVec::new(),
@@ -154,6 +156,7 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
         glutil::bind_matrix4(*program, "view_projection", &view_data.view_projection);
         glutil::bind_vector3(*program, "sun_direction", &scene_data.sun_direction);
         glutil::bind_vector3(*program, "sun_color", &sun_c);
+        glutil::bind_float(*program, "ambient_strength", scene_data.ambient_strength);
         glutil::bind_int(*program, "shadow_map", ozy::render::TEXTURE_MAP_COUNT as GLint);
         glutil::bind_int(*program, "complex_normals", scene_data.complex_normals as GLint);
         glutil::bind_int(*program, "outlining", scene_data.outlining as GLint);

@@ -26,8 +26,8 @@ uniform bool visualize_lod = false;
 uniform bool visualize_shadowed = false;
 
 uniform vec3 sun_color = vec3(1.0, 1.0, 1.0);
+uniform float ambient_strength = 0.2;
 
-const float AMBIENT = 0.2;
 const float SHININESS_LOWER_BOUND = 16.0;
 const float SHININESS_UPPER_BOUND = 128.0;
 const float LOD_DIST0 = 20.0;
@@ -81,7 +81,7 @@ void main() {
 
     //Early exit if we're too far from the camera
     if (dist_from_camera > LOD_DIST3) {
-        frag_color = vec4((diffuse + AMBIENT) * albedo, 1.0);
+        frag_color = vec4((diffuse + ambient_strength) * albedo, 1.0);
         return;
     }
 
@@ -125,6 +125,6 @@ void main() {
         specular = pow(specular_angle, shininess);
     }
 
-    vec3 final_color = (sun_color * (specular + diffuse) * (1.0 - shadow) + AMBIENT) * albedo;
+    vec3 final_color = (sun_color * (specular + diffuse) * (1.0 - shadow) + ambient_strength) * albedo;
     frag_color = vec4(final_color, 1.0);
 }
