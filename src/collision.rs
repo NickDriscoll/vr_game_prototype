@@ -56,6 +56,13 @@ pub struct Sphere {
     radius: f32
 }
 
+pub struct Triangle {
+    pub a: glm::TVec3<f32>,
+    pub b: glm::TVec3<f32>,
+    pub c: glm::TVec3<f32>,
+    pub normal: glm::TVec3<f32>
+}
+
 #[derive(Debug)]
 pub struct Terrain {
     pub vertices: Vec<glm::TVec3<f32>>,
@@ -179,22 +186,23 @@ pub fn simple_point_in_triangle(test_point: &glm::TVec2<f32>, p0: &glm::TVec2<f3
 }
 
 //Precondition: point is in plane of triangle
-pub fn robust_point_in_triangle(test_point: &glm::TVec3<f32>, a: &glm::TVec3<f32>, b: &glm::TVec3<f32>, c: &glm::TVec3<f32>) -> bool {
+pub fn robust_point_in_triangle(test_point: &glm::TVec3<f32>, tri: &Triangle) -> bool {
     //First get normal of (a, b, intersection)
     let n1 = {
-        let n = glm::cross(&(a - b), &(test_point - b));
+        let n = glm::cross(&(tri.a - tri.b), &(test_point - tri.b));
+
         glm::normalize(&n)
     };
 
     //Then get normal of (b, c, intersection)
     let n2 = {
-        let n = glm::cross(&(b - c), &(test_point - c));
+        let n = glm::cross(&(tri.b - tri.c), &(test_point - tri.c));
         glm::normalize(&n)
     };
 
     //Then get normal of (c, a, intersection)
     let n3 = {
-        let n = glm::cross(&(c - a), &(test_point - a));
+        let n = glm::cross(&(tri.c - tri.a), &(test_point - tri.a));
         glm::normalize(&n)
     };
 
@@ -212,10 +220,10 @@ pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec4<f32>, ray_dire
     let mut closest_intersection = None;
     for i in (0..terrain.indices.len()).step_by(3) {
         //Get the vertices of the triangle
-        let (a, b, c) = get_terrain_triangle(&terrain, i);
+        let triangle = get_terrain_triangle(&terrain, i);
         let normal = terrain.face_normals[i / 3];
 
-        let plane = Plane::new(glm::vec4(a.x, a.y, a.z, 1.0), glm::vec4(normal.x, normal.y, normal.z, 1.0));
+        let plane = Plane::new(glm::vec4(triangle.a.x, triangle.a.y, triangle.a.z, 1.0), glm::vec4(normal.x, normal.y, normal.z, 1.0));
 
         //Pre-compute the denominator to avoid divide-by-zero
         //Denominator of zero means that the ray is parallel to the plane
@@ -227,7 +235,7 @@ pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec4<f32>, ray_dire
         let intersection = ray_origin + t * ray_direction;
 
         //Robust triangle-point collision in 3D
-        if t > 0.0 && t < smallest_t && robust_point_in_triangle(&glm::vec4_to_vec3(&intersection), &a, &b, &c) {
+        if t > 0.0 && t < smallest_t && robust_point_in_triangle(&glm::vec4_to_vec3(&intersection), &triangle) {
         //if t > 0.0 && t < smallest_t && simple_point_in_triangle(&glm::vec4_to_vec2(&intersection), &glm::vec3_to_vec2(&a), &glm::vec3_to_vec2(&b), &glm::vec3_to_vec2(&c)) {
             //println!("{} smaller than {}", t, smallest_t);
             smallest_t = t;
@@ -306,10 +314,11 @@ pub fn segment_plane_tallest_collision(segment: &LineSegment, planes: &[Plane]) 
     collision
 }
 
-pub fn get_terrain_triangle(terrain: &Terrain, triangle_index: usize) -> (glm::TVec3<f32>, glm::TVec3<f32>, glm::TVec3<f32>) {    
+pub fn get_terrain_triangle(terrain: &Terrain, triangle_index: usize) -> Triangle {    
     //Get the vertices of the triangle
     let a = terrain.vertices[terrain.indices[triangle_index] as usize];
     let b = terrain.vertices[terrain.indices[triangle_index + 1] as usize];
     let c = terrain.vertices[terrain.indices[triangle_index + 2] as usize];
-    (a, b, c)
+    let normal = terrain.face_normals[triangle_index / 3];
+    Triangle { a, b, c, normal }
 }

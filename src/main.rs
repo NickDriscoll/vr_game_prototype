@@ -13,7 +13,7 @@ use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
 use gl::types::*;
-use imgui::{DrawCmd, FontAtlasRefMut, TextureId, im_str};
+use imgui::{ColorEdit, DrawCmd, EditableColor, FontAtlasRefMut, TextureId, im_str};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{ErrorKind, Read};
@@ -36,6 +36,7 @@ use crate::structs::*;
 #[cfg(windows)]
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
 
+//Sets a flag to a value or unsets the flag if it already is the value
 fn handle_radio_flag<F: Eq>(current_flag: &mut F, new_flag: F, default: F) {
     if *current_flag != new_flag {
         *current_flag = new_flag;
@@ -349,6 +350,7 @@ fn main() {
     window.set_key_polling(true);
     window.set_mouse_button_polling(true);
     window.set_cursor_pos_polling(true);
+    window.set_scroll_polling(true);
     window.set_framebuffer_size_polling(true);
 
     //Load OpenGL function pointers
@@ -546,16 +548,16 @@ fn main() {
     let mut mouselook_enabled = false;
     let mut camera_position = glm::vec3(0.0, -8.0, 5.5);
     let mut last_camera_position = camera_position;
-    let mut camera_input: glm::TVec4<f32> = glm::zero();             //This is a unit vector in the xz plane in view space that represents the input camera movement vector
+    let mut camera_input: glm::TVec4<f32> = glm::zero();             //This is a unit vector  in view space that represents the input camera movement vector
     let mut camera_orientation = glm::vec2(0.0, -glm::half_pi::<f32>() * 0.6);
     let mut camera_speed = 5.0;
-    let camera_hit_sphere_radius = 0.2;
+    let camera_hit_sphere_radius = 0.5;
 
     //Initialize shadow data
     let mut shadow_view;
     let shadow_proj_size = 30.0;
     let shadow_projection = glm::ortho(-shadow_proj_size * 2.0, shadow_proj_size * 2.0, -shadow_proj_size * 2.0, shadow_proj_size * 2.0, 3.0 * -shadow_proj_size, 2.0 * shadow_proj_size);
-    let shadow_size = 4096;
+    let shadow_size = 4096 * 4;
     let shadow_rendertarget = unsafe { RenderTarget::new_shadow((shadow_size, shadow_size)) };
 
     //Initialize scene data struct
@@ -599,7 +601,6 @@ fn main() {
     //OptionVec to hold all AABBs used for collision
     let mut collision_aabbs: OptionVec<AABB> = OptionVec::new();
 
-    let mut mouse_lbutton_pressed = false;
     let mut screen_space_mouse = glm::zero();
 
     //Creating Dear ImGui context
@@ -611,8 +612,9 @@ fn main() {
         io.display_size[1] = screen_state.get_window_size().y as f32;
 
     }
+    let mut do_imgui = true;
 
-    //Create Dear IMGUI font atlas
+    //Create and upload Dear IMGUI font atlas
     match imgui_context.fonts() {
         FontAtlasRefMut::Owned(atlas) => unsafe {
             let mut tex = 0;
@@ -824,6 +826,7 @@ fn main() {
                 WindowEvent::Close => { window.set_should_close(true); }
                 WindowEvent::Key(key, _, Action::Press, _) => {
                     match key {
+                        Key::Escape => { do_imgui = !do_imgui; }
                         Key::Space => { placing = !placing; }
                         Key::W => {
                             camera_input.z += -1.0;
@@ -836,6 +839,12 @@ fn main() {
                         }
                         Key::D => {
                             camera_input.x += 1.0;
+                        }
+                        Key::Q => {
+                            camera_input.y -= 1.0;
+                        }
+                        Key::E => {
+                            camera_input.y += 1.0;
                         }
                         Key::LeftShift => {
                             camera_speed *= 5.0;
@@ -859,6 +868,12 @@ fn main() {
                         }
                         Key::D => {
                             camera_input.x -= 1.0;
+                        }
+                        Key::Q => {
+                            camera_input.y += 1.0;
+                        }
+                        Key::E => {
+                            camera_input.y -= 1.0;
                         }
                         Key::LeftShift => {
                             camera_speed /= 5.0;
@@ -906,6 +921,10 @@ fn main() {
                         }
                     }
                 }
+                WindowEvent::Scroll(x, y) => {
+                    imgui_io.mouse_wheel_h = x as f32;
+                    imgui_io.mouse_wheel = y as f32;
+                }
                 WindowEvent::FramebufferSize(width, height) => {
                     imgui_io.display_size[0] = width as f32;
                     imgui_io.display_size[1] = height as f32;
@@ -914,6 +933,9 @@ fn main() {
             }
         }
         drop(imgui_io);
+        
+        //Begin drawing imgui frame
+        let imgui_ui = imgui_context.frame();
 
         //Gravity the player
         const GRAVITY_VELOCITY_CAP: f32 = 10.0;
@@ -1131,17 +1153,44 @@ fn main() {
             }
         }
 
-        //For each triangle in the terrain collision mesh, determine if the player is in the triangle in the xy plane
-        //If so, sort into one of the following lists
+        //Terrain collision with various objects
         let mut down_facing_tris = Vec::new();
         let mut walkable_tris = Vec::new();
         let mut too_steep_tris = Vec::new();
+
+        //We try to do all work related to terrain collision here in order
+        //to avoid iterating over all of the triangles more than once
         for i in (0..terrain.indices.len()).step_by(3) {
-            let (a, b, c) = get_terrain_triangle(&terrain, i);
-            if simple_point_in_triangle(&glm::vec2(player.tracked_segment.p1.x, player.tracked_segment.p1.y), &glm::vec2(a.x, a.y), &glm::vec2(b.x, b.y), &glm::vec2(c.x, c.y)) {
-                let triangle_normal = terrain.face_normals[i / 3];
-                let triangle_plane = Plane::new(glm::vec4(a.x, a.y, a.z, 1.0), glm::vec4(triangle_normal.x, triangle_normal.y, triangle_normal.z, 0.0));
-                let dot = glm::dot(&triangle_normal, &glm::vec3(0.0, 0.0, 1.0));
+            let triangle = get_terrain_triangle(&terrain, i);                              //Get the triangle in question
+            let triangle_plane = Plane::new(
+                glm::vec4(triangle.a.x, triangle.a.y, triangle.a.z, 1.0),
+                glm::vec4(triangle.normal.x, triangle.normal.y, triangle.normal.z, 0.0)
+            );
+
+            //Check if this triangle is hitting the camera
+            {
+                let seg = LineSegment {
+                    p0: glm::vec4(last_camera_position.x, last_camera_position.y, last_camera_position.z, 1.0),
+                    p1: glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0)
+                };
+                let dist1 = point_plane_distance(&seg.p1, &triangle_plane);
+
+                if let Some(collision_point) = segment_hit_plane(&triangle_plane, &seg) {
+                    if robust_point_in_triangle(&glm::vec4_to_vec3(&collision_point), &triangle) {
+                        println!("Hit");
+                        camera_position += triangle.normal * (camera_hit_sphere_radius - dist1) * 1.5;
+                    }
+                } else {
+                    let closest_point = camera_position + triangle.normal * -dist1;
+                    if robust_point_in_triangle(&closest_point, &triangle) && f32::abs(dist1) < camera_hit_sphere_radius {
+                        camera_position += triangle.normal * (camera_hit_sphere_radius - dist1) * 1.5;
+                    }
+                }
+            }
+
+            //For this triangle, determine if the player is in the triangle in the xy plane
+            if simple_point_in_triangle(&glm::vec2(player.tracked_segment.p1.x, player.tracked_segment.p1.y), &glm::vec2(triangle.a.x, triangle.a.y), &glm::vec2(triangle.b.x, triangle.b.y), &glm::vec2(triangle.c.x, triangle.c.y)) {
+                let dot = glm::dot(&triangle.normal, &glm::vec3(0.0, 0.0, 1.0));
 
                 //Sort into one of the arrays based on the normal's angle with +z
                 if dot < 0.0 { down_facing_tris.push(triangle_plane); }
@@ -1359,7 +1408,7 @@ fn main() {
         world_from_tracking = glm::translation(&player.tracking_position);
         tracking_from_world = glm::affine_inverse(world_from_tracking);
 
-        shadow_view = glm::look_at(&scene_data.uniform_light, &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
+        shadow_view = glm::look_at(&scene_data.sun_direction, &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
         scene_data.shadow_matrix = shadow_projection * shadow_view;
 
         player.last_tracked_segment = player.tracked_segment.clone();
@@ -1368,50 +1417,61 @@ fn main() {
         //Pre-render phase
 
         //Draw ImGui
-        let ui = {
-            let ui = imgui_context.frame();
-            if ui.button(im_str!("Fullscreen"), [0.0, 32.0]) {
-                //Toggle window fullscreen
-                if !is_fullscreen {
-                    is_fullscreen = true;
-                    glfw.with_primary_monitor_mut(|_, opt_monitor| {
-                        if let Some(monitor) = opt_monitor {
-                            let pos = monitor.get_pos();
-                            if let Some(mode) = monitor.get_video_mode() {
-                                resize_main_window(&mut window, &mut default_framebuffer, &mut screen_state, glm::vec2(mode.width, mode.height), pos, WindowMode::FullScreen(monitor));
+        if do_imgui {
+            let win = imgui::Window::new(im_str!("Hacking window - (Press ESC to show/hide)"));
+            if let Some(win_token) = win.begin(&imgui_ui) {
+                if imgui_ui.button(im_str!("Fullscreen"), [0.0, 32.0]) {
+                    //Toggle window fullscreen
+                    if !is_fullscreen {
+                        is_fullscreen = true;
+                        glfw.with_primary_monitor_mut(|_, opt_monitor| {
+                            if let Some(monitor) = opt_monitor {
+                                let pos = monitor.get_pos();
+                                if let Some(mode) = monitor.get_video_mode() {
+                                    resize_main_window(&mut window, &mut default_framebuffer, &mut screen_state, glm::vec2(mode.width, mode.height), pos, WindowMode::FullScreen(monitor));
+                                }
                             }
-                        }
-                    });
-                } else {
-                    is_fullscreen = false;
-                    let window_size = get_window_size(&config);
-                    resize_main_window(&mut window, &mut default_framebuffer, &mut screen_state, window_size, (200, 200), WindowMode::Windowed);
+                        });
+                    } else {
+                        is_fullscreen = false;
+                        let window_size = get_window_size(&config);
+                        resize_main_window(&mut window, &mut default_framebuffer, &mut screen_state, window_size, (200, 200), WindowMode::Windowed);
+                    }
                 }
-            }
-            if ui.button(im_str!("Reset player position"), [0.0, 32.0]) {
-                reset_player_position(&mut player);
-            }
-            ui.text(im_str!("Frame: {}", frame_count));
-            ui.text(im_str!("FPS: {}", framerate));
-            ui.checkbox(im_str!("Wireframe view"), &mut wireframe);
-            ui.checkbox(im_str!("TRUE wireframe view"), &mut true_wireframe);
-            ui.checkbox(im_str!("Complex normals"), &mut scene_data.complex_normals);
-            if let Some(_) = &xr_instance {
-                ui.checkbox(im_str!("HMD Point-of-view"), &mut hmd_pov);
-            }
-            ui.separator();
+                if let Some(_) = &xr_instance {
+                    imgui_ui.same_line(0.0);
+                    if imgui_ui.button(im_str!("Reset player position"), [0.0, 32.0]) {
+                        reset_player_position(&mut player);
+                    }
+                }
+                imgui_ui.text(im_str!("Frame: {}", frame_count));
+                imgui_ui.text(im_str!("FPS: {}", framerate));
+                imgui_ui.checkbox(im_str!("Wireframe view"), &mut wireframe);
+                imgui_ui.checkbox(im_str!("TRUE wireframe view"), &mut true_wireframe);
+                imgui_ui.checkbox(im_str!("Complex normals"), &mut scene_data.complex_normals);
+                if let Some(_) = &xr_instance {
+                    imgui_ui.checkbox(im_str!("HMD Point-of-view"), &mut hmd_pov);
+                }
+                imgui_ui.separator();
 
-            //Do visualization radio selection
-            if ui.radio_button_bool(im_str!("Visualize normals"), scene_data.fragment_flag == FragmentFlag::Normals) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::Normals, FragmentFlag::Default); }
-            if ui.radio_button_bool(im_str!("Visualize LOD zones"), scene_data.fragment_flag == FragmentFlag::LodZones) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::LodZones, FragmentFlag::Default); }
-            if ui.radio_button_bool(im_str!("Visualize shadowed"), scene_data.fragment_flag == FragmentFlag::Shadowed) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::Shadowed, FragmentFlag::Default); }
-            ui.separator();
+                //Do visualization radio selection
+                imgui_ui.text(im_str!("Debug visualization options:"));
+                if imgui_ui.radio_button_bool(im_str!("Visualize normals"), scene_data.fragment_flag == FragmentFlag::Normals) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::Normals, FragmentFlag::Default); }
+                if imgui_ui.radio_button_bool(im_str!("Visualize LOD zones"), scene_data.fragment_flag == FragmentFlag::LodZones) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::LodZones, FragmentFlag::Default); }
+                if imgui_ui.radio_button_bool(im_str!("Visualize how shadowed"), scene_data.fragment_flag == FragmentFlag::Shadowed) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::Shadowed, FragmentFlag::Default); }
+                imgui_ui.separator();
 
-            //Do quit button
-            if ui.button(im_str!("Quit"), [0.0, 32.0]) { window.set_should_close(true); }
+                let sun_color_editor = ColorEdit::new(im_str!("Sun color"), EditableColor::Float3(&mut scene_data.sun_color));
+                if sun_color_editor.build(&imgui_ui) {}
+                imgui_ui.separator();
 
-            ui
-        };
+                //Do quit button
+                if imgui_ui.button(im_str!("Quit"), [0.0, 32.0]) { window.set_should_close(true); }
+
+                //End the window
+                win_token.end(&imgui_ui);
+            }
+        }
 
         //Create a view matrix from the camera state
         {
@@ -1591,55 +1651,83 @@ fn main() {
             gl::UseProgram(imgui_program);
             glutil::bind_matrix4(imgui_program, "projection", screen_state.get_clipping_from_screen());
             {
-                let draw_data = ui.render();
-                let vert_size = 8;
-                let mut verts = vec![0.0; draw_data.total_vtx_count as usize * vert_size];
-                let mut inds = vec![0; draw_data.total_idx_count as usize];
-
-                let mut current_vertex = 0;
-                let mut current_index = 0;
-                for list in draw_data.draw_lists() {
-                    let vtx_buffer = list.vtx_buffer();
-                    for vtx in vtx_buffer.iter() {
-                        verts[current_vertex * vert_size] = vtx.pos[0];
-                        verts[current_vertex * vert_size + 1] = vtx.pos[1];
-                        verts[current_vertex * vert_size + 2] = vtx.uv[0];
-                        verts[current_vertex * vert_size + 3] = vtx.uv[1];
-
-                        verts[current_vertex * vert_size + 4] = vtx.col[0] as f32 / 255.0;
-                        verts[current_vertex * vert_size + 5] = vtx.col[1] as f32 / 255.0;
-                        verts[current_vertex * vert_size + 6] = vtx.col[2] as f32 / 255.0;
-                        verts[current_vertex * vert_size + 7] = vtx.col[3] as f32 / 255.0;
-
-                        current_vertex += 1;
-                    }
-
-                    let idx_buffer = list.idx_buffer();
-                    for idx in idx_buffer.iter() {
-                        inds[current_index] = *idx;
-                        current_index += 1;
-                    }
-                }
+                let draw_data = imgui_ui.render();
                 
                 if draw_data.total_vtx_count > 0 {
-                    let imgui_vao = glutil::create_vertex_array_object(&verts, &inds, &[2, 2, 4]);
-                
-                    let mut idx_offset = 0;
+                    /*
+                    let mut verts = vec![0.0; draw_data.total_vtx_count as usize * vert_size];
+                    let mut inds = vec![0; draw_data.total_idx_count as usize];
+    
+                    let mut current_vertex = 0;
+                    let mut current_index = 0;
+                    for list in draw_data.draw_lists() {    
+                        let idx_buffer = list.idx_buffer();
+                        for idx in idx_buffer.iter() {
+                            inds[current_index] = *idx + current_vertex as u16;
+                            current_index += 1;
+                        }
+
+                        let vtx_buffer = list.vtx_buffer();
+                        for vtx in vtx_buffer.iter() {
+                            verts[current_vertex * vert_size] = vtx.pos[0];
+                            verts[current_vertex * vert_size + 1] = vtx.pos[1];
+                            verts[current_vertex * vert_size + 2] = vtx.uv[0];
+                            verts[current_vertex * vert_size + 3] = vtx.uv[1];
+    
+                            verts[current_vertex * vert_size + 4] = vtx.col[0] as f32 / 255.0;
+                            verts[current_vertex * vert_size + 5] = vtx.col[1] as f32 / 255.0;
+                            verts[current_vertex * vert_size + 6] = vtx.col[2] as f32 / 255.0;
+                            verts[current_vertex * vert_size + 7] = vtx.col[3] as f32 / 255.0;
+    
+                            current_vertex += 1;
+                        }
+                    }
+                    */
+
+                    //let imgui_vao = glutil::create_vertex_array_object(&verts, &inds, &[2, 2, 4]);
+                    
                     for list in draw_data.draw_lists() {
+                        let vert_size = 8;
+                        let mut verts = vec![0.0; list.vtx_buffer().len() * vert_size];
+                        let mut inds = vec![0; list.idx_buffer().len()];
+
+                        let mut current_index = 0;
+                        let idx_buffer = list.idx_buffer();
+                        for idx in idx_buffer.iter() {
+                            inds[current_index] = *idx;
+                            current_index += 1;
+                        }
+
+                        let mut current_vertex = 0;
+                        let vtx_buffer = list.vtx_buffer();
+                        for vtx in vtx_buffer.iter() {
+                            verts[current_vertex * vert_size] = vtx.pos[0];
+                            verts[current_vertex * vert_size + 1] = vtx.pos[1];
+                            verts[current_vertex * vert_size + 2] = vtx.uv[0];
+                            verts[current_vertex * vert_size + 3] = vtx.uv[1];
+    
+                            verts[current_vertex * vert_size + 4] = vtx.col[0] as f32 / 255.0;
+                            verts[current_vertex * vert_size + 5] = vtx.col[1] as f32 / 255.0;
+                            verts[current_vertex * vert_size + 6] = vtx.col[2] as f32 / 255.0;
+                            verts[current_vertex * vert_size + 7] = vtx.col[3] as f32 / 255.0;
+    
+                            current_vertex += 1;
+                        }
+
+                        let imgui_vao = glutil::create_vertex_array_object(&verts, &inds, &[2, 2, 4]);
+
                         for command in list.commands() {
                             match command {
                                 DrawCmd::Elements {count, cmd_params} => {
-                                    let atlas_texture = cmd_params.texture_id.id() as GLuint;    
                                     gl::BindVertexArray(imgui_vao);
                                     gl::ActiveTexture(gl::TEXTURE0);
-                                    gl::BindTexture(gl::TEXTURE_2D, atlas_texture);
+                                    gl::BindTexture(gl::TEXTURE_2D, cmd_params.texture_id.id() as GLuint);
                                     gl::Scissor(cmd_params.clip_rect[0] as GLint,
                                                 screen_state.get_window_size().y as GLint - cmd_params.clip_rect[3] as GLint,
                                                 (cmd_params.clip_rect[2] - cmd_params.clip_rect[0]) as GLint,
                                                 (cmd_params.clip_rect[3] - cmd_params.clip_rect[1]) as GLint
                                     );
-                                    gl::DrawElements(gl::TRIANGLES, count as GLint, gl::UNSIGNED_SHORT, (idx_offset * size_of::<GLushort>()) as _);    
-                                    idx_offset += count;
+                                    gl::DrawElementsBaseVertex(gl::TRIANGLES, count as GLint, gl::UNSIGNED_SHORT, (cmd_params.idx_offset * size_of::<GLushort>()) as _, cmd_params.vtx_offset as GLint);
                                 }
                                 DrawCmd::ResetRenderState => {
                                     println!("DrawCmd::ResetRenderState.");
@@ -1649,9 +1737,9 @@ fn main() {
                                 }
                             }
                         }
+                        
+                        gl::DeleteVertexArrays(1, &imgui_vao);
                     }
-
-                    gl::DeleteVertexArrays(1, &imgui_vao);
                 }
             }
         }

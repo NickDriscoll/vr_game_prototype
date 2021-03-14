@@ -31,7 +31,8 @@ pub struct SceneData {
     pub shadow_texture: GLuint,
     pub skybox_cubemap: GLuint,
     pub skybox_vao: GLuint,
-    pub uniform_light: glm::TVec3<f32>,
+    pub sun_direction: glm::TVec3<f32>,
+    pub sun_color: [f32; 3],
     pub shadow_matrix: glm::TMat4<f32>,
     pub programs: [GLuint; Self::PROGRAMS_COUNT],              //non-instanced , instanced  , skybox , single-shadow , instanced-shadow
     single_entities: OptionVec<SingleEntity>,
@@ -51,7 +52,7 @@ impl SceneData {
         SceneData {
             shadow_texture,
             programs,
-            uniform_light: glm::normalize(&glm::vec3(1.0, 0.6, 1.0)),
+            sun_direction: glm::normalize(&glm::vec3(1.0, 0.6, 1.0)),
             ..Default::default()
         }
     }
@@ -101,7 +102,8 @@ impl Default for SceneData {
             shadow_texture: 0,
             skybox_cubemap: 0,
             skybox_vao: 0,
-            uniform_light: glm::vec3(0.0, 0.0, 1.0),
+            sun_direction: glm::vec3(0.0, 0.0, 1.0),
+            sun_color: [1.0, 1.0, 1.0],
             shadow_matrix: glm::identity(),
             programs: [0; 5],
             single_entities: OptionVec::new(),
@@ -146,10 +148,12 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
     gl::BindTexture(gl::TEXTURE_2D, scene_data.shadow_texture);
                         
     //Bind common uniforms
+    let sun_c = glm::vec3(scene_data.sun_color[0], scene_data.sun_color[1], scene_data.sun_color[2]);
     for program in &scene_data.programs {
         glutil::bind_matrix4(*program, "shadow_matrix", &scene_data.shadow_matrix);
         glutil::bind_matrix4(*program, "view_projection", &view_data.view_projection);
-        glutil::bind_vector3(*program, "sun_direction", &scene_data.uniform_light);
+        glutil::bind_vector3(*program, "sun_direction", &scene_data.sun_direction);
+        glutil::bind_vector3(*program, "sun_color", &sun_c);
         glutil::bind_int(*program, "shadow_map", ozy::render::TEXTURE_MAP_COUNT as GLint);
         glutil::bind_int(*program, "complex_normals", scene_data.complex_normals as GLint);
         glutil::bind_int(*program, "outlining", scene_data.outlining as GLint);

@@ -4,33 +4,11 @@ use std::io::BufReader;
 use std::io::prelude::*;
 use crate::collision::*;
 
-#[derive(Clone, Copy)]
-pub enum Command {
-    Quit,
-    ToggleMenu(usize, usize),
-    ToggleAllMenus,
-    ToggleNormalVis,
-    ToggleLodVis,
-    ToggleShadowedVis,
-    ToggleComplexNormals,
-    ToggleWireframe,
-    ToggleHMDPov,
-    ToggleFullScreen,
-    ResetPlayerPosition
-}
-
 #[derive(PartialEq, Eq)]
 pub enum MoveState {
     Grounded,
     Falling,
     Sliding
-}
-
-#[derive(PartialEq, Eq)]
-enum TokenType {
-    Int,
-    Float,
-    String
 }
 
 pub struct Player {
@@ -51,6 +29,13 @@ impl Player {
 pub fn set_player_falling(player: &mut Player) {
     player.jumps_remaining -= 1;
     player.movement_state = MoveState::Falling;
+}
+
+#[derive(PartialEq, Eq)]
+enum TokenType {
+    Int,
+    Float,
+    String
 }
 
 pub struct Configuration {

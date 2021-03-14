@@ -25,6 +25,8 @@ uniform bool visualize_normals = false;
 uniform bool visualize_lod = false;
 uniform bool visualize_shadowed = false;
 
+uniform vec3 sun_color = vec3(1.0, 1.0, 1.0);
+
 const float AMBIENT = 0.2;
 const float SHININESS_LOWER_BOUND = 16.0;
 const float SHININESS_UPPER_BOUND = 128.0;
@@ -56,9 +58,10 @@ void main() {
         return;
     }
 
-    //Sample the fragment's base color
+    //Sample the albedo map for the fragment's base color
     vec3 albedo = texture(albedo_map, scaled_uvs).xyz;
 
+    //Compute this frag's tangent space normal
     vec3 tangent_space_normal;
     if (complex_normals && dist_from_camera < LOD_DIST1) {
         vec3 sampled_normal = texture(normal_map, scaled_uvs).xyz;
@@ -96,6 +99,7 @@ void main() {
             for (int x = -bound; x <= bound; x++) {
                 for (int y = -bound; y <= bound; y++) {
                     shadow += determine_shadowed(vec3(adj_shadow_space_pos.xy + vec2(x, y) * texel_size, adj_shadow_space_pos.z));
+                    //shadow += 0.0 / 9.0;
                 }
             }
             shadow /= 9.0;
@@ -121,6 +125,6 @@ void main() {
         specular = pow(specular_angle, shininess);
     }
 
-    vec3 final_color = ((specular + diffuse) * (1.0 - shadow) + AMBIENT) * albedo;
+    vec3 final_color = (sun_color * (specular + diffuse) * (1.0 - shadow) + AMBIENT) * albedo;
     frag_color = vec4(final_color, 1.0);
 }
