@@ -3,8 +3,8 @@ import subprocess, os, shutil, time
 
 start_time = time.time()
 
-staging_dir = "dist"
-dirs = ["materials", "models", "shaders", "skyboxes"]
+staging_dir = "hot_chickens"
+dirs = ["materials", "maps", "models", "shaders", "skyboxes"]
 
 if os.path.exists(staging_dir):
 	shutil.rmtree(staging_dir)

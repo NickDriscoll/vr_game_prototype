@@ -187,6 +187,8 @@ pub fn simple_point_in_triangle(test_point: &glm::TVec2<f32>, p0: &glm::TVec2<f3
 
 //Precondition: point is in plane of triangle
 pub fn robust_point_in_triangle(test_point: &glm::TVec3<f32>, tri: &Triangle) -> bool {
+    const EPSILON: f32 = 0.0001;
+
     //First get normal of (a, b, intersection)
     let n1 = {
         let n = glm::cross(&(tri.a - tri.b), &(test_point - tri.b));
@@ -206,8 +208,8 @@ pub fn robust_point_in_triangle(test_point: &glm::TVec3<f32>, tri: &Triangle) ->
         glm::normalize(&n)
     };
 
-    let upper = 1.0 + glm::epsilon::<f32>();
-    let lower = 1.0 - glm::epsilon::<f32>();
+    let upper = 1.0 + EPSILON;
+    let lower = 1.0 - EPSILON;
     let dot1 = glm::dot(&n1, &n2);
     let dot2 = glm::dot(&n2, &n3);
 

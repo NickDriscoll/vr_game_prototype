@@ -1175,15 +1175,13 @@ fn main() {
                 };
                 let dist1 = point_plane_distance(&seg.p1, &triangle_plane);
 
-                if let Some(collision_point) = segment_hit_plane(&triangle_plane, &seg) {
-                    if robust_point_in_triangle(&glm::vec4_to_vec3(&collision_point), &triangle) {
-                        camera_position += triangle.normal * (camera_hit_sphere_radius - dist1);
-                    }
-                } else {
-                    let closest_point = camera_position + triangle.normal * -dist1;
-                    if robust_point_in_triangle(&closest_point, &triangle) && f32::abs(dist1) < camera_hit_sphere_radius {
-                        camera_position += triangle.normal * (camera_hit_sphere_radius - dist1);
-                    }
+                let collision_point = { 
+                    let p = camera_position + triangle.normal * -dist1 ;
+                    glm::vec4(p.x, p.y, p.z, 1.0)
+                };
+                
+                if robust_point_in_triangle(&glm::vec4_to_vec3(&collision_point), &triangle) && f32::abs(dist1) < camera_hit_sphere_radius {
+                    camera_position += triangle.normal * (camera_hit_sphere_radius - dist1);
                 }
             }
 
@@ -1417,7 +1415,7 @@ fn main() {
 
         //Draw ImGui
         if do_imgui {
-            let win = imgui::Window::new(im_str!("Hacking window - (Press ESC to show/hide)"));
+            let win = imgui::Window::new(im_str!("Hacking window"));
             if let Some(win_token) = win.begin(&imgui_ui) {
                 if let Some(_) = &xr_instance {
                     imgui_ui.same_line(0.0);
