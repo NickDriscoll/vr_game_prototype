@@ -566,11 +566,11 @@ fn main() {
 
     //Initialize texture caching struct
     let mut texture_keeper = TextureKeeper::new();
-    let tex_params = [  
+    let default_tex_params = [  
         (gl::TEXTURE_WRAP_S, gl::REPEAT),
 	    (gl::TEXTURE_WRAP_T, gl::REPEAT),
-	    (gl::TEXTURE_MIN_FILTER, gl::LINEAR),
-	    (gl::TEXTURE_MAG_FILTER, gl::LINEAR)
+	    (gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR),
+	    (gl::TEXTURE_MAG_FILTER, gl::LINEAR_MIPMAP_LINEAR)
     ];
 
     //Player state
@@ -592,7 +592,7 @@ fn main() {
     let mut infinite_ammo = false;
     let mut remaining_water = MAX_WATER_REMAINING;
     let mut water_pillar_scale = glm::vec3(1.0, 1.0, 1.0);
-    let water_cylinder_mesh = SimpleMesh::from_ozy("models/water_cylinder.ozy", &mut texture_keeper, &tex_params);
+    let water_cylinder_mesh = SimpleMesh::from_ozy("models/water_cylinder.ozy", &mut texture_keeper, &default_tex_params);
     let water_cylinder_entity_index = scene_data.push_single_entity(water_cylinder_mesh);
     
     //Matrices for relating tracking space and world space
@@ -620,9 +620,16 @@ fn main() {
             let mut tex = 0;
             let font_atlas = atlas.build_alpha8_texture();
             
+            let font_atlas_params = [                
+                (gl::TEXTURE_WRAP_S, gl::REPEAT),
+                (gl::TEXTURE_WRAP_T, gl::REPEAT),
+                (gl::TEXTURE_MIN_FILTER, gl::NEAREST),
+                (gl::TEXTURE_MAG_FILTER, gl::NEAREST)
+            ];
+
             gl::GenTextures(1, &mut tex);
             gl::BindTexture(gl::TEXTURE_2D, tex);            
-            glutil::apply_texture_parameters(&tex_params);
+            glutil::apply_texture_parameters(&font_atlas_params);
             gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RED as GLsizei, font_atlas.width as GLsizei, font_atlas.height as GLsizei, 0, gl::RED, gl::UNSIGNED_BYTE, font_atlas.data.as_ptr() as _);
             atlas.tex_id = TextureId::new(tex as usize);
         }
@@ -669,7 +676,7 @@ fn main() {
                             panic!("Error reading from level file: {}", e);
                         }
                     };
-                    let mesh = SimpleMesh::from_ozy(&format!("models/{}", ozy_name), &mut texture_keeper, &tex_params);
+                    let mesh = SimpleMesh::from_ozy(&format!("models/{}", ozy_name), &mut texture_keeper, &default_tex_params);
 
                     if matrices_count == 1 {
                         let idx = scene_data.push_single_entity(mesh);
@@ -695,14 +702,14 @@ fn main() {
 
     //Create dragon
     let mut dragon_position = glm::vec3(19.209993, 0.5290663, 0.0);
-    let dragon_mesh = SimpleMesh::from_ozy("models/dragon.ozy", &mut texture_keeper, &tex_params);
+    let dragon_mesh = SimpleMesh::from_ozy("models/dragon.ozy", &mut texture_keeper, &default_tex_params);
     let dragon_entity_index = scene_data.push_single_entity(dragon_mesh);
 
     //Create staircase
     let cube_count = 2048;
     let mut cube_transform_buffer = vec![0.0; cube_count * 16];
     let cube_entity_index = unsafe {
-        let mesh = SimpleMesh::from_ozy("models/cube.ozy", &mut texture_keeper, &tex_params);
+        let mesh = SimpleMesh::from_ozy("models/cube.ozy", &mut texture_keeper, &default_tex_params);
         let mesh = InstancedMesh::from_simplemesh(&mesh, cube_count, render::INSTANCED_ATTRIBUTE);
 
         for i in 0..cube_count {
@@ -767,7 +774,7 @@ fn main() {
     let mut left_wand_entity_index = 0;
     let mut right_wand_entity_index = 0;
     if let Some(_) = &xr_instance {
-        let wand_mesh = SimpleMesh::from_ozy("models/wand.ozy", &mut texture_keeper, &tex_params);
+        let wand_mesh = SimpleMesh::from_ozy("models/wand.ozy", &mut texture_keeper, &default_tex_params);
         left_wand_entity_index = scene_data.push_single_entity(wand_mesh.clone());
         right_wand_entity_index = scene_data.push_single_entity(wand_mesh);
     }

@@ -21,6 +21,7 @@ uniform vec3 view_position;
 
 uniform bool complex_normals = false;
 
+//Debug visualization flags
 uniform bool visualize_normals = false;
 uniform bool visualize_lod = false;
 uniform bool visualize_shadowed = false;
@@ -42,7 +43,7 @@ float determine_shadowed(vec3 f_shadow_pos) {
 }
 
 void main() {
-    float dist_from_camera = distance(f_world_pos, view_position);    
+    float dist_from_camera = distance(f_world_pos, view_position);
     if (visualize_lod) {
         if (dist_from_camera < LOD_DIST0) {
             frag_color = vec4(1.0, 0.0, 0.0, 1.0);
@@ -63,7 +64,7 @@ void main() {
 
     //Compute this frag's tangent space normal
     vec3 tangent_space_normal;
-    if (complex_normals && dist_from_camera < LOD_DIST1) {
+    if (complex_normals && dist_from_camera < LOD_DIST2) {
         vec3 sampled_normal = texture(normal_map, scaled_uvs).xyz;
         tangent_space_normal = normalize(sampled_normal * 2.0 - 1.0);
     } else {
@@ -116,7 +117,7 @@ void main() {
 
     //Compute specular light w/ blinn-phong
     float specular = 0.0;
-    if (dist_from_camera < LOD_DIST1) {
+    if (dist_from_camera < LOD_DIST2) {
         float roughness = texture(roughness_map, scaled_uvs).x;
         vec3 view_direction = normalize(tangent_view_position - tangent_space_pos);
         vec3 halfway = normalize(view_direction + tangent_sun_direction);
