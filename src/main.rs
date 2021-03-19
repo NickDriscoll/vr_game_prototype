@@ -8,7 +8,7 @@ mod structs;
 mod render;
 mod xrutil;
 
-use render::{render_main_scene, render_shadows, FragmentFlag, SceneData, ViewData};
+use render::{render_main_scene, render_shadows, FragmentFlag, RenderEntity, SceneData, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
@@ -24,11 +24,10 @@ use std::ptr;
 use std::os::raw::c_void;
 use std::time::Instant;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
-use ozy::{glutil};
+use ozy::{glutil, io};
 use ozy::glutil::ColorSpace;
-use ozy::render::{Framebuffer, InstancedMesh, RenderTarget, ScreenState, SimpleMesh, TextureKeeper};
+use ozy::render::{Framebuffer, RenderTarget, ScreenState, TextureKeeper};
 use ozy::structs::OptionVec;
-use ozy::io;
 use ozy::routines::uniform_scale;
 
 use crate::collision::*;
@@ -529,13 +528,9 @@ fn main() {
     };
 
     //Compile shader programs
-    let complex_3D = unsafe { glutil::compile_program_from_files("shaders/mapped.vert", "shaders/mapped.frag") };
-    let complex_instanced_3D = unsafe { glutil::compile_program_from_files("shaders/mapped_instanced.vert", "shaders/mapped.frag") };
-    let shadow_3D = unsafe { glutil::compile_program_from_files("shaders/shadow.vert", "shaders/shadow.frag") };
-    let shadow_instanced_3D = unsafe { glutil::compile_program_from_files("shaders/shadow_instanced.vert", "shaders/shadow.frag") };
+    let standard_program = unsafe { glutil::compile_program_from_files("shaders/standard.vert", "shaders/standard.frag") };
+    let shadow_program = unsafe { glutil::compile_program_from_files("shaders/shadow.vert", "shaders/shadow.frag") };
     let skybox_program = unsafe { glutil::compile_program_from_files("shaders/skybox.vert", "shaders/skybox.frag") };
-
-    //Special program for rendering Dear ImGui
     let imgui_program = unsafe { glutil::compile_program_from_files("shaders/ui/imgui.vert", "shaders/ui/imgui.frag") };
     
     //Initialize default framebuffer
@@ -549,7 +544,7 @@ fn main() {
     let mut mouselook_enabled = false;
     let mut camera_position = glm::vec3(0.0, -8.0, 5.5);
     let mut last_camera_position = camera_position;
-    let mut camera_input: glm::TVec4<f32> = glm::zero();             //This is a unit vector  in view space that represents the input camera movement vector
+    let mut camera_input: glm::TVec4<f32> = glm::zero();             //This is a unit vector in view space that represents the input camera movement vector
     let mut camera_orientation = glm::vec2(0.0, -glm::half_pi::<f32>() * 0.6);
     let mut camera_speed = 5.0;
     let camera_hit_sphere_radius = 0.5;
@@ -558,11 +553,54 @@ fn main() {
     let mut shadow_view;
     let shadow_proj_size = 30.0;
     let shadow_projection = glm::ortho(-shadow_proj_size * 2.0, shadow_proj_size * 2.0, -shadow_proj_size * 2.0, shadow_proj_size * 2.0, 3.0 * -shadow_proj_size, 2.0 * shadow_proj_size);
-    let shadow_size = 4096 * 4;
+    let shadow_size = 4096;
     let shadow_rendertarget = unsafe { RenderTarget::new_shadow((shadow_size, shadow_size)) };
 
     //Initialize scene data struct
-    let mut scene_data = SceneData::new([complex_3D, complex_instanced_3D, skybox_program, shadow_3D, shadow_instanced_3D], shadow_rendertarget.texture);
+    let mut scene_data = SceneData::default();
+    scene_data.shadow_program = shadow_program;
+    scene_data.shadow_texture = shadow_rendertarget.texture;
+    scene_data.skybox_program = skybox_program;
+
+    //Create the cube that will be user to render the skybox
+	scene_data.skybox_vao = ozy::prims::skybox_cube_vao();
+
+	//Create the skybox cubemap
+	scene_data.skybox_cubemap = unsafe {
+		let name = "siege";
+		let paths = [
+			&format!("skyboxes/{}_rt.tga", name),		//Right side
+			&format!("skyboxes/{}_lf.tga", name),		//Left side
+			&format!("skyboxes/{}_up.tga", name),		//Up side
+			&format!("skyboxes/{}_dn.tga", name),		//Down side
+			&format!("skyboxes/{}_bk.tga", name),		//Back side
+			&format!("skyboxes/{}_ft.tga", name)		//Front side
+		];
+
+		let mut cubemap = 0;
+		gl::GenTextures(1, &mut cubemap);
+		gl::BindTexture(gl::TEXTURE_CUBE_MAP, cubemap);
+		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_WRAP_R, gl::CLAMP_TO_EDGE as i32);
+		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+
+		//Place each piece of the skybox on the correct face
+		for i in 0..6 {
+			let image_data = glutil::image_data_from_path(paths[i], ColorSpace::Gamma);
+			gl::TexImage2D(gl::TEXTURE_CUBE_MAP_POSITIVE_X + i as u32,
+						   0,
+						   image_data.internal_format as i32,
+						   image_data.width as i32,
+						   image_data.height as i32,
+						   0,
+						   image_data.format,
+						   gl::UNSIGNED_BYTE,
+				  		   &image_data.data[0] as *const u8 as *const c_void);
+		}
+		cubemap
+	};
 
     //Initialize texture caching struct
     let mut texture_keeper = TextureKeeper::new();
@@ -592,8 +630,10 @@ fn main() {
     let mut infinite_ammo = false;
     let mut remaining_water = MAX_WATER_REMAINING;
     let mut water_pillar_scale = glm::vec3(1.0, 1.0, 1.0);
-    let water_cylinder_mesh = SimpleMesh::from_ozy("models/water_cylinder.ozy", &mut texture_keeper, &default_tex_params);
-    let water_cylinder_entity_index = scene_data.push_single_entity(water_cylinder_mesh);
+
+    //Water gun graphics data
+    let water_cylinder_path = "models/water_cylinder.ozy";
+    let water_cylinder_entity_index = scene_data.entities.insert(RenderEntity::from_ozy(water_cylinder_path, standard_program, 1, &mut texture_keeper, &default_tex_params));
     
     //Matrices for relating tracking space and world space
     let mut world_from_tracking = glm::identity();
@@ -665,7 +705,7 @@ fn main() {
 
                     //Read number of matrices
                     let matrices_count = match io::read_u32(&mut file) {
-                        Ok(count) => { count } 
+                        Ok(count) => { count as usize } 
                         Err(e) => {
                             panic!("Error reading from level file: {}", e);
                         }
@@ -676,21 +716,10 @@ fn main() {
                             panic!("Error reading from level file: {}", e);
                         }
                     };
-                    let mesh = SimpleMesh::from_ozy(&format!("models/{}", ozy_name), &mut texture_keeper, &default_tex_params);
 
-                    if matrices_count == 1 {
-                        let idx = scene_data.push_single_entity(mesh);
-                        scene_data.get_single_entity(idx).unwrap().model_matrix = glm::mat4(
-                            matrix_floats[0], matrix_floats[4], matrix_floats[8], matrix_floats[12], 
-                            matrix_floats[1], matrix_floats[5], matrix_floats[9], matrix_floats[13], 
-                            matrix_floats[2], matrix_floats[6], matrix_floats[10], matrix_floats[14], 
-                            matrix_floats[3], matrix_floats[7], matrix_floats[11], matrix_floats[15]
-                        );
-                    } else {
-                        let in_mesh = unsafe { InstancedMesh::from_simplemesh(&mesh, matrices_count as usize, render::INSTANCED_ATTRIBUTE) };
-                        let idx = scene_data.push_instanced_entity(in_mesh);
-                        scene_data.get_instanced_entity(idx).unwrap().mesh.update_buffer(&matrix_floats);
-                    }
+                    let mut entity = RenderEntity::from_ozy(&format!("models/{}", ozy_name), standard_program, matrices_count, &mut texture_keeper, &default_tex_params);
+                    entity.update_buffer(&matrix_floats);                
+                    scene_data.entities.insert(entity);
                 }
                 
             }
@@ -702,16 +731,12 @@ fn main() {
 
     //Create dragon
     let mut dragon_position = glm::vec3(19.209993, 0.5290663, 0.0);
-    let dragon_mesh = SimpleMesh::from_ozy("models/dragon.ozy", &mut texture_keeper, &default_tex_params);
-    let dragon_entity_index = scene_data.push_single_entity(dragon_mesh);
+    let dragon_entity_index = scene_data.entities.insert(RenderEntity::from_ozy("models/dragon.ozy", standard_program, 1, &mut texture_keeper, &default_tex_params));
 
     //Create staircase
     let cube_count = 2048;
-    let mut cube_transform_buffer = vec![0.0; cube_count * 16];
     let cube_entity_index = unsafe {
-        let mesh = SimpleMesh::from_ozy("models/cube.ozy", &mut texture_keeper, &default_tex_params);
-        let mesh = InstancedMesh::from_simplemesh(&mesh, cube_count, render::INSTANCED_ATTRIBUTE);
-
+        let mut cube_transform_buffer = vec![0.0; cube_count * 16];
         for i in 0..cube_count {
             let position = glm::vec4(-20.0, i as f32 * 10.0, i as f32 * 5.0, 1.0);
             let matrix = glm::translation(&glm::vec4_to_vec3(&position)) * uniform_scale(3.0);
@@ -726,57 +751,15 @@ fn main() {
             collision_aabbs.insert(aabb);
         }
 
-        scene_data.push_instanced_entity(mesh)
+        let idx = scene_data.entities.insert(RenderEntity::from_ozy("models/cube.ozy", standard_program, cube_count, &mut texture_keeper, &default_tex_params));
+        scene_data.entities.get_mut_element(idx).unwrap().update_buffer(&cube_transform_buffer);
     };
-    scene_data.get_instanced_entity(cube_entity_index).unwrap().mesh.update_buffer(&cube_transform_buffer);
-
-    //Create the cube that will be user to render the skybox
-	scene_data.skybox_vao = ozy::prims::skybox_cube_vao();
-
-	//Create the skybox cubemap
-	scene_data.skybox_cubemap = unsafe {
-		let name = "siege";
-		let paths = [
-			&format!("skyboxes/{}_rt.tga", name),		//Right side
-			&format!("skyboxes/{}_lf.tga", name),		//Left side
-			&format!("skyboxes/{}_up.tga", name),		//Up side
-			&format!("skyboxes/{}_dn.tga", name),		//Down side
-			&format!("skyboxes/{}_bk.tga", name),		//Back side
-			&format!("skyboxes/{}_ft.tga", name)		//Front side
-		];
-
-		let mut cubemap = 0;
-		gl::GenTextures(1, &mut cubemap);
-		gl::BindTexture(gl::TEXTURE_CUBE_MAP, cubemap);
-		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
-		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
-		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_WRAP_R, gl::CLAMP_TO_EDGE as i32);
-		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
-
-		//Place each piece of the skybox on the correct face
-		for i in 0..6 {
-			let image_data = glutil::image_data_from_path(paths[i], ColorSpace::Gamma);
-			gl::TexImage2D(gl::TEXTURE_CUBE_MAP_POSITIVE_X + i as u32,
-						   0,
-						   image_data.internal_format as i32,
-						   image_data.width as i32,
-						   image_data.height as i32,
-						   0,
-						   image_data.format,
-						   gl::UNSIGNED_BYTE,
-				  		   &image_data.data[0] as *const u8 as *const c_void);
-		}
-		cubemap
-	};
 
     //Create controller entities
-    let mut left_wand_entity_index = 0;
-    let mut right_wand_entity_index = 0;
+    let mut wand_entity_index = 0;
     if let Some(_) = &xr_instance {
-        let wand_mesh = SimpleMesh::from_ozy("models/wand.ozy", &mut texture_keeper, &default_tex_params);
-        left_wand_entity_index = scene_data.push_single_entity(wand_mesh.clone());
-        right_wand_entity_index = scene_data.push_single_entity(wand_mesh);
+        let entity = RenderEntity::from_ozy("models/wand.ozy", standard_program, 2, &mut texture_keeper, &default_tex_params);
+        wand_entity_index = scene_data.entities.insert(entity);
     }
 
     let mut is_fullscreen = false;
@@ -1009,8 +992,13 @@ fn main() {
 
                 if state.current_state > 0.0 {
                     //Calculate scale of water pillar
-                    if let Some(point) = ray_hit_terrain(&terrain, &hand_origin, &world_space_vec) {
-                        water_pillar_scale.y = glm::length(&(point - hand_origin)); 
+                    match ray_hit_terrain(&terrain, &hand_origin, &world_space_vec) {
+                        Some(point) => {
+                            water_pillar_scale.y = glm::length(&(point - hand_origin)); 
+                        }
+                        None => {
+                            water_pillar_scale.y = 100.0;
+                        }
                     }
 
                     if player.movement_state != MoveState::Falling {
@@ -1028,13 +1016,14 @@ fn main() {
                 water_pillar_scale.x = xz_scale;
                 water_pillar_scale.z = xz_scale;
                 player.tracking_velocity += update_force;
-                if let Some(entity) = scene_data.get_single_entity(water_cylinder_entity_index) {
-                    entity.visible = true;
+
+                if let Some(entity) = scene_data.entities.get_mut_element(water_cylinder_entity_index) {
+                    //Update the water gun's pillar of water
+                    entity.uv_offset += glm::vec2(0.0, 5.0) * delta_time;
+                    entity.uv_scale.y = water_pillar_scale.y;
                 }
             } else {
-                if let Some(entity) = scene_data.get_single_entity(water_cylinder_entity_index) {
-                    entity.visible = false;
-                }
+                water_pillar_scale = glm::zero();
             }
             if player.movement_state != MoveState::Falling {
                 remaining_water = MAX_WATER_REMAINING;
@@ -1077,14 +1066,9 @@ fn main() {
         }
 
         //Spin the dragon
-        if let Some(entity) = scene_data.get_single_entity(dragon_entity_index) {
-            entity.model_matrix = glm::translation(&dragon_position) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
-        }
-
-        //Update the water gun's pillar of water
-        if let Some(entity) = scene_data.get_single_entity(water_cylinder_entity_index) {
-            entity.uv_offset += glm::vec2(0.0, 5.0) * delta_time;
-            entity.uv_scale.y = water_pillar_scale.y;
+        if let Some(entity) = scene_data.entities.get_mut_element(dragon_entity_index) {
+            let mm = glm::translation(&dragon_position) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
+            unsafe { entity.update_single_transform(0, &mm); }
         }
 
         //Update tracking space location
@@ -1425,7 +1409,6 @@ fn main() {
             let win = imgui::Window::new(im_str!("Hacking window"));
             if let Some(win_token) = win.begin(&imgui_ui) {
                 if let Some(_) = &xr_instance {
-                    imgui_ui.same_line(0.0);
                     if imgui_ui.button(im_str!("Reset player position"), [0.0, 32.0]) {
                         reset_player_position(&mut player);
                     }
@@ -1512,17 +1495,29 @@ fn main() {
                             let (viewflags, views) = session.locate_views(xr::ViewConfigurationType::PRIMARY_STEREO, wait_info.predicted_display_time, t_space).unwrap();
                             
                             //Fetch the hand poses from the runtime
-                            let left_hand_pose = xrutil::locate_space(&left_hand_grip_space, &tracking_space, wait_info.predicted_display_time);
-                            let right_hand_pose = xrutil::locate_space(&right_hand_grip_space, &tracking_space, wait_info.predicted_display_time);
+                            let left_grip_pose = xrutil::locate_space(&left_hand_grip_space, &tracking_space, wait_info.predicted_display_time);
+                            let right_grip_pose = xrutil::locate_space(&right_hand_grip_space, &tracking_space, wait_info.predicted_display_time);
                             let right_hand_aim_pose = xrutil::locate_space(&right_hand_aim_space, &tracking_space, wait_info.predicted_display_time);
 
-                            //Right here is where we want to update the controller object's model matrix
-                            xrutil::entity_pose_update(&mut scene_data, left_wand_entity_index, left_hand_pose, &world_from_tracking);
-                            xrutil::entity_pose_update(&mut scene_data, right_wand_entity_index, right_hand_pose, &world_from_tracking);
+                            //Right here is where we want to update the controller objects' transforms
+                            {
+                                let mut transforms = [0.0; 16 * 2];
+                                if let Some(pose) = left_grip_pose {
+                                    write_matrix_to_buffer(&mut transforms, 0, xrutil::pose_to_mat4(&pose, &world_from_tracking));
+                                }
+                                if let Some(pose) = right_grip_pose {
+                                    write_matrix_to_buffer(&mut transforms, 1, xrutil::pose_to_mat4(&pose, &world_from_tracking));
+                                }
+
+                                if let Some(entity) = scene_data.entities.get_mut_element(wand_entity_index) {
+                                    entity.update_buffer(&transforms);
+                                }
+                            }
 
                             if let Some(p) = right_hand_aim_pose {
-                                if let Some(entity) = scene_data.get_single_entity(water_cylinder_entity_index) {
-                                    entity.model_matrix = xrutil::pose_to_mat4(&p, &world_from_tracking) * glm::scaling(&water_pillar_scale);
+                                if let Some(entity) = scene_data.entities.get_mut_element(water_cylinder_entity_index) {
+                                    let mm = xrutil::pose_to_mat4(&p, &world_from_tracking) * glm::scaling(&water_pillar_scale);
+                                    entity.update_single_transform(0, &mm);
                                 }
                             }
 

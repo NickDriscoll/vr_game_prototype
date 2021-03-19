@@ -135,11 +135,11 @@ pub fn make_reference_space<G: xr::Graphics>(session: &Option<xr::Session<G>>, r
     }
 }
 
-
-pub fn entity_pose_update(scene_data: &mut SceneData, entity_index: usize, pose: Option<xr::Posef>, world_from_tracking: &glm::TMat4<f32>) {
+pub unsafe fn entity_pose_update(scene_data: &mut SceneData, entity_index: usize, instance_index: usize, pose: Option<xr::Posef>, world_from_tracking: &glm::TMat4<f32>) {
     if let Some(p) = pose {
-        if let Some(entity) = scene_data.get_single_entity(entity_index) {
-            entity.model_matrix = pose_to_mat4(&p, world_from_tracking);
+        if let Some(entity) = scene_data.entities.get_mut_element(entity_index) {
+            let mm = pose_to_mat4(&p, world_from_tracking);
+            entity.update_single_transform(instance_index, &mm);
         }
     }
 }
