@@ -10,15 +10,17 @@ layout (location = 4) in vec2 uv;
 //Instanced array
 layout (location = 5) in mat4 model_matrix;
 
+const int SHADOW_CASCADES = 4;
+
 out vec3 tangent_sun_direction;
 out vec3 tangent_view_position;
 out vec3 tangent_space_pos;
-out vec4 shadow_space_pos;
+out vec4 shadow_space_pos[SHADOW_CASCADES];
 out vec3 f_world_pos;
 out vec2 scaled_uvs;
 
 uniform mat4 view_projection;
-uniform mat4 shadow_matrix;
+uniform mat4 shadow_matrices[SHADOW_CASCADES];
 uniform vec3 sun_direction;
 uniform vec3 view_position;
 uniform vec2 uv_scale = vec2(1.0, 1.0);
@@ -31,8 +33,10 @@ void main() {
     vec3 N = normalize(vec3(normal_matrix * vec4(normal, 0.0)));
     mat3 tangent_matrix = transpose(mat3(T, B, N));
 
-    vec4 world_space_pos = model_matrix * vec4(position, 1.0);    
-    shadow_space_pos = shadow_matrix * world_space_pos;
+    vec4 world_space_pos = model_matrix * vec4(position, 1.0);
+    for (int i = 0; i < SHADOW_CASCADES; i++) {
+        shadow_space_pos[i] = shadow_matrices[i] * world_space_pos;
+    }    
 
     tangent_space_pos = tangent_matrix * vec3(world_space_pos);
     tangent_sun_direction = tangent_matrix * sun_direction;

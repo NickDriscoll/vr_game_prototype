@@ -8,9 +8,10 @@ use ozy::glutil::ColorSpace;
 use crate::glutil;
 use gl::types::*;
 
-pub const NEAR_DISTANCE: f32 = 0.0625;
-pub const FAR_DISTANCE: f32 = 100000.0;
+pub const NEAR_DISTANCE: f32 = 1.0;
+pub const FAR_DISTANCE: f32 = 1000.0;
 pub const MSAA_SAMPLES: u32 = 8;
+pub const SHADOW_CASCADES: usize = 4;
 pub const INSTANCED_ATTRIBUTE: GLuint = 5;
 pub const TEXTURE_MAP_COUNT: usize = 3;
 
@@ -90,8 +91,10 @@ pub struct SceneData {
     pub sun_color: [f32; 3],
     pub ambient_strength: f32,
     pub shadow_texture: GLuint,
-    pub shadow_matrix: glm::TMat4<f32>,
     pub shadow_program: GLuint,
+    pub cascade_size: GLint,
+    pub shadow_matrices: [glm::TMat4<f32>; SHADOW_CASCADES],
+    pub shadow_cascade_distances: [f32; SHADOW_CASCADES],
     pub entities: OptionVec<RenderEntity>
 }
 
@@ -107,8 +110,10 @@ impl Default for SceneData {
             sun_color: [1.0, 1.0, 1.0],
             ambient_strength: 0.2,
             shadow_texture: 0,
-            shadow_matrix: glm::identity(),
             shadow_program: 0,
+            cascade_size: 0,
+            shadow_matrices: [glm::identity(); SHADOW_CASCADES],
+            shadow_cascade_distances: [0.0; SHADOW_CASCADES],
             entities: OptionVec::new()
         }
     }
@@ -119,7 +124,14 @@ pub enum FragmentFlag {
     Default,
     Normals,
     LodZones,
+    CascadeZones,
     Shadowed
+}
+
+impl Default for FragmentFlag {
+    fn default() -> Self {
+        FragmentFlag::Default
+    }
 }
 
 pub struct ViewData {
@@ -155,17 +167,20 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
         if let Some(entity) = opt_entity {
             let p = entity.shader;
             gl::UseProgram(p);
-            glutil::bind_matrix4(p, "shadow_matrix", &scene_data.shadow_matrix);
+            glutil::bind_matrix4_array(p, "shadow_matrices", &scene_data.shadow_matrices);
             glutil::bind_matrix4(p, "view_projection", &view_data.view_projection);
             glutil::bind_vector3(p, "sun_direction", &scene_data.sun_direction);
             glutil::bind_vector3(p, "sun_color", &sun_c);
             glutil::bind_float(p, "ambient_strength", scene_data.ambient_strength);
             glutil::bind_int(p, "shadow_map", TEXTURE_MAP_COUNT as GLint);
             glutil::bind_int(p, "complex_normals", scene_data.complex_normals as GLint);
+            glutil::bind_float_array(p, "cascade_distances", &scene_data.shadow_cascade_distances);
             glutil::bind_vector3(p, "view_position", &view_data.view_position);
+            glutil::bind_vector2(p, "uv_scale", &entity.uv_scale);
+            glutil::bind_vector2(p, "uv_offset", &entity.uv_offset);
 
             //fragment flag stuff
-            let flag_names = ["visualize_normals", "visualize_lod", "visualize_shadowed"];
+            let flag_names = ["visualize_normals", "visualize_lod", "visualize_shadowed", "visualize_cascade_zone"];
             for name in flag_names.iter() {
                 glutil::bind_int(p, name, 0);
             }
@@ -173,6 +188,7 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
                 FragmentFlag::Shadowed => { glutil::bind_int(p, "visualize_shadowed", 1); }
                 FragmentFlag::Normals => { glutil::bind_int(p, "visualize_normals", 1); }
                 FragmentFlag::LodZones => { glutil::bind_int(p, "visualize_lod", 1); }
+                FragmentFlag::CascadeZones => { glutil::bind_int(p, "visualize_cascade_zone", 1); }
                 FragmentFlag::Default => {}
             }
             
@@ -180,10 +196,7 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
                 glutil::bind_int(p, texture_map_names[i], i as GLint);
                 gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
                 gl::BindTexture(gl::TEXTURE_2D, entity.textures[i]);
-            }
-            
-            glutil::bind_vector2(p, "uv_scale", &entity.uv_scale);
-            glutil::bind_vector2(p, "uv_offset", &entity.uv_offset);
+            }            
 
             gl::BindVertexArray(entity.vao);
             gl::DrawElementsInstanced(gl::TRIANGLES, entity.index_count, gl::UNSIGNED_SHORT, ptr::null(), entity.active_instances);
@@ -208,11 +221,17 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
 
 pub unsafe fn render_shadows(scene_data: &SceneData) {
     gl::UseProgram(scene_data.shadow_program);
-    glutil::bind_matrix4(scene_data.shadow_program, "view_projection", &scene_data.shadow_matrix);
-    for opt_entity in scene_data.entities.iter() {
-        if let Some(entity) = opt_entity {
-            gl::BindVertexArray(entity.vao);
-            gl::DrawElementsInstanced(gl::TRIANGLES, entity.index_count, gl::UNSIGNED_SHORT, ptr::null(), entity.active_instances);
+
+    for i in 0..SHADOW_CASCADES {
+        //Configure rendering for this cascade
+        glutil::bind_matrix4(scene_data.shadow_program, "view_projection", &scene_data.shadow_matrices[i]);
+        gl::Viewport(i as GLint * scene_data.cascade_size, 0, scene_data.cascade_size, scene_data.cascade_size);
+
+        for opt_entity in scene_data.entities.iter() {
+            if let Some(entity) = opt_entity {
+                gl::BindVertexArray(entity.vao);
+                gl::DrawElementsInstanced(gl::TRIANGLES, entity.index_count, gl::UNSIGNED_SHORT, ptr::null(), entity.active_instances);
+            }
         }
     }
 }

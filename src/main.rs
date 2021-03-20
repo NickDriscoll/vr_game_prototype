@@ -37,11 +37,11 @@ use crate::structs::*;
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
 
 //Sets a flag to a value or unsets the flag if it already is the value
-fn handle_radio_flag<F: Eq>(current_flag: &mut F, new_flag: F, default: F) {
+fn handle_radio_flag<F: Eq + Default>(current_flag: &mut F, new_flag: F) {
     if *current_flag != new_flag {
         *current_flag = new_flag;
     } else {
-        *current_flag = default;
+        *current_flag = F::default();
     }
 }
 
@@ -551,16 +551,30 @@ fn main() {
 
     //Initialize shadow data
     let mut shadow_view;
-    let shadow_proj_size = 30.0;
-    let shadow_projection = glm::ortho(-shadow_proj_size * 2.0, shadow_proj_size * 2.0, -shadow_proj_size * 2.0, shadow_proj_size * 2.0, 3.0 * -shadow_proj_size, 2.0 * shadow_proj_size);
-    let shadow_size = 4096;
-    let shadow_rendertarget = unsafe { RenderTarget::new_shadow((shadow_size, shadow_size)) };
+    //let shadow_proj_size = 30.0;
+    //let shadow_projection = glm::ortho(-shadow_proj_size * 2.0, shadow_proj_size * 2.0, -shadow_proj_size * 2.0, shadow_proj_size * 2.0, 3.0 * -shadow_proj_size, 2.0 * shadow_proj_size);
+
+    let cascade_size = 1024 * 2;
+    let shadow_rendertarget = unsafe { RenderTarget::new_shadow((cascade_size * render::SHADOW_CASCADES as GLint, cascade_size)) };
 
     //Initialize scene data struct
     let mut scene_data = SceneData::default();
     scene_data.shadow_program = shadow_program;
     scene_data.shadow_texture = shadow_rendertarget.texture;
+    scene_data.cascade_size = cascade_size;
     scene_data.skybox_program = skybox_program;
+
+    //The shadow cascade distances are negative bc they apply to view space
+    scene_data.shadow_cascade_distances = {
+        let partition_ratio = f32::powf(render::FAR_DISTANCE / render::NEAR_DISTANCE, 1.0 / render::SHADOW_CASCADES as f32);
+        //let partition_ratio = 12.0;
+        let mut cascade_distances = [0.0; render::SHADOW_CASCADES];
+        for i in 0..render::SHADOW_CASCADES {
+            cascade_distances[i] = -(f32::powi(partition_ratio, i as i32) * render::NEAR_DISTANCE) * (1.0 / render::NEAR_DISTANCE);
+            //cascade_distances[i] = -15.0 * i as f32;
+        }
+        cascade_distances
+    };
 
     //Create the cube that will be user to render the skybox
 	scene_data.skybox_vao = ozy::prims::skybox_cube_vao();
@@ -753,6 +767,7 @@ fn main() {
 
         let idx = scene_data.entities.insert(RenderEntity::from_ozy("models/cube.ozy", standard_program, cube_count, &mut texture_keeper, &default_tex_params));
         scene_data.entities.get_mut_element(idx).unwrap().update_buffer(&cube_transform_buffer);
+        idx
     };
 
     //Create controller entities
@@ -1396,8 +1411,8 @@ fn main() {
         world_from_tracking = glm::translation(&player.tracking_position);
         tracking_from_world = glm::affine_inverse(world_from_tracking);
 
-        shadow_view = glm::look_at(&scene_data.sun_direction, &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
-        scene_data.shadow_matrix = shadow_projection * shadow_view;
+        //Compute the view_projection matrices for the shadow maps
+        shadow_view = glm::look_at(&(scene_data.sun_direction * 20.0), &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
 
         player.last_tracked_segment = player.tracked_segment.clone();
         last_camera_position = camera_position;
@@ -1424,9 +1439,10 @@ fn main() {
 
                 //Do visualization radio selection
                 imgui_ui.text(im_str!("Debug visualization options:"));
-                if imgui_ui.radio_button_bool(im_str!("Visualize normals"), scene_data.fragment_flag == FragmentFlag::Normals) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::Normals, FragmentFlag::Default); }
-                if imgui_ui.radio_button_bool(im_str!("Visualize LOD zones"), scene_data.fragment_flag == FragmentFlag::LodZones) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::LodZones, FragmentFlag::Default); }
-                if imgui_ui.radio_button_bool(im_str!("Visualize how shadowed"), scene_data.fragment_flag == FragmentFlag::Shadowed) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::Shadowed, FragmentFlag::Default); }
+                if imgui_ui.radio_button_bool(im_str!("Visualize normals"), scene_data.fragment_flag == FragmentFlag::Normals) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::Normals); }
+                if imgui_ui.radio_button_bool(im_str!("Visualize LOD zones"), scene_data.fragment_flag == FragmentFlag::LodZones) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::LodZones); }
+                if imgui_ui.radio_button_bool(im_str!("Visualize how shadowed"), scene_data.fragment_flag == FragmentFlag::Shadowed) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::Shadowed); }
+                if imgui_ui.radio_button_bool(im_str!("Visualize shadow cascades"), scene_data.fragment_flag == FragmentFlag::CascadeZones) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::CascadeZones); }
                 imgui_ui.separator();
 
                 imgui_ui.text(im_str!("Lighting controls:"));
@@ -1465,6 +1481,13 @@ fn main() {
                 //End the window
                 win_token.end(&imgui_ui);
             }
+
+            let win = imgui::Window::new(im_str!("Shadow cascade texture"));
+            if let Some(win_token) = win.begin(&imgui_ui) {
+                let image = imgui::Image::new(TextureId::from(scene_data.shadow_texture as usize), [4096.0 / 4.0, 1024.0 / 4.0]).uv1([1.0, -1.0]);
+                image.build(&imgui_ui);
+                win_token.end(&imgui_ui);
+            }
         }
 
         //Create a view matrix from the camera state
@@ -1477,9 +1500,9 @@ fn main() {
 
         //Render
         unsafe {
-            //Enable depth test and backface culling for 3D rendering
-            gl::Enable(gl::DEPTH_TEST);
-            gl::Enable(gl::CULL_FACE);
+            //Setting up OpenGL state for 3D rendering
+            gl::Enable(gl::DEPTH_TEST);         //Depth test
+            gl::Enable(gl::CULL_FACE);          //Backface culling
             gl::Disable(gl::SCISSOR_TEST);      //Disabling scissor test because it gets enabled before 2D rendering
 
             if wireframe { gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE); }
@@ -1521,9 +1544,84 @@ fn main() {
                                 }
                             }
 
-                            //Render shadow map
-                            shadow_rendertarget.bind();
-                            render_shadows(&scene_data);
+                            if let Some(pose) = xrutil::locate_space(&view_space, &tracking_space, wait_info.predicted_display_time) {
+                                let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);
+                                let projection = *screen_state.get_clipping_from_view();
+                                let shadow_from_view = shadow_view * glm::affine_inverse(v_mat);
+                                let fovx = f32::atan(1.0 / projection[0]);
+                                let fovy = f32::atan(1.0 / projection[5]);
+                                for i in 0..render::SHADOW_CASCADES {
+                                    let z0 = scene_data.shadow_cascade_distances[i];
+                                    let z1;
+                                    if i == render::SHADOW_CASCADES - 1 {
+                                        z1 = render::FAR_DISTANCE;
+                                    } else {
+                                        z1 = scene_data.shadow_cascade_distances[i + 1];
+                                    }
+                                        
+                                    let x0 = -z0 * f32::tan(fovx);
+                                    let x1 = z0 * f32::tan(fovx);
+                                    let x2 = -z1 * f32::tan(fovx);
+                                    let x3 = z1 * f32::tan(fovx);
+                                    let y0 = -z0 * f32::tan(fovy);
+                                    let y1 = z0 * f32::tan(fovy);
+                                    let y2 = -z1 * f32::tan(fovy);
+                                    let y3 = z1 * f32::tan(fovy);
+                                    
+                                    //The extreme vertices of the partition frustum
+                                    let shadow_space_points = [
+                                        shadow_from_view * glm::vec4(x0, y0, z0, 1.0),
+                                        shadow_from_view * glm::vec4(x1, y0, z0, 1.0),
+                                        shadow_from_view * glm::vec4(x0, y1, z0, 1.0),
+                                        shadow_from_view * glm::vec4(x1, y1, z0, 1.0),                                        
+                                        shadow_from_view * glm::vec4(x2, y2, z1, 1.0),
+                                        shadow_from_view * glm::vec4(x3, y2, z1, 1.0),
+                                        shadow_from_view * glm::vec4(x2, y3, z1, 1.0),
+                                        shadow_from_view * glm::vec4(x3, y3, z1, 1.0)                                        
+                                    ];
+
+                                    let mut min_x = f32::INFINITY;
+                                    let mut min_y = f32::INFINITY;
+                                    let mut max_x = 0.0;
+                                    let mut max_y = 0.0;
+                                    for point in shadow_space_points.iter() {
+                                        if max_x < point.x {
+                                            max_x = point.x;
+                                        }
+                                        if min_x > point.x {
+                                            min_x = point.x;
+                                        }
+                                        if max_y < point.y {
+                                            max_y = point.y;
+                                        }
+                                        if min_y > point.y {
+                                            min_y = point.y;
+                                        }
+                                    }
+
+                                    let shadow_projection = glm::ortho(
+                                        min_x, max_x, min_y, max_y, -2.0, 30.0
+                                    );
+
+                                    scene_data.shadow_matrices[i] = shadow_projection * shadow_view;
+                                }
+
+                                //Draw the companion view if we're showing HMD POV
+                                if hmd_pov {
+                                    //Render shadow map
+                                    shadow_rendertarget.bind();
+                                    render_shadows(&scene_data);
+
+                                    let v_world_pos = xrutil::pose_to_mat4(&pose, &world_from_tracking);
+                                    let view_state = ViewData::new(
+                                        glm::vec3(v_world_pos[12], v_world_pos[13], v_world_pos[14]),
+                                        v_mat,
+                                        projection
+                                    );
+                                    default_framebuffer.bind();
+                                    render_main_scene(&scene_data, &view_state);
+                                }
+                            }
 
                             for i in 0..views.len() {
                                 let image_index = swapchains[i].acquire_image().unwrap();
@@ -1606,21 +1704,6 @@ fn main() {
                             if let Err(e) = end_result {
                                 println!("Framestream end error: {}", e);
                             }
-
-                            //Draw the companion view if we're showing HMD POV
-                            if hmd_pov {
-                                if let Some(pose) = xrutil::locate_space(&view_space, &tracking_space, wait_info.predicted_display_time) {
-                                    let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);
-                                    let v_world_pos = xrutil::pose_to_mat4(&pose, &world_from_tracking);
-                                    let view_state = ViewData::new(
-                                        glm::vec3(v_world_pos[12], v_world_pos[13], v_world_pos[14]),
-                                        v_mat,
-                                        *screen_state.get_clipping_from_view()
-                                    );
-                                    default_framebuffer.bind();
-                                    render_main_scene(&scene_data, &view_state);
-                                }
-                            }
                         }
                         Err(e) => {
                             println!("Error doing framewaiter.wait(): {}", e);
@@ -1632,6 +1715,68 @@ fn main() {
 
             //Main window rendering
             if !hmd_pov {
+                let world_from_view = *screen_state.get_world_from_view();
+                let projection = *screen_state.get_clipping_from_view();
+                let shadow_from_view = shadow_view * world_from_view;
+                let fovx = f32::atan(1.0 / projection[0]);
+                let fovy = f32::atan(1.0 / projection[5]);
+                for i in 0..render::SHADOW_CASCADES {
+                    let z0 = scene_data.shadow_cascade_distances[i];
+                    let z1;
+                    if i == render::SHADOW_CASCADES - 1 {
+                        z1 = scene_data.shadow_cascade_distances[i] + (scene_data.shadow_cascade_distances[i] - scene_data.shadow_cascade_distances[i - 1]);
+                    } else {
+                        z1 = scene_data.shadow_cascade_distances[i + 1];
+                    }
+                                        
+                    let x0 = -z0 * f32::tan(fovx);
+                    let x1 = z0 * f32::tan(fovx);
+                    let x2 = -z1 * f32::tan(fovx);
+                    let x3 = z1 * f32::tan(fovx);
+                    let y0 = -z0 * f32::tan(fovy);
+                    let y1 = z0 * f32::tan(fovy);
+                    let y2 = -z1 * f32::tan(fovy);
+                    let y3 = z1 * f32::tan(fovy);
+                                    
+                    //The extreme vertices of the partition frustum
+                    let shadow_space_points = [
+                        shadow_from_view * glm::vec4(x0, y0, z0, 1.0),
+                        shadow_from_view * glm::vec4(x1, y0, z0, 1.0),
+                        shadow_from_view * glm::vec4(x0, y1, z0, 1.0),
+                        shadow_from_view * glm::vec4(x1, y1, z0, 1.0),                                        
+                        shadow_from_view * glm::vec4(x2, y2, z1, 1.0),
+                        shadow_from_view * glm::vec4(x3, y2, z1, 1.0),
+                        shadow_from_view * glm::vec4(x2, y3, z1, 1.0),
+                        shadow_from_view * glm::vec4(x3, y3, z1, 1.0)                                        
+                    ];
+
+                    let mut min_x = f32::INFINITY;
+                    let mut min_y = f32::INFINITY;
+                    let mut max_x = 0.0;
+                    let mut max_y = 0.0;
+                    for point in shadow_space_points.iter() {
+                        if max_x < point.x {
+                            max_x = point.x;
+                        }
+                        if min_x > point.x {
+                            min_x = point.x;
+                        }
+                        if max_y < point.y {
+                            max_y = point.y;
+                        }
+                        if min_y > point.y {
+                            min_y = point.y;
+                        }
+                    }
+
+                    let projection_depth = 10.0;
+                    let shadow_projection = glm::ortho(
+                        min_x, max_x, min_y, max_y, -2.0 * projection_depth, projection_depth * 4.0
+                    );
+
+                    scene_data.shadow_matrices[i] = shadow_projection * shadow_view;
+                }
+
                 //Render shadows
                 shadow_rendertarget.bind();
                 render_shadows(&scene_data);
