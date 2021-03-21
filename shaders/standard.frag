@@ -15,6 +15,7 @@ in vec3 tangent_space_pos;
 in vec4 shadow_space_pos[SHADOW_CASCADES];
 in vec3 f_world_pos;
 in vec2 scaled_uvs;
+in float clip_space_z;
 
 out vec4 frag_color;
 
@@ -37,6 +38,10 @@ uniform vec3 sun_color = vec3(1.0, 1.0, 1.0);
 uniform float ambient_strength = 0.0;
 uniform float cascade_distances[SHADOW_CASCADES];
 
+vec4 simple_diffuse(vec3 color, float diffuse, float ambient) {
+    return vec4((diffuse + ambient) * color, 1.0);
+}
+
 float determine_shadowed(vec3 f_shadow_pos, int cascade) {
     const float BIAS = 0.0001;
     vec2 sample_uv = f_shadow_pos.xy;
@@ -48,20 +53,6 @@ float determine_shadowed(vec3 f_shadow_pos, int cascade) {
 
 void main() {
     float dist_from_camera = distance(f_world_pos, view_position);
-    if (visualize_lod) {
-        if (dist_from_camera < LOD_DIST0) {
-            frag_color = vec4(1.0, 0.0, 0.0, 1.0);
-        } else if (dist_from_camera < LOD_DIST1) {
-            frag_color = vec4(1.0, 0.57, 0.0, 1.0);
-        } else if (dist_from_camera < LOD_DIST2) {
-            frag_color = vec4(0.0, 1.0, 0.0, 1.0);
-        } else if (dist_from_camera < LOD_DIST3) {
-            frag_color = vec4(1.0, 0.0, 1.0, 1.0);
-        } else {
-            frag_color = vec4(0.0, 0.0, 1.0, 1.0);
-        }
-        return;
-    }
 
     //Sample the albedo map for the fragment's base color
     vec3 albedo = texture(albedo_map, scaled_uvs).xyz;
@@ -78,11 +69,28 @@ void main() {
     //Early exit if we're visualizing normals
     if (visualize_normals) {
         frag_color = vec4(tangent_space_normal * 0.5 + 0.5, 1.0);
+        frag_color = vec4(vec3(gl_FragCoord.z), 1.0);
         return;
     }
 
     //Compute diffuse lighting
     float diffuse = max(0.0, dot(tangent_sun_direction, tangent_space_normal));
+
+    if (visualize_lod) {
+        vec3 c;
+        if (dist_from_camera < LOD_DIST0) {
+            frag_color = simple_diffuse(vec3(1.0, 0.0, 0.0), diffuse, ambient_strength);
+        } else if (dist_from_camera < LOD_DIST1) {
+            frag_color = simple_diffuse(vec3(1.0, 0.57, 0.0), diffuse, ambient_strength);
+        } else if (dist_from_camera < LOD_DIST2) {
+            frag_color = simple_diffuse(vec3(0.0, 1.0, 0.0), diffuse, ambient_strength);
+        } else if (dist_from_camera < LOD_DIST3) {
+            frag_color = simple_diffuse(vec3(1.0, 0.0, 1.0), diffuse, ambient_strength);
+        } else {
+            frag_color = simple_diffuse(vec3(0.0, 0.0, 1.0), diffuse, ambient_strength);
+        }
+        return;
+    }
 
     //Early exit if we're too far from the camera
     if (dist_from_camera > LOD_DIST3) {
@@ -95,39 +103,9 @@ void main() {
 
     vec4 adj_shadow_space_pos;
     int shadow_cascade = -1;
-
-    /*
-    for (int i = 0; i < SHADOW_CASCADES; i++) {
-        adj_shadow_space_pos = shadow_space_pos[i] * 0.5 + 0.5;
-        if (!(
-                adj_shadow_space_pos.z < 0.0 ||
-                adj_shadow_space_pos.z > 1.0 ||
-                adj_shadow_space_pos.x < 0.0 ||
-                adj_shadow_space_pos.x > 1.0 ||
-                adj_shadow_space_pos.y < 0.0 ||
-                adj_shadow_space_pos.y > 1.0
-            )) {
-                shadow_cascade = i;
-
-                if (visualize_cascade_zone) {
-                    if (i == 0) {
-                        frag_color = vec4(1.0, 0.0, 0.0, 1.0);
-                    } else if (i == 1) {
-                        frag_color = vec4(0.0, 1.0, 0.0, 1.0);
-                    } else if (i == 2) {
-                        frag_color = vec4(0.0, 0.0, 1.0, 1.0);
-                    } else if (i == 3) {
-                        frag_color = vec4(1.0, 1.0, 1.0, 1.0);
-                    }
-                    return;
-                }
-                break;
-            }
-    }
-    */
     
-    for (int i = SHADOW_CASCADES - 1; i >= 0; i--) {
-        if (dist_from_camera > -cascade_distances[i]) {
+    for (int i = 0; i < SHADOW_CASCADES; i++) {
+        if (clip_space_z < cascade_distances[i]) {
             adj_shadow_space_pos = shadow_space_pos[i] * 0.5 + 0.5;
             if (!(
                 adj_shadow_space_pos.z < 0.0 ||
@@ -142,13 +120,13 @@ void main() {
 
             if (visualize_cascade_zone) {
                 if (i == 0) {
-                    frag_color = vec4(1.0, 0.0, 0.0, 1.0);
+                    frag_color = simple_diffuse(vec3(1.0, 0.0, 0.0), diffuse, ambient_strength);
                 } else if (i == 1) {
-                    frag_color = vec4(0.0, 1.0, 0.0, 1.0);
+                    frag_color = simple_diffuse(vec3(0.0, 1.0, 0.0), diffuse, ambient_strength);
                 } else if (i == 2) {
-                    frag_color = vec4(0.0, 0.0, 1.0, 1.0);
+                    frag_color = simple_diffuse(vec3(0.0, 0.0, 1.0), diffuse, ambient_strength);
                 } else if (i == 3) {
-                    frag_color = vec4(1.0, 1.0, 1.0, 1.0);
+                    frag_color = simple_diffuse(vec3(1.0, 1.0, 1.0), diffuse, ambient_strength);
                 }
                 return;
             }
@@ -160,7 +138,7 @@ void main() {
 
     //Compute how shadowed if we are potentially shadowed
     if (shadow_cascade > -1) {
-        if (dist_from_camera < LOD_DIST0 && false) {
+        if (false) {
             //Do PCF
             //Average the nxn block of shadow texels centered at this pixel
             int bound = 1;

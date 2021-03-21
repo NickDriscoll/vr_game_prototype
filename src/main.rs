@@ -565,14 +565,28 @@ fn main() {
     scene_data.skybox_program = skybox_program;
 
     //The shadow cascade distances are negative bc they apply to view space
-    scene_data.shadow_cascade_distances = {
+    let shadow_cascade_distances = {
         let partition_ratio = f32::powf(render::FAR_DISTANCE / render::NEAR_DISTANCE, 1.0 / render::SHADOW_CASCADES as f32);
-        //let partition_ratio = 12.0;
-        let mut cascade_distances = [0.0; render::SHADOW_CASCADES];
-        for i in 0..render::SHADOW_CASCADES {
-            cascade_distances[i] = -(f32::powi(partition_ratio, i as i32) * render::NEAR_DISTANCE) * (1.0 / render::NEAR_DISTANCE);
+        let mut cascade_distances = [0.0; render::SHADOW_CASCADES + 1];
+        /*
+        for i in 0..(render::SHADOW_CASCADES + 1) {
+            cascade_distances[i] = -(f32::powi(partition_ratio, i as i32) * render::NEAR_DISTANCE);
             //cascade_distances[i] = -15.0 * i as f32;
         }
+        */
+        cascade_distances[0] = -(render::NEAR_DISTANCE);
+        cascade_distances[1] = -(render::NEAR_DISTANCE + 10.0);
+        cascade_distances[2] = -(render::NEAR_DISTANCE + 50.0);
+        cascade_distances[3] = -(render::NEAR_DISTANCE + 200.0);
+        cascade_distances[4] = -(render::NEAR_DISTANCE + 500.0);
+
+        //Compute the clip space distances and save them in the scene_data struct
+        for i in 0..cascade_distances.len() {
+            let p = screen_state.get_clipping_from_view() * glm::vec4(0.0, 0.0, cascade_distances[i], 1.0);
+            scene_data.shadow_cascade_distances[i] = p.z;
+        }
+        println!("{:?}", scene_data.shadow_cascade_distances);
+
         cascade_distances
     };
 
@@ -749,7 +763,7 @@ fn main() {
 
     //Create staircase
     let cube_count = 2048;
-    let cube_entity_index = unsafe {
+    let cube_entity_index = {
         let mut cube_transform_buffer = vec![0.0; cube_count * 16];
         for i in 0..cube_count {
             let position = glm::vec4(-20.0, i as f32 * 10.0, i as f32 * 5.0, 1.0);
@@ -1720,14 +1734,11 @@ fn main() {
                 let shadow_from_view = shadow_view * world_from_view;
                 let fovx = f32::atan(1.0 / projection[0]);
                 let fovy = f32::atan(1.0 / projection[5]);
+
+                //Loop computes the shadow matrices for this frame
                 for i in 0..render::SHADOW_CASCADES {
-                    let z0 = scene_data.shadow_cascade_distances[i];
-                    let z1;
-                    if i == render::SHADOW_CASCADES - 1 {
-                        z1 = scene_data.shadow_cascade_distances[i] + (scene_data.shadow_cascade_distances[i] - scene_data.shadow_cascade_distances[i - 1]);
-                    } else {
-                        z1 = scene_data.shadow_cascade_distances[i + 1];
-                    }
+                    let z0 = shadow_cascade_distances[i];
+                    let z1 = shadow_cascade_distances[i + 1];
                                         
                     let x0 = -z0 * f32::tan(fovx);
                     let x1 = z0 * f32::tan(fovx);
@@ -1738,7 +1749,7 @@ fn main() {
                     let y2 = -z1 * f32::tan(fovy);
                     let y3 = z1 * f32::tan(fovy);
                                     
-                    //The extreme vertices of the partition frustum
+                    //The extreme vertices of the sub-frustum
                     let shadow_space_points = [
                         shadow_from_view * glm::vec4(x0, y0, z0, 1.0),
                         shadow_from_view * glm::vec4(x1, y0, z0, 1.0),
