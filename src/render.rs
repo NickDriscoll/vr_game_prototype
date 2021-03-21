@@ -95,6 +95,7 @@ pub struct SceneData {
     pub cascade_size: GLint,
     pub shadow_matrices: [glm::TMat4<f32>; SHADOW_CASCADES],
     pub shadow_cascade_distances: [f32; SHADOW_CASCADES + 1],
+    pub clip_cascade_distances: [f32; SHADOW_CASCADES + 1],
     pub entities: OptionVec<RenderEntity>
 }
 
@@ -114,6 +115,7 @@ impl Default for SceneData {
             cascade_size: 0,
             shadow_matrices: [glm::identity(); SHADOW_CASCADES],
             shadow_cascade_distances: [0.0; SHADOW_CASCADES + 1],
+            clip_cascade_distances: [0.0; SHADOW_CASCADES + 1],
             entities: OptionVec::new()
         }
     }
@@ -174,7 +176,7 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
             glutil::bind_float(p, "ambient_strength", scene_data.ambient_strength);
             glutil::bind_int(p, "shadow_map", TEXTURE_MAP_COUNT as GLint);
             glutil::bind_int(p, "complex_normals", scene_data.complex_normals as GLint);
-            glutil::bind_float_array(p, "cascade_distances", &scene_data.shadow_cascade_distances[1..]);
+            glutil::bind_float_array(p, "cascade_distances", &scene_data.clip_cascade_distances[1..]);
             glutil::bind_vector3(p, "view_position", &view_data.view_position);
             glutil::bind_vector2(p, "uv_scale", &entity.uv_scale);
             glutil::bind_vector2(p, "uv_offset", &entity.uv_offset);

@@ -36,6 +36,65 @@ use crate::structs::*;
 #[cfg(windows)]
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
 
+fn compute_shadow_cascade_matrices(scene_data: &mut SceneData, shadow_view: &glm::TMat4<f32>, v_mat: &glm::TMat4<f32>, projection: &glm::TMat4<f32>) {                 
+    let shadow_from_view = shadow_view * glm::affine_inverse(*v_mat);
+    let fovx = f32::atan(1.0 / projection[0]);
+    let fovy = f32::atan(1.0 / projection[5]);
+
+    //Loop computes the shadow matrices for this frame
+    for i in 0..render::SHADOW_CASCADES {
+        let z0 = scene_data.shadow_cascade_distances[i];
+        let z1 = scene_data.shadow_cascade_distances[i + 1];
+                            
+        let x0 = -z0 * f32::tan(fovx);
+        let x1 = z0 * f32::tan(fovx);
+        let x2 = -z1 * f32::tan(fovx);
+        let x3 = z1 * f32::tan(fovx);
+        let y0 = -z0 * f32::tan(fovy);
+        let y1 = z0 * f32::tan(fovy);
+        let y2 = -z1 * f32::tan(fovy);
+        let y3 = z1 * f32::tan(fovy);
+                        
+        //The extreme vertices of the sub-frustum
+        let shadow_space_points = [
+            shadow_from_view * glm::vec4(x0, y0, z0, 1.0),
+            shadow_from_view * glm::vec4(x1, y0, z0, 1.0),
+            shadow_from_view * glm::vec4(x0, y1, z0, 1.0),
+            shadow_from_view * glm::vec4(x1, y1, z0, 1.0),                                        
+            shadow_from_view * glm::vec4(x2, y2, z1, 1.0),
+            shadow_from_view * glm::vec4(x3, y2, z1, 1.0),
+            shadow_from_view * glm::vec4(x2, y3, z1, 1.0),
+            shadow_from_view * glm::vec4(x3, y3, z1, 1.0)                                        
+        ];
+
+        let mut min_x = f32::INFINITY;
+        let mut min_y = f32::INFINITY;
+        let mut max_x = 0.0;
+        let mut max_y = 0.0;
+        for point in shadow_space_points.iter() {
+            if max_x < point.x {
+                max_x = point.x;
+            }
+            if min_x > point.x {
+                min_x = point.x;
+            }
+            if max_y < point.y {
+                max_y = point.y;
+            }
+            if min_y > point.y {
+                min_y = point.y;
+            }
+        }
+
+        let projection_depth = 10.0;
+        let shadow_projection = glm::ortho(
+            min_x, max_x, min_y, max_y, -3.0 * projection_depth, projection_depth * 4.0
+        );
+
+        scene_data.shadow_matrices[i] = shadow_projection * shadow_view;
+    }
+}
+
 //Sets a flag to a value or unsets the flag if it already is the value
 fn handle_radio_flag<F: Eq + Default>(current_flag: &mut F, new_flag: F) {
     if *current_flag != new_flag {
@@ -374,7 +433,7 @@ fn main() {
 			gl::DebugMessageControl(gl::DONT_CARE, gl::DONT_CARE, gl::DONT_CARE, 0, ptr::null(), gl::TRUE);
 		}
     }
-    //glfw.set_swap_interval(SwapInterval::None);
+    let mut do_vsync = true;
 
     //Initialize OpenXR session
     let (xr_session, mut xr_framewaiter, mut xr_framestream): (Option<xr::Session<xr::OpenGL>>, Option<xr::FrameWaiter>, Option<xr::FrameStream<xr::OpenGL>>) = match &xr_instance {
@@ -551,10 +610,7 @@ fn main() {
 
     //Initialize shadow data
     let mut shadow_view;
-    //let shadow_proj_size = 30.0;
-    //let shadow_projection = glm::ortho(-shadow_proj_size * 2.0, shadow_proj_size * 2.0, -shadow_proj_size * 2.0, shadow_proj_size * 2.0, 3.0 * -shadow_proj_size, 2.0 * shadow_proj_size);
-
-    let cascade_size = 1024 * 4;
+    let cascade_size = 2048;
     let shadow_rendertarget = unsafe { RenderTarget::new_shadow((cascade_size * render::SHADOW_CASCADES as GLint, cascade_size)) };
 
     //Initialize scene data struct
@@ -565,7 +621,7 @@ fn main() {
     scene_data.skybox_program = skybox_program;
 
     //The shadow cascade distances are negative bc they apply to view space
-    let shadow_cascade_distances = {
+    scene_data.shadow_cascade_distances = {
         let partition_ratio = f32::powf(render::FAR_DISTANCE / render::NEAR_DISTANCE, 1.0 / render::SHADOW_CASCADES as f32);
         let mut cascade_distances = [0.0; render::SHADOW_CASCADES + 1];
         /*
@@ -583,7 +639,7 @@ fn main() {
         //Compute the clip space distances and save them in the scene_data struct
         for i in 0..cascade_distances.len() {
             let p = screen_state.get_clipping_from_view() * glm::vec4(0.0, 0.0, cascade_distances[i], 1.0);
-            scene_data.shadow_cascade_distances[i] = p.z;
+            scene_data.clip_cascade_distances[i] = p.z;
         }
 
         cascade_distances
@@ -816,6 +872,12 @@ fn main() {
         frame_count += 1;
         imgui_io.delta_time = delta_time;
         let framerate = imgui_io.framerate;
+
+        if do_vsync {
+            glfw.set_swap_interval(SwapInterval::Sync(1));
+        } else {            
+            glfw.set_swap_interval(SwapInterval::None);
+        }
 
         //Sync OpenXR actions
         if let (Some(session), Some(controller_actionset)) = (&xr_session, &xr_controller_actionset) {
@@ -1436,17 +1498,14 @@ fn main() {
         if do_imgui {
             let win = imgui::Window::new(im_str!("Hacking window"));
             if let Some(win_token) = win.begin(&imgui_ui) {
-                if let Some(_) = &xr_instance {
-                    if imgui_ui.button(im_str!("Reset player position"), [0.0, 32.0]) {
-                        reset_player_position(&mut player);
-                    }
-                }
                 imgui_ui.text(im_str!("FPS: {:.2}\tFrame: {}", framerate, frame_count));
                 imgui_ui.checkbox(im_str!("Wireframe view"), &mut wireframe);
                 imgui_ui.checkbox(im_str!("TRUE wireframe view"), &mut true_wireframe);
                 imgui_ui.checkbox(im_str!("Complex normals"), &mut scene_data.complex_normals);
                 if let Some(_) = &xr_instance {
                     imgui_ui.checkbox(im_str!("HMD Point-of-view"), &mut hmd_pov);
+                } else {
+                    imgui_ui.checkbox(im_str!("Lock FPS (v-sync)"), &mut do_vsync);
                 }
                 imgui_ui.separator();
 
@@ -1466,6 +1525,14 @@ fn main() {
                 if sun_color_editor.build(&imgui_ui) {}
 
                 imgui_ui.separator();
+                
+                //Reset player position button
+                if let Some(_) = &xr_instance {
+                    if imgui_ui.button(im_str!("Reset player position"), [0.0, 32.0]) {
+                        reset_player_position(&mut player);
+                    }
+                }
+                imgui_ui.same_line(0.0);
 
                 //Fullscreen button
                 if imgui_ui.button(im_str!("Toggle fullscreen"), [0.0, 32.0]) {
@@ -1551,20 +1618,20 @@ fn main() {
                             }
 
                             if let Some(pose) = xrutil::locate_space(&view_space, &tracking_space, wait_info.predicted_display_time) {
-                                let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);
+                                let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);                                
                                 let projection = *screen_state.get_clipping_from_view();
+                                compute_shadow_cascade_matrices(&mut scene_data, &shadow_view, &v_mat, &projection);
+
+                                /*
                                 let shadow_from_view = shadow_view * glm::affine_inverse(v_mat);
                                 let fovx = f32::atan(1.0 / projection[0]);
                                 let fovy = f32::atan(1.0 / projection[5]);
+
+                                //Loop computes the shadow matrices for this frame
                                 for i in 0..render::SHADOW_CASCADES {
                                     let z0 = scene_data.shadow_cascade_distances[i];
-                                    let z1;
-                                    if i == render::SHADOW_CASCADES - 1 {
-                                        z1 = render::FAR_DISTANCE;
-                                    } else {
-                                        z1 = scene_data.shadow_cascade_distances[i + 1];
-                                    }
-                                        
+                                    let z1 = scene_data.shadow_cascade_distances[i + 1];
+                                                        
                                     let x0 = -z0 * f32::tan(fovx);
                                     let x1 = z0 * f32::tan(fovx);
                                     let x2 = -z1 * f32::tan(fovx);
@@ -1573,8 +1640,8 @@ fn main() {
                                     let y1 = z0 * f32::tan(fovy);
                                     let y2 = -z1 * f32::tan(fovy);
                                     let y3 = z1 * f32::tan(fovy);
-                                    
-                                    //The extreme vertices of the partition frustum
+                                                    
+                                    //The extreme vertices of the sub-frustum
                                     let shadow_space_points = [
                                         shadow_from_view * glm::vec4(x0, y0, z0, 1.0),
                                         shadow_from_view * glm::vec4(x1, y0, z0, 1.0),
@@ -1605,19 +1672,20 @@ fn main() {
                                         }
                                     }
 
+                                    let projection_depth = 10.0;
                                     let shadow_projection = glm::ortho(
-                                        min_x, max_x, min_y, max_y, -2.0, 30.0
+                                        min_x, max_x, min_y, max_y, -3.0 * projection_depth, projection_depth * 4.0
                                     );
 
                                     scene_data.shadow_matrices[i] = shadow_projection * shadow_view;
                                 }
+                                */
+                                //Render shadow map
+                                shadow_rendertarget.bind();
+                                render_shadows(&scene_data);
 
                                 //Draw the companion view if we're showing HMD POV
                                 if hmd_pov {
-                                    //Render shadow map
-                                    shadow_rendertarget.bind();
-                                    render_shadows(&scene_data);
-
                                     let v_world_pos = xrutil::pose_to_mat4(&pose, &world_from_tracking);
                                     let view_state = ViewData::new(
                                         glm::vec3(v_world_pos[12], v_world_pos[13], v_world_pos[14]),
@@ -1721,16 +1789,17 @@ fn main() {
 
             //Main window rendering
             if !hmd_pov {
-                let world_from_view = *screen_state.get_world_from_view();
                 let projection = *screen_state.get_clipping_from_view();
+                compute_shadow_cascade_matrices(&mut scene_data, &shadow_view, screen_state.get_view_from_world(), &projection);
+
+                /*
                 let shadow_from_view = shadow_view * world_from_view;
                 let fovx = f32::atan(1.0 / projection[0]);
                 let fovy = f32::atan(1.0 / projection[5]);
-
                 //Loop computes the shadow matrices for this frame
                 for i in 0..render::SHADOW_CASCADES {
-                    let z0 = shadow_cascade_distances[i];
-                    let z1 = shadow_cascade_distances[i + 1];
+                    let z0 = scene_data.shadow_cascade_distances[i];
+                    let z1 = scene_data.shadow_cascade_distances[i + 1];
                                         
                     let x0 = -z0 * f32::tan(fovx);
                     let x1 = z0 * f32::tan(fovx);
@@ -1779,6 +1848,7 @@ fn main() {
 
                     scene_data.shadow_matrices[i] = shadow_projection * shadow_view;
                 }
+                */
 
                 //Render shadows
                 shadow_rendertarget.bind();
@@ -1798,15 +1868,16 @@ fn main() {
             gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);  //Make sure we're not doing wireframe rendering
             gl::Disable(gl::DEPTH_TEST);                    //Disable depth testing
             gl::Disable(gl::CULL_FACE);                     //Disable any face culling
-            gl::Enable(gl::SCISSOR_TEST);
+            gl::Enable(gl::SCISSOR_TEST);                   //Scissor test enable for Dear ImGui clipping
+            gl::BindFramebuffer(gl::FRAMEBUFFER, default_framebuffer.name);
+            gl::Viewport(0, 0, default_framebuffer.size.0, default_framebuffer.size.1);
             if true_wireframe { gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE); }
 
             //Render Dear ImGui
             gl::UseProgram(imgui_program);
             glutil::bind_matrix4(imgui_program, "projection", screen_state.get_clipping_from_screen());
             {
-                let draw_data = imgui_ui.render();
-                
+                let draw_data = imgui_ui.render();                
                 if draw_data.total_vtx_count > 0 {                    
                     for list in draw_data.draw_lists() {
                         let vert_size = 8;
@@ -1851,12 +1922,8 @@ fn main() {
                                     );
                                     gl::DrawElementsBaseVertex(gl::TRIANGLES, count as GLint, gl::UNSIGNED_SHORT, (cmd_params.idx_offset * size_of::<GLushort>()) as _, cmd_params.vtx_offset as GLint);
                                 }
-                                DrawCmd::ResetRenderState => {
-                                    println!("DrawCmd::ResetRenderState.");
-                                }
-                                DrawCmd::RawCallback {..} => {
-                                    println!("DrawCmd::RawCallback.");
-                                }
+                                DrawCmd::ResetRenderState => { println!("DrawCmd::ResetRenderState."); }
+                                DrawCmd::RawCallback {..} => { println!("DrawCmd::RawCallback."); }
                             }
                         }
                         

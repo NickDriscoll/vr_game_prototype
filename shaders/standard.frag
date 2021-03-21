@@ -132,7 +132,7 @@ void main() {
 
     //Compute how shadowed if we are potentially shadowed
     if (shadow_cascade > -1) {
-        if (true) {
+        if (false) {
             //Do PCF
             //Average the 5x5 block of shadow texels centered at this pixel
             int bound = 1;
