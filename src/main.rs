@@ -433,7 +433,6 @@ fn main() {
 			gl::DebugMessageControl(gl::DONT_CARE, gl::DONT_CARE, gl::DONT_CARE, 0, ptr::null(), gl::TRUE);
 		}
     }
-    let mut do_vsync = true;
 
     //Initialize OpenXR session
     let (xr_session, mut xr_framewaiter, mut xr_framestream): (Option<xr::Session<xr::OpenGL>>, Option<xr::FrameWaiter>, Option<xr::FrameStream<xr::OpenGL>>) = match &xr_instance {
@@ -851,7 +850,11 @@ fn main() {
     let mut true_wireframe = false;
     let mut placing = false;
     let mut hmd_pov = false;
-    if let Some(_) = &xr_instance { hmd_pov = true; }
+    let mut do_vsync = true;
+    if let Some(_) = &xr_instance { 
+        hmd_pov = true;
+        do_vsync = false;
+    }
 
     let mut frame_count = 0;
     let mut last_frame_instant = Instant::now();
@@ -1618,70 +1621,11 @@ fn main() {
                             }
 
                             if let Some(pose) = xrutil::locate_space(&view_space, &tracking_space, wait_info.predicted_display_time) {
+                                //Render shadow map
+                                shadow_rendertarget.bind();
                                 let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);                                
                                 let projection = *screen_state.get_clipping_from_view();
                                 compute_shadow_cascade_matrices(&mut scene_data, &shadow_view, &v_mat, &projection);
-
-                                /*
-                                let shadow_from_view = shadow_view * glm::affine_inverse(v_mat);
-                                let fovx = f32::atan(1.0 / projection[0]);
-                                let fovy = f32::atan(1.0 / projection[5]);
-
-                                //Loop computes the shadow matrices for this frame
-                                for i in 0..render::SHADOW_CASCADES {
-                                    let z0 = scene_data.shadow_cascade_distances[i];
-                                    let z1 = scene_data.shadow_cascade_distances[i + 1];
-                                                        
-                                    let x0 = -z0 * f32::tan(fovx);
-                                    let x1 = z0 * f32::tan(fovx);
-                                    let x2 = -z1 * f32::tan(fovx);
-                                    let x3 = z1 * f32::tan(fovx);
-                                    let y0 = -z0 * f32::tan(fovy);
-                                    let y1 = z0 * f32::tan(fovy);
-                                    let y2 = -z1 * f32::tan(fovy);
-                                    let y3 = z1 * f32::tan(fovy);
-                                                    
-                                    //The extreme vertices of the sub-frustum
-                                    let shadow_space_points = [
-                                        shadow_from_view * glm::vec4(x0, y0, z0, 1.0),
-                                        shadow_from_view * glm::vec4(x1, y0, z0, 1.0),
-                                        shadow_from_view * glm::vec4(x0, y1, z0, 1.0),
-                                        shadow_from_view * glm::vec4(x1, y1, z0, 1.0),                                        
-                                        shadow_from_view * glm::vec4(x2, y2, z1, 1.0),
-                                        shadow_from_view * glm::vec4(x3, y2, z1, 1.0),
-                                        shadow_from_view * glm::vec4(x2, y3, z1, 1.0),
-                                        shadow_from_view * glm::vec4(x3, y3, z1, 1.0)                                        
-                                    ];
-
-                                    let mut min_x = f32::INFINITY;
-                                    let mut min_y = f32::INFINITY;
-                                    let mut max_x = 0.0;
-                                    let mut max_y = 0.0;
-                                    for point in shadow_space_points.iter() {
-                                        if max_x < point.x {
-                                            max_x = point.x;
-                                        }
-                                        if min_x > point.x {
-                                            min_x = point.x;
-                                        }
-                                        if max_y < point.y {
-                                            max_y = point.y;
-                                        }
-                                        if min_y > point.y {
-                                            min_y = point.y;
-                                        }
-                                    }
-
-                                    let projection_depth = 10.0;
-                                    let shadow_projection = glm::ortho(
-                                        min_x, max_x, min_y, max_y, -3.0 * projection_depth, projection_depth * 4.0
-                                    );
-
-                                    scene_data.shadow_matrices[i] = shadow_projection * shadow_view;
-                                }
-                                */
-                                //Render shadow map
-                                shadow_rendertarget.bind();
                                 render_shadows(&scene_data);
 
                                 //Draw the companion view if we're showing HMD POV
@@ -1789,69 +1733,10 @@ fn main() {
 
             //Main window rendering
             if !hmd_pov {
-                let projection = *screen_state.get_clipping_from_view();
-                compute_shadow_cascade_matrices(&mut scene_data, &shadow_view, screen_state.get_view_from_world(), &projection);
-
-                /*
-                let shadow_from_view = shadow_view * world_from_view;
-                let fovx = f32::atan(1.0 / projection[0]);
-                let fovy = f32::atan(1.0 / projection[5]);
-                //Loop computes the shadow matrices for this frame
-                for i in 0..render::SHADOW_CASCADES {
-                    let z0 = scene_data.shadow_cascade_distances[i];
-                    let z1 = scene_data.shadow_cascade_distances[i + 1];
-                                        
-                    let x0 = -z0 * f32::tan(fovx);
-                    let x1 = z0 * f32::tan(fovx);
-                    let x2 = -z1 * f32::tan(fovx);
-                    let x3 = z1 * f32::tan(fovx);
-                    let y0 = -z0 * f32::tan(fovy);
-                    let y1 = z0 * f32::tan(fovy);
-                    let y2 = -z1 * f32::tan(fovy);
-                    let y3 = z1 * f32::tan(fovy);
-                                    
-                    //The extreme vertices of the sub-frustum
-                    let shadow_space_points = [
-                        shadow_from_view * glm::vec4(x0, y0, z0, 1.0),
-                        shadow_from_view * glm::vec4(x1, y0, z0, 1.0),
-                        shadow_from_view * glm::vec4(x0, y1, z0, 1.0),
-                        shadow_from_view * glm::vec4(x1, y1, z0, 1.0),                                        
-                        shadow_from_view * glm::vec4(x2, y2, z1, 1.0),
-                        shadow_from_view * glm::vec4(x3, y2, z1, 1.0),
-                        shadow_from_view * glm::vec4(x2, y3, z1, 1.0),
-                        shadow_from_view * glm::vec4(x3, y3, z1, 1.0)                                        
-                    ];
-
-                    let mut min_x = f32::INFINITY;
-                    let mut min_y = f32::INFINITY;
-                    let mut max_x = 0.0;
-                    let mut max_y = 0.0;
-                    for point in shadow_space_points.iter() {
-                        if max_x < point.x {
-                            max_x = point.x;
-                        }
-                        if min_x > point.x {
-                            min_x = point.x;
-                        }
-                        if max_y < point.y {
-                            max_y = point.y;
-                        }
-                        if min_y > point.y {
-                            min_y = point.y;
-                        }
-                    }
-
-                    let projection_depth = 10.0;
-                    let shadow_projection = glm::ortho(
-                        min_x, max_x, min_y, max_y, -3.0 * projection_depth, projection_depth * 4.0
-                    );
-
-                    scene_data.shadow_matrices[i] = shadow_projection * shadow_view;
-                }
-                */
-
                 //Render shadows
                 shadow_rendertarget.bind();
+                let projection = *screen_state.get_clipping_from_view();
+                compute_shadow_cascade_matrices(&mut scene_data, &shadow_view, screen_state.get_view_from_world(), &projection);
                 render_shadows(&scene_data);
 
                 //Render main scene
