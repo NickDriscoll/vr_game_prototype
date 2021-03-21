@@ -38,28 +38,28 @@ uniform vec3 sun_color = vec3(1.0, 1.0, 1.0);
 uniform float ambient_strength = 0.0;
 uniform float cascade_distances[SHADOW_CASCADES];
 
+vec3 tangent_space_normal;
+
 vec4 simple_diffuse(vec3 color, float diffuse, float ambient) {
     return vec4((diffuse + ambient) * color, 1.0);
 }
 
 float determine_shadowed(vec3 f_shadow_pos, int cascade) {
-    const float BIAS = 0.0001;
+    //float bias = 0.0001;
+    float bias = 0.01 * (1.0 - max(0.0, dot(tangent_space_normal, tangent_sun_direction)));
     vec2 sample_uv = f_shadow_pos.xy;
     sample_uv.x = sample_uv.x * SHADOW_CASCADES_RECIPROCAL;
     sample_uv.x += cascade * SHADOW_CASCADES_RECIPROCAL;
     float sampled_depth = texture(shadow_map, sample_uv).r;
-    return sampled_depth + BIAS < f_shadow_pos.z ? 1.0 : 0.0;
+    return sampled_depth + bias < f_shadow_pos.z ? 1.0 : 0.0;
 }
 
 void main() {
-    float dist_from_camera = distance(f_world_pos, view_position);
-
     //Sample the albedo map for the fragment's base color
     vec3 albedo = texture(albedo_map, scaled_uvs).xyz;
 
     //Compute this frag's tangent space normal
-    vec3 tangent_space_normal;
-    if (complex_normals && dist_from_camera < LOD_DIST2) {
+    if (complex_normals) {
         vec3 sampled_normal = texture(normal_map, scaled_uvs).xyz;
         tangent_space_normal = normalize(sampled_normal * 2.0 - 1.0);
     } else {
@@ -69,32 +69,26 @@ void main() {
     //Early exit if we're visualizing normals
     if (visualize_normals) {
         frag_color = vec4(tangent_space_normal * 0.5 + 0.5, 1.0);
-        frag_color = vec4(vec3(gl_FragCoord.z), 1.0);
         return;
     }
 
     //Compute diffuse lighting
     float diffuse = max(0.0, dot(tangent_sun_direction, tangent_space_normal));
 
+    //Visualize LOD early exit
     if (visualize_lod) {
         vec3 c;
-        if (dist_from_camera < LOD_DIST0) {
+        if (clip_space_z < LOD_DIST0) {
             frag_color = simple_diffuse(vec3(1.0, 0.0, 0.0), diffuse, ambient_strength);
-        } else if (dist_from_camera < LOD_DIST1) {
+        } else if (clip_space_z < LOD_DIST1) {
             frag_color = simple_diffuse(vec3(1.0, 0.57, 0.0), diffuse, ambient_strength);
-        } else if (dist_from_camera < LOD_DIST2) {
+        } else if (clip_space_z < LOD_DIST2) {
             frag_color = simple_diffuse(vec3(0.0, 1.0, 0.0), diffuse, ambient_strength);
-        } else if (dist_from_camera < LOD_DIST3) {
+        } else if (clip_space_z < LOD_DIST3) {
             frag_color = simple_diffuse(vec3(1.0, 0.0, 1.0), diffuse, ambient_strength);
         } else {
             frag_color = simple_diffuse(vec3(0.0, 0.0, 1.0), diffuse, ambient_strength);
         }
-        return;
-    }
-
-    //Early exit if we're too far from the camera
-    if (dist_from_camera > LOD_DIST3) {
-        frag_color = vec4((diffuse + ambient_strength) * albedo, 1.0);
         return;
     }
 
@@ -138,9 +132,9 @@ void main() {
 
     //Compute how shadowed if we are potentially shadowed
     if (shadow_cascade > -1) {
-        if (false) {
+        if (true) {
             //Do PCF
-            //Average the nxn block of shadow texels centered at this pixel
+            //Average the 5x5 block of shadow texels centered at this pixel
             int bound = 1;
             vec2 texel_size = 1.0 / textureSize(shadow_map, 0);
             for (int x = -bound; x <= bound; x++) {
@@ -162,15 +156,13 @@ void main() {
 
     //Compute specular light w/ blinn-phong
     float specular = 0.0;
-    if (dist_from_camera < LOD_DIST2) {
-        float roughness = texture(roughness_map, scaled_uvs).x;
-        vec3 view_direction = normalize(tangent_view_position - tangent_space_pos);
-        vec3 halfway = normalize(view_direction + tangent_sun_direction);
-        float specular_angle = max(0.0, dot(halfway, tangent_space_normal));
-        float shininess = (1.0 - roughness) * (SHININESS_UPPER_BOUND - SHININESS_LOWER_BOUND) + SHININESS_LOWER_BOUND;
-        specular = pow(specular_angle, shininess);
-    }
+    float roughness = texture(roughness_map, scaled_uvs).x;
+    vec3 view_direction = normalize(tangent_view_position - tangent_space_pos);
+    vec3 halfway = normalize(view_direction + tangent_sun_direction);
+    float specular_angle = max(0.0, dot(halfway, tangent_space_normal));
+    float shininess = (1.0 - roughness) * (SHININESS_UPPER_BOUND - SHININESS_LOWER_BOUND) + SHININESS_LOWER_BOUND;
+    specular = pow(specular_angle, shininess);
 
-    vec3 final_color = (sun_color * (specular + diffuse) * (1.0 - shadow) + ambient_strength) * albedo;
+    vec3 final_color = sun_color * ((specular + diffuse) * (1.0 - shadow) + ambient_strength) * albedo;
     frag_color = vec4(final_color, 1.0);
 }

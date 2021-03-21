@@ -554,7 +554,7 @@ fn main() {
     //let shadow_proj_size = 30.0;
     //let shadow_projection = glm::ortho(-shadow_proj_size * 2.0, shadow_proj_size * 2.0, -shadow_proj_size * 2.0, shadow_proj_size * 2.0, 3.0 * -shadow_proj_size, 2.0 * shadow_proj_size);
 
-    let cascade_size = 1024 * 2;
+    let cascade_size = 1024 * 4;
     let shadow_rendertarget = unsafe { RenderTarget::new_shadow((cascade_size * render::SHADOW_CASCADES as GLint, cascade_size)) };
 
     //Initialize scene data struct
@@ -585,7 +585,6 @@ fn main() {
             let p = screen_state.get_clipping_from_view() * glm::vec4(0.0, 0.0, cascade_distances[i], 1.0);
             scene_data.shadow_cascade_distances[i] = p.z;
         }
-        println!("{:?}", scene_data.shadow_cascade_distances);
 
         cascade_distances
     };
@@ -1096,7 +1095,7 @@ fn main() {
 
         //Spin the dragon
         if let Some(entity) = scene_data.entities.get_mut_element(dragon_entity_index) {
-            let mm = glm::translation(&dragon_position) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
+            let mm = glm::translation(&glm::vec3(0.0, 0.0, f32::sin(elapsed_time * 1.5) + 1.0)) * glm::translation(&dragon_position) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
             unsafe { entity.update_single_transform(0, &mm); }
         }
 
@@ -1495,13 +1494,6 @@ fn main() {
                 //End the window
                 win_token.end(&imgui_ui);
             }
-
-            let win = imgui::Window::new(im_str!("Shadow cascade texture"));
-            if let Some(win_token) = win.begin(&imgui_ui) {
-                let image = imgui::Image::new(TextureId::from(scene_data.shadow_texture as usize), [4096.0 / 4.0, 1024.0 / 4.0]).uv1([1.0, -1.0]);
-                image.build(&imgui_ui);
-                win_token.end(&imgui_ui);
-            }
         }
 
         //Create a view matrix from the camera state
@@ -1782,7 +1774,7 @@ fn main() {
 
                     let projection_depth = 10.0;
                     let shadow_projection = glm::ortho(
-                        min_x, max_x, min_y, max_y, -2.0 * projection_depth, projection_depth * 4.0
+                        min_x, max_x, min_y, max_y, -3.0 * projection_depth, projection_depth * 4.0
                     );
 
                     scene_data.shadow_matrices[i] = shadow_projection * shadow_view;
