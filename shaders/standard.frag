@@ -6,6 +6,11 @@ const float LOD_DIST0 = 20.0;
 const float LOD_DIST1 = 40.0;
 const float LOD_DIST2 = 170.0;
 const float LOD_DIST3 = 240.0;
+const vec3 LOD_COLOR0 = vec3(1.0, 0.0, 0.0);
+const vec3 LOD_COLOR1 = vec3(1.0, 0.57, 0.0);
+const vec3 LOD_COLOR2 = vec3(0.0, 1.0, 0.0);
+const vec3 LOD_COLOR3 = vec3(1.0, 0.0, 1.0);
+const vec3 LOD_COLOR4 = vec3(0.0, 0.0, 1.0);
 const int SHADOW_CASCADES = 4;
 const float SHADOW_CASCADES_RECIPROCAL = 1.0 / SHADOW_CASCADES;
 
@@ -79,15 +84,15 @@ void main() {
     if (visualize_lod) {
         vec3 c;
         if (clip_space_z < LOD_DIST0) {
-            frag_color = simple_diffuse(vec3(1.0, 0.0, 0.0), diffuse, ambient_strength);
+            frag_color = simple_diffuse(LOD_COLOR0, diffuse, ambient_strength);
         } else if (clip_space_z < LOD_DIST1) {
-            frag_color = simple_diffuse(vec3(1.0, 0.57, 0.0), diffuse, ambient_strength);
+            frag_color = simple_diffuse(LOD_COLOR1, diffuse, ambient_strength);
         } else if (clip_space_z < LOD_DIST2) {
-            frag_color = simple_diffuse(vec3(0.0, 1.0, 0.0), diffuse, ambient_strength);
+            frag_color = simple_diffuse(LOD_COLOR2, diffuse, ambient_strength);
         } else if (clip_space_z < LOD_DIST3) {
-            frag_color = simple_diffuse(vec3(1.0, 0.0, 1.0), diffuse, ambient_strength);
+            frag_color = simple_diffuse(LOD_COLOR3, diffuse, ambient_strength);
         } else {
-            frag_color = simple_diffuse(vec3(0.0, 0.0, 1.0), diffuse, ambient_strength);
+            frag_color = simple_diffuse(LOD_COLOR4, diffuse, ambient_strength);
         }
         return;
     }
@@ -114,13 +119,13 @@ void main() {
 
             if (visualize_cascade_zone) {
                 if (i == 0) {
-                    frag_color = simple_diffuse(vec3(1.0, 0.0, 0.0), diffuse, ambient_strength);
+                    frag_color = simple_diffuse(LOD_COLOR0, diffuse, ambient_strength);
                 } else if (i == 1) {
-                    frag_color = simple_diffuse(vec3(0.0, 1.0, 0.0), diffuse, ambient_strength);
+                    frag_color = simple_diffuse(LOD_COLOR1, diffuse, ambient_strength);
                 } else if (i == 2) {
-                    frag_color = simple_diffuse(vec3(0.0, 0.0, 1.0), diffuse, ambient_strength);
+                    frag_color = simple_diffuse(LOD_COLOR2, diffuse, ambient_strength);
                 } else if (i == 3) {
-                    frag_color = simple_diffuse(vec3(1.0, 1.0, 1.0), diffuse, ambient_strength);
+                    frag_color = simple_diffuse(LOD_COLOR3, diffuse, ambient_strength);
                 }
                 return;
             }

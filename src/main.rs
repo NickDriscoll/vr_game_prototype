@@ -8,7 +8,7 @@ mod structs;
 mod render;
 mod xrutil;
 
-use render::{render_main_scene, render_shadows, FragmentFlag, RenderEntity, SceneData, ViewData};
+use render::{compute_shadow_cascade_matrices, render_main_scene, render_shadows, FragmentFlag, RenderEntity, SceneData, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
@@ -35,65 +35,6 @@ use crate::structs::*;
 
 #[cfg(windows)]
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
-
-fn compute_shadow_cascade_matrices(scene_data: &mut SceneData, shadow_view: &glm::TMat4<f32>, v_mat: &glm::TMat4<f32>, projection: &glm::TMat4<f32>) {                 
-    let shadow_from_view = shadow_view * glm::affine_inverse(*v_mat);
-    let fovx = f32::atan(1.0 / projection[0]);
-    let fovy = f32::atan(1.0 / projection[5]);
-
-    //Loop computes the shadow matrices for this frame
-    for i in 0..render::SHADOW_CASCADES {
-        let z0 = scene_data.shadow_cascade_distances[i];
-        let z1 = scene_data.shadow_cascade_distances[i + 1];
-                            
-        let x0 = -z0 * f32::tan(fovx);
-        let x1 = z0 * f32::tan(fovx);
-        let x2 = -z1 * f32::tan(fovx);
-        let x3 = z1 * f32::tan(fovx);
-        let y0 = -z0 * f32::tan(fovy);
-        let y1 = z0 * f32::tan(fovy);
-        let y2 = -z1 * f32::tan(fovy);
-        let y3 = z1 * f32::tan(fovy);
-                        
-        //The extreme vertices of the sub-frustum
-        let shadow_space_points = [
-            shadow_from_view * glm::vec4(x0, y0, z0, 1.0),
-            shadow_from_view * glm::vec4(x1, y0, z0, 1.0),
-            shadow_from_view * glm::vec4(x0, y1, z0, 1.0),
-            shadow_from_view * glm::vec4(x1, y1, z0, 1.0),                                        
-            shadow_from_view * glm::vec4(x2, y2, z1, 1.0),
-            shadow_from_view * glm::vec4(x3, y2, z1, 1.0),
-            shadow_from_view * glm::vec4(x2, y3, z1, 1.0),
-            shadow_from_view * glm::vec4(x3, y3, z1, 1.0)                                        
-        ];
-
-        let mut min_x = f32::INFINITY;
-        let mut min_y = f32::INFINITY;
-        let mut max_x = 0.0;
-        let mut max_y = 0.0;
-        for point in shadow_space_points.iter() {
-            if max_x < point.x {
-                max_x = point.x;
-            }
-            if min_x > point.x {
-                min_x = point.x;
-            }
-            if max_y < point.y {
-                max_y = point.y;
-            }
-            if min_y > point.y {
-                min_y = point.y;
-            }
-        }
-
-        let projection_depth = 10.0;
-        let shadow_projection = glm::ortho(
-            min_x, max_x, min_y, max_y, -3.0 * projection_depth, projection_depth * 4.0
-        );
-
-        scene_data.shadow_matrices[i] = shadow_projection * shadow_view;
-    }
-}
 
 //Sets a flag to a value or unsets the flag if it already is the value
 fn handle_radio_flag<F: Eq + Default>(current_flag: &mut F, new_flag: F) {
@@ -620,7 +561,7 @@ fn main() {
     scene_data.skybox_program = skybox_program;
 
     //The shadow cascade distances are negative bc they apply to view space
-    scene_data.shadow_cascade_distances = {
+    let shadow_cascade_distances = {
         let partition_ratio = f32::powf(render::FAR_DISTANCE / render::NEAR_DISTANCE, 1.0 / render::SHADOW_CASCADES as f32);
         let mut cascade_distances = [0.0; render::SHADOW_CASCADES + 1];
         /*
@@ -632,8 +573,8 @@ fn main() {
         cascade_distances[0] = -(render::NEAR_DISTANCE);
         cascade_distances[1] = -(render::NEAR_DISTANCE + 10.0);
         cascade_distances[2] = -(render::NEAR_DISTANCE + 50.0);
-        cascade_distances[3] = -(render::NEAR_DISTANCE + 200.0);
-        cascade_distances[4] = -(render::NEAR_DISTANCE + 500.0);
+        cascade_distances[3] = -(render::NEAR_DISTANCE + 80.0);
+        cascade_distances[4] = -(render::NEAR_DISTANCE + 250.0);
 
         //Compute the clip space distances and save them in the scene_data struct
         for i in 0..cascade_distances.len() {
@@ -734,7 +675,6 @@ fn main() {
         io.display_size[0] = screen_state.get_window_size().x as f32;
         io.display_size[1] = screen_state.get_window_size().y as f32;
     }
-    let mut do_imgui = false;
 
     //Create and upload Dear IMGUI font atlas
     match imgui_context.fonts() {
@@ -816,7 +756,7 @@ fn main() {
     let dragon_entity_index = scene_data.entities.insert(RenderEntity::from_ozy("models/dragon.ozy", standard_program, 1, &mut texture_keeper, &default_tex_params));
 
     //Create staircase
-    let cube_count = 2048;
+    let cube_count = 2048 * 8;
     let cube_entity_index = {
         let mut cube_transform_buffer = vec![0.0; cube_count * 16];
         for i in 0..cube_count {
@@ -845,15 +785,18 @@ fn main() {
         wand_entity_index = scene_data.entities.insert(entity);
     }
 
+    //Set up global flags lol
     let mut is_fullscreen = false;
     let mut wireframe = false;
     let mut true_wireframe = false;
     let mut placing = false;
     let mut hmd_pov = false;
     let mut do_vsync = true;
+    let mut do_imgui = true;
     if let Some(_) = &xr_instance { 
         hmd_pov = true;
         do_vsync = false;
+        glfw.set_swap_interval(SwapInterval::None);
     }
 
     let mut frame_count = 0;
@@ -875,12 +818,6 @@ fn main() {
         frame_count += 1;
         imgui_io.delta_time = delta_time;
         let framerate = imgui_io.framerate;
-
-        if do_vsync {
-            glfw.set_swap_interval(SwapInterval::Sync(1));
-        } else {            
-            glfw.set_swap_interval(SwapInterval::None);
-        }
 
         //Sync OpenXR actions
         if let (Some(session), Some(controller_actionset)) = (&xr_session, &xr_controller_actionset) {
@@ -1508,7 +1445,13 @@ fn main() {
                 if let Some(_) = &xr_instance {
                     imgui_ui.checkbox(im_str!("HMD Point-of-view"), &mut hmd_pov);
                 } else {
-                    imgui_ui.checkbox(im_str!("Lock FPS (v-sync)"), &mut do_vsync);
+                    if imgui_ui.checkbox(im_str!("Lock FPS (v-sync)"), &mut do_vsync) {
+                        if do_vsync {
+                            glfw.set_swap_interval(SwapInterval::Sync(1));
+                        } else {
+                            glfw.set_swap_interval(SwapInterval::None);
+                        }
+                    }
                 }
                 imgui_ui.separator();
 
@@ -1534,8 +1477,8 @@ fn main() {
                     if imgui_ui.button(im_str!("Reset player position"), [0.0, 32.0]) {
                         reset_player_position(&mut player);
                     }
+                    imgui_ui.same_line(0.0);
                 }
-                imgui_ui.same_line(0.0);
 
                 //Fullscreen button
                 if imgui_ui.button(im_str!("Toggle fullscreen"), [0.0, 32.0]) {
@@ -1562,6 +1505,15 @@ fn main() {
                 if imgui_ui.button(im_str!("Quit"), [0.0, 32.0]) { window.set_should_close(true); }
 
                 //End the window
+                win_token.end(&imgui_ui);
+            }
+
+            //Shadow cascade viewer
+            let win = imgui::Window::new(im_str!("Shadow map"));
+            if let Some(win_token) = win.begin(&imgui_ui) {
+                let im = imgui::Image::new(TextureId::new(scene_data.shadow_texture as usize), [(cascade_size * render::SHADOW_CASCADES as i32 / 6) as f32, (cascade_size / 6) as f32]).uv1([1.0, -1.0]);//.size([(cascade_size * render::SHADOW_CASCADES as i32 / 3) as f32, (cascade_size / 3) as f32]);
+                im.build(&imgui_ui);
+
                 win_token.end(&imgui_ui);
             }
         }
@@ -1625,7 +1577,7 @@ fn main() {
                                 shadow_rendertarget.bind();
                                 let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);                                
                                 let projection = *screen_state.get_clipping_from_view();
-                                compute_shadow_cascade_matrices(&mut scene_data, &shadow_view, &v_mat, &projection);
+                                scene_data.shadow_matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, &v_mat, &projection);
                                 render_shadows(&scene_data);
 
                                 //Draw the companion view if we're showing HMD POV
@@ -1736,7 +1688,7 @@ fn main() {
                 //Render shadows
                 shadow_rendertarget.bind();
                 let projection = *screen_state.get_clipping_from_view();
-                compute_shadow_cascade_matrices(&mut scene_data, &shadow_view, screen_state.get_view_from_world(), &projection);
+                scene_data.shadow_matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, screen_state.get_view_from_world(), &projection);
                 render_shadows(&scene_data);
 
                 //Render main scene

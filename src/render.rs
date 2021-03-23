@@ -9,7 +9,7 @@ use crate::glutil;
 use gl::types::*;
 
 pub const NEAR_DISTANCE: f32 = 0.0625;
-pub const FAR_DISTANCE: f32 = 1000.0;
+pub const FAR_DISTANCE: f32 = 1000000.0;
 pub const MSAA_SAMPLES: u32 = 8;
 pub const SHADOW_CASCADES: usize = 4;
 pub const INSTANCED_ATTRIBUTE: GLuint = 5;
@@ -94,7 +94,6 @@ pub struct SceneData {
     pub shadow_program: GLuint,
     pub cascade_size: GLint,
     pub shadow_matrices: [glm::TMat4<f32>; SHADOW_CASCADES],
-    pub shadow_cascade_distances: [f32; SHADOW_CASCADES + 1],
     pub clip_cascade_distances: [f32; SHADOW_CASCADES + 1],
     pub entities: OptionVec<RenderEntity>
 }
@@ -114,7 +113,6 @@ impl Default for SceneData {
             shadow_program: 0,
             cascade_size: 0,
             shadow_matrices: [glm::identity(); SHADOW_CASCADES],
-            shadow_cascade_distances: [0.0; SHADOW_CASCADES + 1],
             clip_cascade_distances: [0.0; SHADOW_CASCADES + 1],
             entities: OptionVec::new()
         }
@@ -236,4 +234,65 @@ pub unsafe fn render_shadows(scene_data: &SceneData) {
             }
         }
     }
+}
+
+pub fn compute_shadow_cascade_matrices(shadow_cascade_distances: &[f32], shadow_view: &glm::TMat4<f32>, v_mat: &glm::TMat4<f32>, projection: &glm::TMat4<f32>) -> [glm::TMat4<f32>; SHADOW_CASCADES] {                 
+    let shadow_from_view = shadow_view * glm::affine_inverse(*v_mat);
+    let fovx = f32::atan(1.0 / projection[0]);
+    let fovy = f32::atan(1.0 / projection[5]);
+    let mut out_mats = [glm::identity(); SHADOW_CASCADES];
+
+    //Loop computes the shadow matrices for this frame
+    for i in 0..SHADOW_CASCADES {
+        let z0 = shadow_cascade_distances[i];
+        let z1 = shadow_cascade_distances[i + 1];
+                            
+        let x0 = -z0 * f32::tan(fovx);
+        let x1 = z0 * f32::tan(fovx);
+        let x2 = -z1 * f32::tan(fovx);
+        let x3 = z1 * f32::tan(fovx);
+        let y0 = -z0 * f32::tan(fovy);
+        let y1 = z0 * f32::tan(fovy);
+        let y2 = -z1 * f32::tan(fovy);
+        let y3 = z1 * f32::tan(fovy);
+
+        //The extreme vertices of the sub-frustum
+        let shadow_space_points = [
+            shadow_from_view * glm::vec4(x0, y0, z0, 1.0),
+            shadow_from_view * glm::vec4(x1, y0, z0, 1.0),
+            shadow_from_view * glm::vec4(x0, y1, z0, 1.0),
+            shadow_from_view * glm::vec4(x1, y1, z0, 1.0),                                        
+            shadow_from_view * glm::vec4(x2, y2, z1, 1.0),
+            shadow_from_view * glm::vec4(x3, y2, z1, 1.0),
+            shadow_from_view * glm::vec4(x2, y3, z1, 1.0),
+            shadow_from_view * glm::vec4(x3, y3, z1, 1.0)                                        
+        ];
+
+        let mut min_x = f32::INFINITY;
+        let mut min_y = f32::INFINITY;
+        let mut max_x = 0.0;
+        let mut max_y = 0.0;
+        for point in shadow_space_points.iter() {
+            if max_x < point.x {
+                max_x = point.x;
+            }
+            if min_x > point.x {
+                min_x = point.x;
+            }
+            if max_y < point.y {
+                max_y = point.y;
+            }
+            if min_y > point.y {
+                min_y = point.y;
+            }
+        }
+
+        let projection_depth = 10.0;
+        let shadow_projection = glm::ortho(
+            min_x, max_x, min_y, max_y, -3.0 * projection_depth, projection_depth * 4.0
+        );
+
+        out_mats[i] = shadow_projection * shadow_view;
+    }
+    out_mats
 }
