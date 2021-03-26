@@ -2,7 +2,7 @@ use std::ptr;
 use std::mem::size_of;
 use std::os::raw::c_void;
 use ozy::io::OzyMesh;
-use ozy::render::{TextureKeeper};
+use ozy::render::{RenderTarget, TextureKeeper};
 use ozy::structs::OptionVec;
 use ozy::glutil::ColorSpace;
 use crate::glutil;
@@ -81,6 +81,26 @@ impl RenderEntity {
     }
 }
 
+pub struct CascadedShadowMap {
+    pub texture: GLuint,
+    pub program: GLuint,
+    pub resolution: GLint,          //The assumption is that the individual cascades are always squares
+    pub matrices: [glm::TMat4<f32>; SHADOW_CASCADES],
+    pub clip_space_distances: [f32; SHADOW_CASCADES + 1]
+}
+
+impl CascadedShadowMap {
+    pub fn new(texture: GLuint, program: GLuint, resolution: GLint) -> Self {
+        CascadedShadowMap {
+            texture,
+            program,
+            resolution,
+            matrices: [glm::identity(); SHADOW_CASCADES],
+            clip_space_distances: [0.0; SHADOW_CASCADES + 1]
+        }
+    }
+}
+
 pub struct SceneData {
     pub fragment_flag: FragmentFlag,
     pub complex_normals: bool,
@@ -90,16 +110,20 @@ pub struct SceneData {
     pub sun_direction: glm::TVec3<f32>,
     pub sun_color: [f32; 3],
     pub ambient_strength: f32,
-    pub shadow_texture: GLuint,
-    pub shadow_program: GLuint,
-    pub cascade_size: GLint,
-    pub shadow_matrices: [glm::TMat4<f32>; SHADOW_CASCADES],
-    pub clip_cascade_distances: [f32; SHADOW_CASCADES + 1],
+    pub sun_shadow_map: CascadedShadowMap,
     pub entities: OptionVec<RenderEntity>
 }
 
 impl Default for SceneData {
     fn default() -> Self {
+        let sun_shadow_map = CascadedShadowMap {
+            texture: 0,
+            program: 0,
+            resolution: 0,
+            matrices: [glm::identity(); SHADOW_CASCADES],
+            clip_space_distances: [0.0; SHADOW_CASCADES + 1],
+        };
+
         SceneData {
             fragment_flag: FragmentFlag::Default,
             complex_normals: true,
@@ -109,11 +133,7 @@ impl Default for SceneData {
             sun_direction: glm::normalize(&glm::vec3(1.0, 0.6, 1.0)),
             sun_color: [1.0, 1.0, 1.0],
             ambient_strength: 0.2,
-            shadow_texture: 0,
-            shadow_program: 0,
-            cascade_size: 0,
-            shadow_matrices: [glm::identity(); SHADOW_CASCADES],
-            clip_cascade_distances: [0.0; SHADOW_CASCADES + 1],
+            sun_shadow_map,
             entities: OptionVec::new()
         }
     }
@@ -155,11 +175,11 @@ impl ViewData {
 //This is the function that renders the image you would actually see on screen/in HMD
 pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
     let texture_map_names = ["albedo_map", "normal_map", "roughness_map", "shadow_map"];
+    let sun_shadow_map = &scene_data.sun_shadow_map;
 
     //Main scene rendering
-    //framebuffer.bind();
     gl::ActiveTexture(gl::TEXTURE0 + ozy::render::TEXTURE_MAP_COUNT as GLenum);
-    gl::BindTexture(gl::TEXTURE_2D, scene_data.shadow_texture);
+    gl::BindTexture(gl::TEXTURE_2D, scene_data.sun_shadow_map.texture);
 
     //Render 3D entities
     let sun_c = glm::vec3(scene_data.sun_color[0], scene_data.sun_color[1], scene_data.sun_color[2]);
@@ -167,14 +187,14 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
         if let Some(entity) = opt_entity {
             let p = entity.shader;
             gl::UseProgram(p);
-            glutil::bind_matrix4_array(p, "shadow_matrices", &scene_data.shadow_matrices);
+            glutil::bind_matrix4_array(p, "shadow_matrices", &sun_shadow_map.matrices);
             glutil::bind_matrix4(p, "view_projection", &view_data.view_projection);
             glutil::bind_vector3(p, "sun_direction", &scene_data.sun_direction);
             glutil::bind_vector3(p, "sun_color", &sun_c);
             glutil::bind_float(p, "ambient_strength", scene_data.ambient_strength);
             glutil::bind_int(p, "shadow_map", TEXTURE_MAP_COUNT as GLint);
             glutil::bind_int(p, "complex_normals", scene_data.complex_normals as GLint);
-            glutil::bind_float_array(p, "cascade_distances", &scene_data.clip_cascade_distances[1..]);
+            glutil::bind_float_array(p, "cascade_distances", &sun_shadow_map.clip_space_distances[1..]);
             glutil::bind_vector3(p, "view_position", &view_data.view_position);
             glutil::bind_vector2(p, "uv_scale", &entity.uv_scale);
             glutil::bind_vector2(p, "uv_offset", &entity.uv_offset);
@@ -220,12 +240,13 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
 }
 
 pub unsafe fn render_shadows(scene_data: &SceneData) {
-    gl::UseProgram(scene_data.shadow_program);
+    let sun_shadow_map = &scene_data.sun_shadow_map;
+    gl::UseProgram(sun_shadow_map.program);
 
     for i in 0..SHADOW_CASCADES {
         //Configure rendering for this cascade
-        glutil::bind_matrix4(scene_data.shadow_program, "view_projection", &scene_data.shadow_matrices[i]);
-        gl::Viewport(i as GLint * scene_data.cascade_size, 0, scene_data.cascade_size, scene_data.cascade_size);
+        glutil::bind_matrix4(sun_shadow_map.program, "view_projection", &sun_shadow_map.matrices[i]);
+        gl::Viewport(i as GLint * sun_shadow_map.resolution, 0, sun_shadow_map.resolution, sun_shadow_map.resolution);
 
         for opt_entity in scene_data.entities.iter() {
             if let Some(entity) = opt_entity {
@@ -236,17 +257,20 @@ pub unsafe fn render_shadows(scene_data: &SceneData) {
     }
 }
 
-pub fn compute_shadow_cascade_matrices(shadow_cascade_distances: &[f32], shadow_view: &glm::TMat4<f32>, v_mat: &glm::TMat4<f32>, projection: &glm::TMat4<f32>) -> [glm::TMat4<f32>; SHADOW_CASCADES] {                 
+pub fn compute_shadow_cascade_matrices(shadow_cascade_distances: &[f32; SHADOW_CASCADES + 1], shadow_view: &glm::TMat4<f32>, v_mat: &glm::TMat4<f32>, projection: &glm::TMat4<f32>) -> [glm::TMat4<f32>; SHADOW_CASCADES] {       
+    let mut out_mats = [glm::identity(); SHADOW_CASCADES];
+
     let shadow_from_view = shadow_view * glm::affine_inverse(*v_mat);
     let fovx = f32::atan(1.0 / projection[0]);
     let fovy = f32::atan(1.0 / projection[5]);
-    let mut out_mats = [glm::identity(); SHADOW_CASCADES];
 
     //Loop computes the shadow matrices for this frame
     for i in 0..SHADOW_CASCADES {
+        //Near and far distances for this sub-frustum
         let z0 = shadow_cascade_distances[i];
         let z1 = shadow_cascade_distances[i + 1];
-                            
+
+        //Computing the view-space coords of the sub-frustum vertices
         let x0 = -z0 * f32::tan(fovx);
         let x1 = z0 * f32::tan(fovx);
         let x2 = -z1 * f32::tan(fovx);
@@ -268,6 +292,7 @@ pub fn compute_shadow_cascade_matrices(shadow_cascade_distances: &[f32], shadow_
             shadow_from_view * glm::vec4(x3, y3, z1, 1.0)                                        
         ];
 
+        //Determine the boundaries of the orthographic projection
         let mut min_x = f32::INFINITY;
         let mut min_y = f32::INFINITY;
         let mut max_x = 0.0;

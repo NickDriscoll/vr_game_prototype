@@ -110,7 +110,7 @@ pub fn locate_space(space: &Option<xr::Space>, tracking_space: &Option<xr::Space
                     Some(space_location.pose)
                 }
                 Err(e) => {
-                    println!("Couldn't locate space: {}", e);
+                    println!("Couldn't locate XrSpace: {}", e);
                     None
                 }
             }

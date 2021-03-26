@@ -8,7 +8,7 @@ mod structs;
 mod render;
 mod xrutil;
 
-use render::{compute_shadow_cascade_matrices, render_main_scene, render_shadows, FragmentFlag, RenderEntity, SceneData, ViewData};
+use render::{compute_shadow_cascade_matrices, render_main_scene, render_shadows, CascadedShadowMap, FragmentFlag, RenderEntity, SceneData, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
@@ -550,36 +550,28 @@ fn main() {
 
     //Initialize shadow data
     let mut shadow_view;
-    let cascade_size = 2048;
+    let cascade_size = 4096;
     let shadow_rendertarget = unsafe { RenderTarget::new_shadow((cascade_size * render::SHADOW_CASCADES as GLint, cascade_size)) };
+    let sun_shadow_map = CascadedShadowMap::new(shadow_rendertarget.texture, shadow_program, cascade_size);
 
     //Initialize scene data struct
     let mut scene_data = SceneData::default();
-    scene_data.shadow_program = shadow_program;
-    scene_data.shadow_texture = shadow_rendertarget.texture;
-    scene_data.cascade_size = cascade_size;
+    scene_data.sun_shadow_map = sun_shadow_map;
     scene_data.skybox_program = skybox_program;
 
     //The shadow cascade distances are negative bc they apply to view space
     let shadow_cascade_distances = {
-        let partition_ratio = f32::powf(render::FAR_DISTANCE / render::NEAR_DISTANCE, 1.0 / render::SHADOW_CASCADES as f32);
         let mut cascade_distances = [0.0; render::SHADOW_CASCADES + 1];
-        /*
-        for i in 0..(render::SHADOW_CASCADES + 1) {
-            cascade_distances[i] = -(f32::powi(partition_ratio, i as i32) * render::NEAR_DISTANCE);
-            //cascade_distances[i] = -15.0 * i as f32;
-        }
-        */
         cascade_distances[0] = -(render::NEAR_DISTANCE);
         cascade_distances[1] = -(render::NEAR_DISTANCE + 10.0);
         cascade_distances[2] = -(render::NEAR_DISTANCE + 50.0);
-        cascade_distances[3] = -(render::NEAR_DISTANCE + 80.0);
-        cascade_distances[4] = -(render::NEAR_DISTANCE + 250.0);
+        cascade_distances[3] = -(render::NEAR_DISTANCE + 120.0);
+        cascade_distances[4] = -(render::NEAR_DISTANCE + 350.0);
 
         //Compute the clip space distances and save them in the scene_data struct
         for i in 0..cascade_distances.len() {
             let p = screen_state.get_clipping_from_view() * glm::vec4(0.0, 0.0, cascade_distances[i], 1.0);
-            scene_data.clip_cascade_distances[i] = p.z;
+            scene_data.sun_shadow_map.clip_space_distances[i] = p.z;
         }
 
         cascade_distances
@@ -756,8 +748,8 @@ fn main() {
     let dragon_entity_index = scene_data.entities.insert(RenderEntity::from_ozy("models/dragon.ozy", standard_program, 1, &mut texture_keeper, &default_tex_params));
 
     //Create staircase
-    let cube_count = 2048 * 8;
-    let cube_entity_index = {
+    let cube_count = 2048;
+    {
         let mut cube_transform_buffer = vec![0.0; cube_count * 16];
         for i in 0..cube_count {
             let position = glm::vec4(-20.0, i as f32 * 10.0, i as f32 * 5.0, 1.0);
@@ -977,15 +969,18 @@ fn main() {
                         let hand_space_vec = glm::vec4(stick_state.current_state.x, stick_state.current_state.y, 0.0, 0.0);
                         let magnitude = glm::length(&hand_space_vec);
                         if magnitude < DEADZONE_MAGNITUDE {
-                            player.tracking_velocity.x = 0.0;
-                            player.tracking_velocity.y = 0.0;
+                            if player.movement_state == MoveState::Grounded {                                
+                                player.tracking_velocity.x = 0.0;
+                                player.tracking_velocity.y = 0.0;
+                            }
                         } else {
-                            //Explicit check for zero to avoid divide-by-zero in normalize
-                            if hand_space_vec != glm::zero() {
-                                //World space untreated vector
-                                let untreated = xrutil::pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec;
-                                let ugh = glm::normalize(&glm::vec3(untreated.x, untreated.y, 0.0)) * MOVEMENT_SPEED * magnitude;
+                            //World space untreated vector
+                            let untreated = xrutil::pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec;
+                            let ugh = glm::normalize(&glm::vec3(untreated.x, untreated.y, 0.0)) * MOVEMENT_SPEED * magnitude;
+                            if player.movement_state == MoveState::Grounded {
                                 player.tracking_velocity = glm::vec3(ugh.x, ugh.y, player.tracking_velocity.z);
+                            } else {
+                                player.tracking_velocity += glm::vec3(ugh.x, ugh.y, 0.0) * 0.05;
                             }
                         }
                     }
@@ -997,7 +992,6 @@ fn main() {
 
                 if holding && !player.was_holding_left_trigger && player.jumps_remaining > 0 {
                     player.tracking_velocity = glm::vec3(player.tracking_velocity.x, player.tracking_velocity.y, 10.0);
-
                     set_player_falling(&mut player);
                 } else if state.current_state < 1.0 && player.was_holding_left_trigger && player.tracking_velocity.z > 0.0 {
                     player.tracking_velocity.z /= 2.0;
@@ -1010,29 +1004,30 @@ fn main() {
         //Do water gun stuff
         {
             //Calculate the force of shooting the water gun
-            if let (Some(state), Some(pose)) = (right_trigger_state, xrutil::locate_space(&right_hand_aim_space, &tracking_space, last_xr_render_time)) {
+            if let Some(state) = right_trigger_state {
+                if let Some(pose) = xrutil::locate_space(&right_hand_aim_space, &tracking_space, last_xr_render_time) {
+                    let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
+                    let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
+                    let world_space_vec = hand_transform * hand_space_vec;
+                    let hand_origin = hand_transform * glm::vec4(0.0, 0.0, 0.0, 1.0);
 
-                let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
-                let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
-                let world_space_vec = hand_transform * hand_space_vec;
-                let hand_origin = hand_transform * glm::vec4(0.0, 0.0, 0.0, 1.0);
+                    //Calculate water gun force vector
+                    water_gun_force = glm::vec4_to_vec3(&(-state.current_state * world_space_vec));
 
-                //Calculate water gun force vector
-                water_gun_force = glm::vec4_to_vec3(&(-state.current_state * world_space_vec));
-
-                if state.current_state > 0.0 {
-                    //Calculate scale of water pillar
-                    match ray_hit_terrain(&terrain, &hand_origin, &world_space_vec) {
-                        Some(point) => {
-                            water_pillar_scale.y = glm::length(&(point - hand_origin)); 
+                    if state.current_state > 0.0 {
+                        //Calculate scale of water pillar
+                        match ray_hit_terrain(&terrain, &hand_origin, &world_space_vec) {
+                            Some(point) => {
+                                water_pillar_scale.y = glm::length(&(point - hand_origin)); 
+                            }
+                            None => {
+                                water_pillar_scale.y = 100.0;
+                            }
                         }
-                        None => {
-                            water_pillar_scale.y = 100.0;
-                        }
-                    }
 
-                    if player.movement_state != MoveState::Falling {
-                        set_player_falling(&mut player);
+                        if player.movement_state != MoveState::Falling {
+                            set_player_falling(&mut player);
+                        }
                     }
                 }
             }
@@ -1509,6 +1504,7 @@ fn main() {
             }
 
             //Shadow cascade viewer
+            /*
             let win = imgui::Window::new(im_str!("Shadow map"));
             if let Some(win_token) = win.begin(&imgui_ui) {
                 let im = imgui::Image::new(TextureId::new(scene_data.shadow_texture as usize), [(cascade_size * render::SHADOW_CASCADES as i32 / 6) as f32, (cascade_size / 6) as f32]).uv1([1.0, -1.0]);//.size([(cascade_size * render::SHADOW_CASCADES as i32 / 3) as f32, (cascade_size / 3) as f32]);
@@ -1516,6 +1512,7 @@ fn main() {
 
                 win_token.end(&imgui_ui);
             }
+            */
         }
 
         //Create a view matrix from the camera state
@@ -1575,9 +1572,9 @@ fn main() {
                             if let Some(pose) = xrutil::locate_space(&view_space, &tracking_space, wait_info.predicted_display_time) {
                                 //Render shadow map
                                 shadow_rendertarget.bind();
-                                let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);                                
+                                let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);
                                 let projection = *screen_state.get_clipping_from_view();
-                                scene_data.shadow_matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, &v_mat, &projection);
+                                scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, &v_mat, &projection);
                                 render_shadows(&scene_data);
 
                                 //Draw the companion view if we're showing HMD POV
@@ -1688,7 +1685,7 @@ fn main() {
                 //Render shadows
                 shadow_rendertarget.bind();
                 let projection = *screen_state.get_clipping_from_view();
-                scene_data.shadow_matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, screen_state.get_view_from_world(), &projection);
+                scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, screen_state.get_view_from_world(), &projection);
                 render_shadows(&scene_data);
 
                 //Render main scene
