@@ -8,7 +8,7 @@ mod structs;
 mod render;
 mod xrutil;
 
-use render::{compute_shadow_cascade_matrices, render_main_scene, render_shadows, CascadedShadowMap, FragmentFlag, RenderEntity, SceneData, ViewData};
+use render::{compute_shadow_cascade_matrices, render_main_scene, render_cascaded_shadow_map, CascadedShadowMap, FragmentFlag, RenderEntity, SceneData, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
@@ -980,7 +980,7 @@ fn main() {
                             if player.movement_state == MoveState::Grounded {
                                 player.tracking_velocity = glm::vec3(ugh.x, ugh.y, player.tracking_velocity.z);
                             } else {
-                                player.tracking_velocity += glm::vec3(ugh.x, ugh.y, 0.0) * 0.05;
+                                player.tracking_velocity += glm::vec3(ugh.x, ugh.y, 0.0) * 0.025;
                             }
                         }
                     }
@@ -1575,7 +1575,7 @@ fn main() {
                                 let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);
                                 let projection = *screen_state.get_clipping_from_view();
                                 scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, &v_mat, &projection);
-                                render_shadows(&scene_data);
+                                render_cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.entities.as_slice());
 
                                 //Draw the companion view if we're showing HMD POV
                                 if hmd_pov {
@@ -1686,7 +1686,7 @@ fn main() {
                 shadow_rendertarget.bind();
                 let projection = *screen_state.get_clipping_from_view();
                 scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, screen_state.get_view_from_world(), &projection);
-                render_shadows(&scene_data);
+                render_cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.entities.as_slice());
 
                 //Render main scene
                 let freecam_viewdata = ViewData::new(

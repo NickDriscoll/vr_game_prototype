@@ -239,16 +239,15 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
     gl::DrawElements(gl::TRIANGLES, 36, gl::UNSIGNED_SHORT, ptr::null());
 }
 
-pub unsafe fn render_shadows(scene_data: &SceneData) {
-    let sun_shadow_map = &scene_data.sun_shadow_map;
-    gl::UseProgram(sun_shadow_map.program);
+pub unsafe fn render_cascaded_shadow_map(shadow_map: &CascadedShadowMap, entities: &[Option<RenderEntity>]) {
+    gl::UseProgram(shadow_map.program);
 
     for i in 0..SHADOW_CASCADES {
         //Configure rendering for this cascade
-        glutil::bind_matrix4(sun_shadow_map.program, "view_projection", &sun_shadow_map.matrices[i]);
-        gl::Viewport(i as GLint * sun_shadow_map.resolution, 0, sun_shadow_map.resolution, sun_shadow_map.resolution);
+        glutil::bind_matrix4(shadow_map.program, "view_projection", &shadow_map.matrices[i]);
+        gl::Viewport(i as GLint * shadow_map.resolution, 0, shadow_map.resolution, shadow_map.resolution);
 
-        for opt_entity in scene_data.entities.iter() {
+        for opt_entity in entities.iter() {
             if let Some(entity) = opt_entity {
                 gl::BindVertexArray(entity.vao);
                 gl::DrawElementsInstanced(gl::TRIANGLES, entity.index_count, gl::UNSIGNED_SHORT, ptr::null(), entity.active_instances);
