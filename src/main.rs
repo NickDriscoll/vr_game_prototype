@@ -644,7 +644,7 @@ fn main() {
     let mut water_gun_force = glm::zero();
     let mut infinite_ammo = false;
     let mut remaining_water = MAX_WATER_REMAINING;
-    let mut water_pillar_scale = glm::vec3(1.0, 1.0, 1.0);
+    let mut water_pillar_scale = glm::zero();
 
     //Water gun graphics data
     let water_cylinder_path = "models/water_cylinder.ozy";
