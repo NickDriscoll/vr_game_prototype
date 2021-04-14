@@ -11,7 +11,7 @@ const vec3 LOD_COLOR1 = vec3(1.0, 0.57, 0.0);
 const vec3 LOD_COLOR2 = vec3(0.0, 1.0, 0.0);
 const vec3 LOD_COLOR3 = vec3(1.0, 0.0, 1.0);
 const vec3 LOD_COLOR4 = vec3(0.0, 0.0, 1.0);
-const int SHADOW_CASCADES = 4;
+const int SHADOW_CASCADES = 5;
 const float SHADOW_CASCADES_RECIPROCAL = 1.0 / SHADOW_CASCADES;
 
 in vec3 tangent_sun_direction;

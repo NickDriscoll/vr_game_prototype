@@ -10,7 +10,7 @@ layout (location = 4) in vec2 uv;
 //Instanced array
 layout (location = 5) in mat4 model_matrix;
 
-const int SHADOW_CASCADES = 4;
+const int SHADOW_CASCADES = 5;
 
 out vec3 tangent_sun_direction;
 out vec3 tangent_view_position;

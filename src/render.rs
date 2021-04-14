@@ -11,7 +11,7 @@ use gl::types::*;
 pub const NEAR_DISTANCE: f32 = 0.0625;
 pub const FAR_DISTANCE: f32 = 1000000.0;
 pub const MSAA_SAMPLES: u32 = 8;
-pub const SHADOW_CASCADES: usize = 4;
+pub const SHADOW_CASCADES: usize = 5;
 pub const INSTANCED_ATTRIBUTE: GLuint = 5;
 pub const TEXTURE_MAP_COUNT: usize = 3;
 

@@ -550,7 +550,7 @@ fn main() {
 
     //Initialize shadow data
     let mut shadow_view;
-    let cascade_size = 4096;
+    let cascade_size = 2048;
     let shadow_rendertarget = unsafe { RenderTarget::new_shadow((cascade_size * render::SHADOW_CASCADES as GLint, cascade_size)) };
     let sun_shadow_map = CascadedShadowMap::new(shadow_rendertarget.texture, shadow_program, cascade_size);
 
@@ -563,10 +563,11 @@ fn main() {
     let shadow_cascade_distances = {
         let mut cascade_distances = [0.0; render::SHADOW_CASCADES + 1];
         cascade_distances[0] = -(render::NEAR_DISTANCE);
-        cascade_distances[1] = -(render::NEAR_DISTANCE + 10.0);
-        cascade_distances[2] = -(render::NEAR_DISTANCE + 50.0);
-        cascade_distances[3] = -(render::NEAR_DISTANCE + 120.0);
-        cascade_distances[4] = -(render::NEAR_DISTANCE + 350.0);
+        cascade_distances[1] = -(render::NEAR_DISTANCE + 5.0);
+        cascade_distances[2] = -(render::NEAR_DISTANCE + 25.0);
+        cascade_distances[3] = -(render::NEAR_DISTANCE + 50.0);
+        cascade_distances[4] = -(render::NEAR_DISTANCE + 120.0);
+        cascade_distances[5] = -(render::NEAR_DISTANCE + 350.0);
 
         //Compute the clip space distances and save them in the scene_data struct
         for i in 0..cascade_distances.len() {
