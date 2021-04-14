@@ -34,9 +34,9 @@ impl RenderEntity {
         match OzyMesh::load(&path) {
             Some(meshdata) => unsafe {
                 let vao = glutil::create_vertex_array_object(&meshdata.vertex_array.vertices, &meshdata.vertex_array.indices, &meshdata.vertex_array.attribute_offsets);
-                let albedo = texture_keeper.fetch_texture(&meshdata.texture_names[0], "albedo", &tex_params, ColorSpace::Gamma);
-                let normal = texture_keeper.fetch_texture(&meshdata.texture_names[0], "normal", &tex_params, ColorSpace::Linear);
-                let roughness = texture_keeper.fetch_texture(&meshdata.texture_names[0], "roughness", &tex_params, ColorSpace::Linear);
+                let albedo = texture_keeper.fetch_texture(&meshdata.texture_name, "albedo", &tex_params, ColorSpace::Gamma);
+                let normal = texture_keeper.fetch_texture(&meshdata.texture_name, "normal", &tex_params, ColorSpace::Linear);
+                let roughness = texture_keeper.fetch_texture(&meshdata.texture_name, "roughness", &tex_params, ColorSpace::Linear);
 
                 let transform_buffer = glutil::create_instanced_transform_buffer(vao, instances, INSTANCED_ATTRIBUTE);
                 RenderEntity {

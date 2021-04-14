@@ -747,29 +747,6 @@ fn main() {
     let mut dragon_position = glm::vec3(19.209993, 0.5290663, 0.0);
     let dragon_entity_index = scene_data.entities.insert(RenderEntity::from_ozy("models/dragon.ozy", standard_program, 1, &mut texture_keeper, &default_tex_params));
 
-    //Create staircase
-    let cube_count = 2048;
-    {
-        let mut cube_transform_buffer = vec![0.0; cube_count * 16];
-        for i in 0..cube_count {
-            let position = glm::vec4(-20.0, i as f32 * 10.0, i as f32 * 5.0, 1.0);
-            let matrix = glm::translation(&glm::vec4_to_vec3(&position)) * uniform_scale(3.0);
-            write_matrix_to_buffer(&mut cube_transform_buffer, i, matrix);
-
-            let aabb = AABB {
-                position,
-                width: 3.0,
-                depth: 3.0,
-                height: 3.0,
-            };
-            collision_aabbs.insert(aabb);
-        }
-
-        let idx = scene_data.entities.insert(RenderEntity::from_ozy("models/cube.ozy", standard_program, cube_count, &mut texture_keeper, &default_tex_params));
-        scene_data.entities.get_mut_element(idx).unwrap().update_buffer(&cube_transform_buffer);
-        idx
-    };
-
     //Create controller entities
     let mut wand_entity_index = 0;
     if let Some(_) = &xr_instance {
@@ -980,7 +957,7 @@ fn main() {
                             if player.movement_state == MoveState::Grounded {
                                 player.tracking_velocity = glm::vec3(ugh.x, ugh.y, player.tracking_velocity.z);
                             } else {
-                                player.tracking_velocity += glm::vec3(ugh.x, ugh.y, 0.0) * 0.025;
+                                player.tracking_velocity = glm::vec3(ugh.x, ugh.y, player.tracking_velocity.z);
                             }
                         }
                     }
