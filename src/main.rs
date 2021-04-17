@@ -17,10 +17,9 @@ use imgui::{ColorEdit, DrawCmd, EditableColor, FontAtlasRefMut, Slider, TextureI
 use core::ops::RangeInclusive;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{ErrorKind, Read};
+use std::io::{ErrorKind};
 use std::process::exit;
 use std::mem::size_of;
-use std::ptr;
 use std::os::raw::c_void;
 use std::time::Instant;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
@@ -28,7 +27,6 @@ use ozy::{glutil, io};
 use ozy::glutil::ColorSpace;
 use ozy::render::{Framebuffer, RenderTarget, ScreenState, TextureKeeper};
 use ozy::structs::OptionVec;
-use ozy::routines::uniform_scale;
 
 use crate::collision::*;
 use crate::structs::*;
@@ -564,10 +562,11 @@ fn main() {
         let mut cascade_distances = [0.0; render::SHADOW_CASCADES + 1];
         cascade_distances[0] = -(render::NEAR_DISTANCE);
         cascade_distances[1] = -(render::NEAR_DISTANCE + 5.0);
-        cascade_distances[2] = -(render::NEAR_DISTANCE + 25.0);
-        cascade_distances[3] = -(render::NEAR_DISTANCE + 50.0);
-        cascade_distances[4] = -(render::NEAR_DISTANCE + 120.0);
-        cascade_distances[5] = -(render::NEAR_DISTANCE + 350.0);
+        cascade_distances[2] = -(render::NEAR_DISTANCE + 15.0);
+        cascade_distances[3] = -(render::NEAR_DISTANCE + 25.0);
+        cascade_distances[4] = -(render::NEAR_DISTANCE + 75.0);
+        cascade_distances[5] = -(render::NEAR_DISTANCE + 125.0);
+        cascade_distances[6] = -(render::NEAR_DISTANCE + 300.0);
 
         //Compute the clip space distances and save them in the scene_data struct
         for i in 0..cascade_distances.len() {
@@ -655,9 +654,6 @@ fn main() {
     let mut world_from_tracking = glm::identity();
     let mut tracking_from_world = glm::affine_inverse(world_from_tracking);
 
-    //OptionVec to hold all AABBs used for collision
-    let mut collision_aabbs: OptionVec<AABB> = OptionVec::new();
-
     let mut screen_space_mouse = glm::zero();
 
     //Creating Dear ImGui context
@@ -701,6 +697,7 @@ fn main() {
             None => { "testmap" }
         };
         terrain = Terrain::from_ozt(&format!("models/{}.ozt", terrain_name));
+        println!("Collision triangles for {}.ozt: {}", terrain_name, terrain.indices.len() / 3);
 
         //Load the scene data from the level file
         match File::open(&format!("maps/{}.lvl", terrain_name)) {
@@ -714,7 +711,7 @@ fn main() {
                             if e.kind() == ErrorKind::UnexpectedEof {
                                 break;
                             }
-                            panic!("Error reading from level file: {}", e);                            
+                            panic!("Error reading from level file: {}", e);
                         }
                     };
 
@@ -1080,72 +1077,8 @@ fn main() {
 
         //Collision handling section
 
-        //Check for camera collision with aabbs
-        for opt_aabb in collision_aabbs.iter() {
-            if let Some(aabb) = opt_aabb {
-                let closest_point = glm::vec3(
-                    clamp(camera_position.x, aabb.position.x - aabb.width, aabb.position.x + aabb.width),
-                    clamp(camera_position.y, aabb.position.y - aabb.depth, aabb.position.y + aabb.depth),
-                    clamp(camera_position.z, aabb.position.z, aabb.position.z + aabb.height * 2.0)
-                );
-
-                let distance = glm::distance(&camera_position, &closest_point);
-                if distance > 0.0 && distance < camera_hit_sphere_radius {
-                    let vec = glm::normalize(&(camera_position - closest_point));
-                    camera_position += (camera_hit_sphere_radius - distance) * vec;
-                } else if distance == 0.0 {
-                    //Prevent the camera from breaking into AABBs by moving fast enough
-                    let segment = LineSegment {
-                        p0: glm::vec4(last_camera_position.x, last_camera_position.y, last_camera_position.z, 1.0),
-                        p1: glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0),
-                    };
-
-                    //Array of the planes that define the AABB
-                    let planes = [
-                        Plane::new(aabb.position + glm::vec4(aabb.width, 0.0, 0.0, 0.0), glm::vec4(1.0, 0.0, 0.0, 0.0)),
-                        Plane::new(aabb.position + glm::vec4(-aabb.width, 0.0, 0.0, 0.0), glm::vec4(-1.0, 0.0, 0.0, 0.0)),
-                        Plane::new(aabb.position + glm::vec4(0.0, aabb.depth, 0.0, 0.0), glm::vec4(0.0, 1.0, 0.0, 0.0)),
-                        Plane::new(aabb.position + glm::vec4(0.0, -aabb.depth, 0.0, 0.0), glm::vec4(0.0, -1.0, 0.0, 0.0)),
-                        Plane::new(aabb.position + glm::vec4(0.0, 0.0, aabb.height * 2.0, 0.0), glm::vec4(0.0, 0.0, 1.0, 0.0)),
-                        Plane::new(aabb.position + glm::vec4(0.0, 0.0, 0.0, 0.0), glm::vec4(0.0, 0.0, -1.0, 0.0)),
-                    ];
-
-                    //Check if the line segment hit any of the AABB planes
-                    for plane in &planes {
-                        if let Some(_) = segment_hit_plane(plane, &segment) {
-                            let dist = point_plane_distance(&glm::vec3_to_vec4(&camera_position), plane);
-                            camera_position += (camera_hit_sphere_radius - dist) * glm::vec4_to_vec3(&plane.normal);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
         //The user is considered to be always standing on the ground in tracking space
         player.tracked_segment = xrutil::tracked_player_segment(&view_space, &tracking_space, last_xr_render_time, &world_from_tracking);
-
-        //Check side collision with AABBs
-        //We reduce this to a circle vs rectangle in the xy plane
-        for opt_aabb in collision_aabbs.iter() {
-            if let Some(aabb) = opt_aabb {
-                if player.tracking_position.z + glm::epsilon::<f32>() < aabb.position.z + aabb.height &&
-                   player.tracked_segment.p0.z - glm::epsilon::<f32>() > aabb.position.z {
-                    let closest_point_on_aabb = glm::vec3(
-                        clamp(player.tracked_segment.p1.x, aabb.position.x - aabb.width, aabb.position.x + aabb.width),
-                        clamp(player.tracked_segment.p1.y, aabb.position.y - aabb.depth, aabb.position.y + aabb.depth),
-                        0.0
-                    );
-                    let focus = glm::vec3(player.tracked_segment.p1.x, player.tracked_segment.p1.y, 0.0);
-
-                    let distance = glm::distance(&closest_point_on_aabb, &focus);
-                    if distance > 0.0 && distance < player.radius {
-                        let vec = glm::normalize(&(focus - closest_point_on_aabb));
-                        player.tracking_position += (player.radius - distance) * vec;
-                    }
-                }
-            }
-        }
 
         //Terrain collision with various objects
         let mut down_facing_tris = Vec::new();
@@ -1169,13 +1102,39 @@ fn main() {
                 };
                 let dist1 = point_plane_distance(&seg.p1, &triangle_plane);
 
-                let collision_point = { 
+                let point_on_plane = { 
                     let p = camera_position + triangle.normal * -dist1 ;
                     glm::vec4(p.x, p.y, p.z, 1.0)
                 };
                 
-                if robust_point_in_triangle(&glm::vec4_to_vec3(&collision_point), &triangle) && f32::abs(dist1) < camera_hit_sphere_radius {
+                if robust_point_in_triangle(&glm::vec4_to_vec3(&point_on_plane), &triangle) && f32::abs(dist1) < camera_hit_sphere_radius {
                     camera_position += triangle.normal * (camera_hit_sphere_radius - dist1);
+                } else {
+                    //Check if the camera is hitting an edge
+                    let closest_point = closest_point_on_line_segment(&camera_position, &triangle.a, &triangle.b);
+
+                    let d1 = glm::distance(&camera_position, &closest_point);
+                    let mut best_dist = d1;
+                    let mut best_point = closest_point;
+                    
+                    let closest_point = closest_point_on_line_segment(&camera_position, &triangle.b, &triangle.c);
+                    
+                    let d2 = glm::distance(&camera_position, &closest_point);
+                    if d2 < best_dist {
+                        best_dist = d2;
+                        best_point = closest_point;
+                    }
+
+                    let closest_point = closest_point_on_line_segment(&camera_position, &triangle.c, &triangle.a);
+                    let d3 = glm::distance(&camera_position, &closest_point);
+                    if d3 < best_dist {
+                        best_dist = d3;
+                        best_point = closest_point;
+                    }
+
+                    if best_dist < camera_hit_sphere_radius {
+                        camera_position += glm::normalize(&(camera_position - best_point)) * (camera_hit_sphere_radius - best_dist);
+                    }
                 }
             }
 
@@ -1212,40 +1171,6 @@ fn main() {
                     p0: 0.5 * player.tracked_segment.p0 + 0.5 * player.tracked_segment.p1,
                     p1: 0.5 * player.last_tracked_segment.p0 + 0.5 * player.last_tracked_segment.p1
                 };
-
-                //Check for AABB top collision
-                if !done_checking {
-                    for opt_aabb in collision_aabbs.iter() {
-                        if let Some(aabb) = opt_aabb {
-                            let (plane, aabb_boundaries) = aabb_get_top_plane(&aabb);
-                            if let Some(point) = segment_hit_bounded_plane(&plane, &standing_segment, &aabb_boundaries) {
-                                resolve_collision_floor(&mut player, &point);
-                                done_checking = true;
-                            }
-                        }
-                    }
-                }
-
-                //Check for AABB bottom collision
-                if !done_checking {
-                    let head_segment = LineSegment {
-                        p0: player.last_tracked_segment.p0,
-                        p1: player.tracked_segment.p0 + glm::vec4(0.0, 0.0, player.radius, 0.0)
-                    };
-
-                    for opt_aabb in collision_aabbs.iter() {
-                        if let Some(aabb) = opt_aabb {
-                            let (plane, aabb_boundaries) = aabb_get_bottom_plane(&aabb);
-                            if let Some(point) = segment_hit_bounded_plane(&plane, &head_segment, &aabb_boundaries) {
-                                let len = glm::length(&(point - head_segment.p1));
-                                player.tracking_velocity.z = 0.0;
-                                player.tracking_position += glm::vec3(0.0, 0.0, -len - player.radius);
-                                
-                                done_checking = true;
-                            }
-                        }
-                    }
-                }
 
                 //Check if we're standing on the terrain mesh
                 //Check walkable tris
@@ -1334,19 +1259,6 @@ fn main() {
                     p0: 0.5 * player.tracked_segment.p0 + 0.5 * player.tracked_segment.p1,
                     p1: 0.5 * player.last_tracked_segment.p0 + 0.5 * player.last_tracked_segment.p1
                 };
-
-                //Check the AABBs
-                if !done_checking {
-                    for opt_aabb in collision_aabbs.iter() {
-                        if let Some(aabb) = opt_aabb {
-                            let (plane, aabb_boundaries) = aabb_get_top_plane(&aabb);
-                            if let Some(point) = segment_hit_bounded_plane(&plane, &standing_segment, &aabb_boundaries) {
-                                resolve_collision_walkable(&mut player, &point, &mut done_checking);
-                                break;
-                            }
-                        }
-                    }
-                }
 
                 //Check if we're standing on a walkable triangle
                 if !done_checking {

@@ -2,7 +2,7 @@ use std::ptr;
 use std::mem::size_of;
 use std::os::raw::c_void;
 use ozy::io::OzyMesh;
-use ozy::render::{RenderTarget, TextureKeeper};
+use ozy::render::{TextureKeeper};
 use ozy::structs::OptionVec;
 use ozy::glutil::ColorSpace;
 use crate::glutil;
@@ -11,7 +11,7 @@ use gl::types::*;
 pub const NEAR_DISTANCE: f32 = 0.0625;
 pub const FAR_DISTANCE: f32 = 1000000.0;
 pub const MSAA_SAMPLES: u32 = 8;
-pub const SHADOW_CASCADES: usize = 5;
+pub const SHADOW_CASCADES: usize = 6;
 pub const INSTANCED_ATTRIBUTE: GLuint = 5;
 pub const TEXTURE_MAP_COUNT: usize = 3;
 
@@ -241,7 +241,6 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
 
 pub unsafe fn render_cascaded_shadow_map(shadow_map: &CascadedShadowMap, entities: &[Option<RenderEntity>]) {
     gl::UseProgram(shadow_map.program);
-
     for i in 0..SHADOW_CASCADES {
         //Configure rendering for this cascade
         glutil::bind_matrix4(shadow_map.program, "view_projection", &shadow_map.matrices[i]);
@@ -297,23 +296,15 @@ pub fn compute_shadow_cascade_matrices(shadow_cascade_distances: &[f32; SHADOW_C
         let mut max_x = 0.0;
         let mut max_y = 0.0;
         for point in shadow_space_points.iter() {
-            if max_x < point.x {
-                max_x = point.x;
-            }
-            if min_x > point.x {
-                min_x = point.x;
-            }
-            if max_y < point.y {
-                max_y = point.y;
-            }
-            if min_y > point.y {
-                min_y = point.y;
-            }
+            if max_x < point.x { max_x = point.x; }
+            if min_x > point.x { min_x = point.x; }
+            if max_y < point.y { max_y = point.y; }
+            if min_y > point.y { min_y = point.y; }
         }
 
         let projection_depth = 10.0;
         let shadow_projection = glm::ortho(
-            min_x, max_x, min_y, max_y, -3.0 * projection_depth, projection_depth * 4.0
+            min_x, max_x, min_y, max_y, -10.0 * projection_depth, projection_depth * 4.0
         );
 
         out_mats[i] = shadow_projection * shadow_view;

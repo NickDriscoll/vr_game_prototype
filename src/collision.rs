@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::Read;
 use ozy::io;
+use crate::clamp;
 
 #[derive(Clone, Debug)]
 pub struct LineSegment {
@@ -323,4 +324,10 @@ pub fn get_terrain_triangle(terrain: &Terrain, triangle_index: usize) -> Triangl
     let c = terrain.vertices[terrain.indices[triangle_index + 2] as usize];
     let normal = terrain.face_normals[triangle_index / 3];
     Triangle { a, b, c, normal }
+}
+
+pub fn closest_point_on_line_segment(point: &glm::TVec3<f32>, a: &glm::TVec3<f32>, b: &glm::TVec3<f32>) -> glm::TVec3<f32> {    
+    let ab = b - a;
+    let t = glm::dot(&(point - a), &ab) / glm::dot(&ab, &ab);
+    a + clamp(t, 0.0, 1.0) * ab
 }
