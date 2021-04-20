@@ -21,6 +21,7 @@ use std::io::{ErrorKind};
 use std::process::exit;
 use std::mem::size_of;
 use std::os::raw::c_void;
+use std::ptr;
 use std::time::Instant;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use ozy::{glutil, io};
@@ -538,6 +539,7 @@ fn main() {
         cull_face: gl::BACK
     };
 
+    //Camera state
     let mut mouselook_enabled = false;
     let mut camera_position = glm::vec3(0.0, -8.0, 5.5);
     let mut last_camera_position = camera_position;
@@ -545,6 +547,7 @@ fn main() {
     let mut camera_orientation = glm::vec2(0.0, -glm::half_pi::<f32>() * 0.6);
     let mut camera_speed = 5.0;
     let camera_hit_sphere_radius = 0.5;
+    let mut camera_collision = true;
 
     //Initialize shadow data
     let mut shadow_view;
@@ -623,7 +626,7 @@ fn main() {
         (gl::TEXTURE_WRAP_S, gl::REPEAT),
 	    (gl::TEXTURE_WRAP_T, gl::REPEAT),
 	    (gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR),
-	    (gl::TEXTURE_MAG_FILTER, gl::LINEAR_MIPMAP_LINEAR)
+	    (gl::TEXTURE_MAG_FILTER, gl::LINEAR)
     ];
 
     //Player state
@@ -1087,6 +1090,7 @@ fn main() {
 
         //We try to do all work related to terrain collision here in order
         //to avoid iterating over all of the triangles more than once
+        const MIN_NORMAL_LIKENESS: f32 = 0.7;
         for i in (0..terrain.indices.len()).step_by(3) {
             let triangle = get_terrain_triangle(&terrain, i);                              //Get the triangle in question
             let triangle_plane = Plane::new(
@@ -1095,7 +1099,7 @@ fn main() {
             );
 
             //Check if this triangle is hitting the camera
-            {
+            if camera_collision {
                 let seg = LineSegment {
                     p0: glm::vec4(last_camera_position.x, last_camera_position.y, last_camera_position.z, 1.0),
                     p1: glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0)
@@ -1111,26 +1115,19 @@ fn main() {
                     camera_position += triangle.normal * (camera_hit_sphere_radius - dist1);
                 } else {
                     //Check if the camera is hitting an edge
-                    let closest_point = closest_point_on_line_segment(&camera_position, &triangle.a, &triangle.b);
+                    let mut best_point = closest_point_on_line_segment(&camera_position, &triangle.a, &triangle.b);
+                    let mut best_dist = glm::distance(&camera_position, &best_point);
+                    let mut update_best = |camera_pos: &glm::TVec3<f32>, a: &glm::TVec3<f32>, b: &glm::TVec3<f32>| {
+                        let closest_point = closest_point_on_line_segment(camera_pos, a, b);
+                        let dist = glm::distance(camera_pos, &closest_point);
+                        if dist < best_dist {
+                            best_dist = dist;
+                            best_point = closest_point;
+                        }
+                    };
 
-                    let d1 = glm::distance(&camera_position, &closest_point);
-                    let mut best_dist = d1;
-                    let mut best_point = closest_point;
-                    
-                    let closest_point = closest_point_on_line_segment(&camera_position, &triangle.b, &triangle.c);
-                    
-                    let d2 = glm::distance(&camera_position, &closest_point);
-                    if d2 < best_dist {
-                        best_dist = d2;
-                        best_point = closest_point;
-                    }
-
-                    let closest_point = closest_point_on_line_segment(&camera_position, &triangle.c, &triangle.a);
-                    let d3 = glm::distance(&camera_position, &closest_point);
-                    if d3 < best_dist {
-                        best_dist = d3;
-                        best_point = closest_point;
-                    }
+                    update_best(&camera_position, &triangle.b, &triangle.c);
+                    update_best(&camera_position, &triangle.c, &triangle.a);
 
                     if best_dist < camera_hit_sphere_radius {
                         camera_position += glm::normalize(&(camera_position - best_point)) * (camera_hit_sphere_radius - best_dist);
@@ -1159,7 +1156,7 @@ fn main() {
         }
 
         //User collision section
-        const MIN_NORMAL_LIKENESS: f32 = 0.7;
+        /*
         match player.movement_state {
             MoveState::Falling => {
                 let mut done_checking = false;
@@ -1306,6 +1303,7 @@ fn main() {
                 }
             }
         }
+        */
 
         //After all collision processing has been completed, update the tracking space matrices once more
         world_from_tracking = glm::translation(&player.tracking_position);
@@ -1327,6 +1325,7 @@ fn main() {
                 imgui_ui.checkbox(im_str!("Wireframe view"), &mut wireframe);
                 imgui_ui.checkbox(im_str!("TRUE wireframe view"), &mut true_wireframe);
                 imgui_ui.checkbox(im_str!("Complex normals"), &mut scene_data.complex_normals);
+                imgui_ui.checkbox(im_str!("Camera collision"), &mut camera_collision);
                 if let Some(_) = &xr_instance {
                     imgui_ui.checkbox(im_str!("HMD Point-of-view"), &mut hmd_pov);
                 } else {
@@ -1397,7 +1396,7 @@ fn main() {
             /*
             let win = imgui::Window::new(im_str!("Shadow map"));
             if let Some(win_token) = win.begin(&imgui_ui) {
-                let im = imgui::Image::new(TextureId::new(scene_data.shadow_texture as usize), [(cascade_size * render::SHADOW_CASCADES as i32 / 6) as f32, (cascade_size / 6) as f32]).uv1([1.0, -1.0]);//.size([(cascade_size * render::SHADOW_CASCADES as i32 / 3) as f32, (cascade_size / 3) as f32]);
+                let im = imgui::Image::new(TextureId::new(shadow_rendertarget.texture as usize), [(cascade_size * render::SHADOW_CASCADES as i32 / 6) as f32, (cascade_size / 6) as f32]).uv1([1.0, -1.0]);
                 im.build(&imgui_ui);
 
                 win_token.end(&imgui_ui);

@@ -116,20 +116,6 @@ void main() {
             )) {
                 shadow_cascade = i;
             }
-
-            if (visualize_cascade_zone) {
-                if (i == 0) {
-                    frag_color = simple_diffuse(LOD_COLOR0, diffuse, ambient_strength);
-                } else if (i == 1) {
-                    frag_color = simple_diffuse(LOD_COLOR1, diffuse, ambient_strength);
-                } else if (i == 2) {
-                    frag_color = simple_diffuse(LOD_COLOR2, diffuse, ambient_strength);
-                } else if (i == 3) {
-                    frag_color = simple_diffuse(LOD_COLOR3, diffuse, ambient_strength);
-                }
-                return;
-            }
-
             break;
         }
 
@@ -151,6 +137,21 @@ void main() {
         } else {
             shadow = determine_shadowed(adj_shadow_space_pos.xyz, shadow_cascade);
         }
+    }
+
+    
+
+    if (visualize_cascade_zone) {
+        if (shadow_cascade == 0) {
+            frag_color = simple_diffuse(LOD_COLOR0, diffuse * (1.0 - shadow), ambient_strength);
+        } else if (shadow_cascade == 1) {
+            frag_color = simple_diffuse(LOD_COLOR1, diffuse * (1.0 - shadow), ambient_strength);
+        } else if (shadow_cascade == 2) {
+            frag_color = simple_diffuse(LOD_COLOR2, diffuse * (1.0 - shadow), ambient_strength);
+        } else if (shadow_cascade == 3) {
+            frag_color = simple_diffuse(LOD_COLOR3, diffuse * (1.0 - shadow), ambient_strength);
+        }
+        return;
     }
 
     //Early exit for shadow visualization
