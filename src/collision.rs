@@ -57,6 +57,11 @@ pub struct Sphere {
     radius: f32
 }
 
+pub struct Capsule {
+    pub segment: LineSegment,
+    pub radius: f32
+}
+
 pub struct Triangle {
     pub a: glm::TVec3<f32>,
     pub b: glm::TVec3<f32>,
@@ -217,6 +222,18 @@ pub fn robust_point_in_triangle(test_point: &glm::TVec3<f32>, tri: &Triangle) ->
     dot1 > lower && dot1 < upper && dot2 > lower && dot2 < upper
 }
 
+pub fn ray_hit_plane(ray_origin: &glm::TVec4<f32>, ray_direction: &glm::TVec4<f32>, plane: &Plane) -> Option<(f32, glm::TVec4<f32>)> {
+    //Pre-compute the denominator to avoid divide-by-zero
+    //Denominator of zero means that the ray is parallel to the plane
+    let denominator = glm::dot(&ray_direction, &plane.normal);
+    if denominator == 0.0 { return None; }
+
+    //Compute ray-plane intersection
+    let t = glm::dot(&(plane.point - ray_origin), &plane.normal) / denominator;
+    let intersection = ray_origin + t * ray_direction;
+    Some((t, intersection))
+}
+
 //Returns the first intersection point between a ray and terrain mesh
 pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec4<f32>, ray_direction: &glm::TVec4<f32>) -> Option<glm::TVec4<f32>> {
     let mut smallest_t = f32::INFINITY;
@@ -225,22 +242,15 @@ pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec4<f32>, ray_dire
         //Get the vertices of the triangle
         let triangle = get_terrain_triangle(&terrain, i);
         let normal = terrain.face_normals[i / 3];
-
         let plane = Plane::new(glm::vec4(triangle.a.x, triangle.a.y, triangle.a.z, 1.0), glm::vec4(normal.x, normal.y, normal.z, 1.0));
 
-        //Pre-compute the denominator to avoid divide-by-zero
-        //Denominator of zero means that the ray is parallel to the plane
-        let denominator = glm::dot(&ray_direction, &plane.normal);
-        if denominator == 0.0 { continue; }
-
-        //Compute ray-plane intersection
-        let t = glm::dot(&(plane.point - ray_origin), &plane.normal) / denominator;
-        let intersection = ray_origin + t * ray_direction;
+        let (t, intersection) = match ray_hit_plane(&ray_origin, &ray_direction, &plane) {
+            Some(hit) => { hit }
+            None => { continue; }
+        };
 
         //Robust triangle-point collision in 3D
         if t > 0.0 && t < smallest_t && robust_point_in_triangle(&glm::vec4_to_vec3(&intersection), &triangle) {
-        //if t > 0.0 && t < smallest_t && simple_point_in_triangle(&glm::vec4_to_vec2(&intersection), &glm::vec3_to_vec2(&a), &glm::vec3_to_vec2(&b), &glm::vec3_to_vec2(&c)) {
-            //println!("{} smaller than {}", t, smallest_t);
             smallest_t = t;
             closest_intersection = Some(intersection);            
         }
@@ -330,4 +340,22 @@ pub fn closest_point_on_line_segment(point: &glm::TVec3<f32>, a: &glm::TVec3<f32
     let ab = b - a;
     let t = glm::dot(&(point - a), &ab) / glm::dot(&ab, &ab);
     a + clamp(t, 0.0, 1.0) * ab
+}
+
+//Given a point in a triangle's plane, returns the closest point on the triangle to said point and the distance
+pub fn closest_point_on_triangle(test_point: &glm::TVec3<f32>, triangle: &Triangle) -> (f32, glm::TVec3<f32>) {
+    let mut best_point = closest_point_on_line_segment(&test_point, &triangle.a, &triangle.b);
+    let mut best_dist = glm::distance(&test_point, &best_point);
+    let mut update_best = |point: &glm::TVec3<f32>, a: &glm::TVec3<f32>, b: &glm::TVec3<f32>| {
+        let closest_point = closest_point_on_line_segment(point, a, b);
+        let dist = glm::distance(point, &closest_point);
+        if dist < best_dist {
+            best_dist = dist;
+            best_point = closest_point;
+        }
+    };
+
+    update_best(&test_point, &triangle.b, &triangle.c);
+    update_best(&test_point, &triangle.c, &triangle.a);
+    (best_dist, best_point)
 }

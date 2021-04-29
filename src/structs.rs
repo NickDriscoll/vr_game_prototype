@@ -11,6 +11,16 @@ pub enum MoveState {
     Sliding
 }
 
+#[derive(PartialEq, Eq)]
+pub enum ClickAction {
+    None,
+    PlacingDragon
+}
+
+impl Default for ClickAction {
+    fn default() -> Self { ClickAction::None }
+}
+
 pub struct Player {
     pub tracking_position: glm::TVec3<f32>,
     pub tracking_velocity: glm::TVec3<f32>,

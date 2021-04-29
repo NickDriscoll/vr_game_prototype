@@ -496,7 +496,7 @@ fn main() {
     };
 
     //MSAA rendertarget which will have the scene rendered into it before blitting to the actual HMD swapchain image
-    //This gets around the fact that SteamVR refuses to allocate MSAA images :) :) :)
+    //This gets around the fact that SteamVR refuses to allocate MSAA rendertargets :) :) :)
     let xr_swapchain_rendertarget = match xr_swapchain_size {
         Some(size) => unsafe { Some(RenderTarget::new_multisampled((size.x as GLint, size.y as GLint), render::MSAA_SAMPLES as GLint)) }
         None => { None }
@@ -541,6 +541,7 @@ fn main() {
 
     //Camera state
     let mut mouselook_enabled = false;
+    let mut mouse_clicked = false;
     let mut camera_position = glm::vec3(0.0, -8.0, 5.5);
     let mut last_camera_position = camera_position;
     let mut camera_input: glm::TVec4<f32> = glm::zero();             //This is a unit vector in view space that represents the input camera movement vector
@@ -635,7 +636,7 @@ fn main() {
         tracking_velocity: glm::zero(),
         tracked_segment: LineSegment::zero(),
         last_tracked_segment: LineSegment::zero(),
-        movement_state: MoveState::Grounded,
+        movement_state: MoveState::Falling,
         radius: 0.15,
         jumps_remaining: Player::MAX_JUMPS,
         was_holding_left_trigger: false
@@ -759,7 +760,8 @@ fn main() {
     let mut is_fullscreen = false;
     let mut wireframe = false;
     let mut true_wireframe = false;
-    let mut placing = false;
+    //let mut placing = false;
+    let mut click_action = ClickAction::None;
     let mut hmd_pov = false;
     let mut do_vsync = true;
     let mut do_imgui = true;
@@ -817,7 +819,6 @@ fn main() {
                 WindowEvent::Key(key, _, Action::Press, _) => {
                     match key {
                         Key::Escape => { do_imgui = !do_imgui; }
-                        Key::Space => { placing = !placing; }
                         Key::W => {
                             camera_input.z += -1.0;
                         }
@@ -878,9 +879,11 @@ fn main() {
                     match action {
                         Action::Press => {
                             imgui_io.mouse_down[0] = true;
+                            mouse_clicked = true;
                         }
                         Action::Release => {
                             imgui_io.mouse_down[0] = false;
+                            mouse_clicked = false;
                         }
                         Action::Repeat => {}
                     }
@@ -1042,7 +1045,7 @@ fn main() {
         camera_position += camera_velocity * delta_time;
 
         //Place dragon at clicking position
-        if placing {
+        if click_action == ClickAction::PlacingDragon && mouse_clicked {
             let fovx_radians = 2.0 * f32::atan(f32::tan(screen_state.get_fov_radians() / 2.0) * screen_state.get_aspect_ratio());
             let max_coords = glm::vec4(
                 NEAR_DISTANCE * f32::tan(fovx_radians / 2.0),
@@ -1083,14 +1086,8 @@ fn main() {
         //The user is considered to be always standing on the ground in tracking space
         player.tracked_segment = xrutil::tracked_player_segment(&view_space, &tracking_space, last_xr_render_time, &world_from_tracking);
 
-        //Terrain collision with various objects
-        let mut down_facing_tris = Vec::new();
-        let mut walkable_tris = Vec::new();
-        let mut too_steep_tris = Vec::new();
-
         //We try to do all work related to terrain collision here in order
         //to avoid iterating over all of the triangles more than once
-        const MIN_NORMAL_LIKENESS: f32 = 0.7;
         for i in (0..terrain.indices.len()).step_by(3) {
             let triangle = get_terrain_triangle(&terrain, i);                              //Get the triangle in question
             let triangle_plane = Plane::new(
@@ -1104,8 +1101,8 @@ fn main() {
                     p0: glm::vec4(last_camera_position.x, last_camera_position.y, last_camera_position.z, 1.0),
                     p1: glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0)
                 };
-                let dist1 = point_plane_distance(&seg.p1, &triangle_plane);
 
+                let dist1 = point_plane_distance(&seg.p1, &triangle_plane);
                 let point_on_plane = { 
                     let p = camera_position + triangle.normal * -dist1 ;
                     glm::vec4(p.x, p.y, p.z, 1.0)
@@ -1115,19 +1112,7 @@ fn main() {
                     camera_position += triangle.normal * (camera_hit_sphere_radius - dist1);
                 } else {
                     //Check if the camera is hitting an edge
-                    let mut best_point = closest_point_on_line_segment(&camera_position, &triangle.a, &triangle.b);
-                    let mut best_dist = glm::distance(&camera_position, &best_point);
-                    let mut update_best = |camera_pos: &glm::TVec3<f32>, a: &glm::TVec3<f32>, b: &glm::TVec3<f32>| {
-                        let closest_point = closest_point_on_line_segment(camera_pos, a, b);
-                        let dist = glm::distance(camera_pos, &closest_point);
-                        if dist < best_dist {
-                            best_dist = dist;
-                            best_point = closest_point;
-                        }
-                    };
-
-                    update_best(&camera_position, &triangle.b, &triangle.c);
-                    update_best(&camera_position, &triangle.c, &triangle.a);
+                    let (best_dist, best_point) = closest_point_on_triangle(&camera_position, &triangle);
 
                     if best_dist < camera_hit_sphere_radius {
                         camera_position += glm::normalize(&(camera_position - best_point)) * (camera_hit_sphere_radius - best_dist);
@@ -1135,175 +1120,62 @@ fn main() {
                 }
             }
 
-            //For this triangle, determine if the player is in the triangle in the xy plane
-            if simple_point_in_triangle(&glm::vec2(player.tracked_segment.p1.x, player.tracked_segment.p1.y), &glm::vec2(triangle.a.x, triangle.a.y), &glm::vec2(triangle.b.x, triangle.b.y), &glm::vec2(triangle.c.x, triangle.c.y)) {
-                let dot = glm::dot(&triangle.normal, &glm::vec3(0.0, 0.0, 1.0));
-
-                //Sort into one of the arrays based on the normal's angle with +z
-                if dot < 0.0 { down_facing_tris.push(triangle_plane); }
-                else if dot >= MIN_NORMAL_LIKENESS { walkable_tris.push(triangle_plane); }
-                else { too_steep_tris.push(triangle_plane); }
-            }
-        }
-
-        //Check if we're bonking any of the down-facing triangles
-        for tri in down_facing_tris.iter() {
-            //If the distance to the triangle is within the range (-distance, distance), eject the player
-            let distance = point_plane_distance(&player.tracked_segment.p0, &tri);
-            if f32::abs(distance) < player.radius {
-                player.tracking_position += glm::vec4_to_vec3(&tri.normal) * (player.radius - distance);
-            }
-        }
-
-        //User collision section
-        /*
-        match player.movement_state {
-            MoveState::Falling => {
-                let mut done_checking = false;
-                let standing_segment = LineSegment {
-                    p0: player.last_tracked_segment.p1 + glm::vec4(0.0, 0.0, 0.05, 0.0),
-                    p1: player.tracked_segment.p1
+            //Check player capsule against triangle
+            const MIN_NORMAL_LIKENESS: f32 = 0.7;
+            {
+                let player_capsule = Capsule {
+                    segment: LineSegment {
+                        p0: player.tracked_segment.p0,
+                        p1: player.tracked_segment.p1 + glm::vec4(0.0, 0.0, player.radius, 0.0)
+                    },
+                    radius: player.radius
                 };
-                let swept_segment = LineSegment {
-                    p0: 0.5 * player.tracked_segment.p0 + 0.5 * player.tracked_segment.p1,
-                    p1: 0.5 * player.last_tracked_segment.p0 + 0.5 * player.last_tracked_segment.p1
+                let capsule_ray = glm::normalize(&(player_capsule.segment.p1 - player_capsule.segment.p0));
+
+                let ref_point = match ray_hit_plane(&player_capsule.segment.p0, &capsule_ray, &triangle_plane) {
+                    Some((_, intersection)) => { 
+                        let inter = glm::vec4_to_vec3(&intersection);
+                        if robust_point_in_triangle(&inter, &triangle) {
+                            inter
+                        } else {
+                            closest_point_on_triangle(&inter, &triangle).1
+                        }
+                    }
+                    None => { triangle.a }
                 };
-
-                //Check if we're standing on the terrain mesh
-                //Check walkable tris
-                if !done_checking {
-                    if let Some(collision_plane) = segment_plane_tallest_collision(&standing_segment, &walkable_tris) {
-                        resolve_collision_floor(&mut player, &collision_plane.point);
-                        done_checking = true;
-                    }
-                }
-
-                //Check too steep tris
-                if !done_checking {
-                    if let Some(collision_plane) = segment_plane_tallest_collision(&standing_segment, &too_steep_tris) {
-                        resolve_collision_too_steep(&mut player, &collision_plane);
-                        done_checking = true;
-                    }
-                }
-
-                //Check walkable tris with the swept segment
-                if !done_checking {                    
-                    if let Some(collision_plane) = segment_plane_tallest_collision(&swept_segment, &walkable_tris) {
-                        resolve_collision_floor(&mut player, &collision_plane.point);
-                        done_checking = true;
-                    }
-                }
-
-                //Check too steep tris
-                if !done_checking {
-                    if let Some(collision_plane) = segment_plane_tallest_collision(&swept_segment, &too_steep_tris) {
-                        resolve_collision_too_steep(&mut player, &collision_plane);
-                        done_checking = true;
-                    }
-                }
-
-                //Local collision resolution function
-                fn resolve_collision_floor(player: &mut Player, collision_point: &glm::TVec4<f32>,) {
-                    player.tracking_velocity = glm::zero();
-                    player.tracking_position += glm::vec4_to_vec3(&(collision_point - player.tracked_segment.p1));
-                    player.jumps_remaining = Player::MAX_JUMPS;
-                    player.movement_state = MoveState::Grounded;
-                }
-
-                fn resolve_collision_too_steep(player: &mut Player, collision_plane: &Plane) {                    
-                    let distance_to_steep_tri = -point_plane_distance(&player.tracked_segment.p1, collision_plane);
-                    player.tracking_velocity.x = 0.0;
-                    player.tracking_velocity.y = 0.0;
-                    player.tracking_position += glm::vec4_to_vec3(&(collision_plane.normal * distance_to_steep_tri));
-                    player.movement_state = MoveState::Sliding;
-                }
-            }
-            MoveState::Sliding => {
-                let mut done_checking = false;
-
-                //Check the walkable tris
-                if !done_checking {
-                    if let Some(collision_plane) = segment_plane_tallest_collision(&player.tracked_segment, &walkable_tris) {
-                        player.tracking_velocity = glm::zero();
-                        player.tracking_position += glm::vec4_to_vec3(&(collision_plane.point - player.tracked_segment.p1));
-                        player.jumps_remaining = Player::MAX_JUMPS;
+                
+                //The point on the capsule line-segment that is to be used as the focus for the sphere
+                let capsule_ref = closest_point_on_line_segment(&ref_point, &glm::vec4_to_vec3(&player_capsule.segment.p0), &glm::vec4_to_vec3(&player_capsule.segment.p1));
+                
+                //Now do a triangle-sphere test with a sphere at this reference point                
+                let dist1 = point_plane_distance(&glm::vec4(capsule_ref.x, capsule_ref.y, capsule_ref.z, 1.0), &triangle_plane);
+                let point_on_plane = { 
+                    let p = capsule_ref + triangle.normal * -dist1 ;
+                    glm::vec4(p.x, p.y, p.z, 1.0)
+                };
+                
+                //Branch on whether or not the sphere is colliding with the face of the triangle or an edge
+                if robust_point_in_triangle(&glm::vec4_to_vec3(&point_on_plane), &triangle) && f32::abs(dist1) < player.radius {
+                    player.tracking_position += triangle.normal * (player.radius - dist1);
+                    if glm::dot(&triangle.normal, &glm::vec3(0.0, 0.0, 1.0)) >= MIN_NORMAL_LIKENESS {
                         player.movement_state = MoveState::Grounded;
-                        done_checking = true;                        
+                        player.tracking_velocity.z = 0.0;
                     }
-                }
+                } else {
+                    let (best_dist, best_point) = closest_point_on_triangle(&capsule_ref, &triangle);
 
-                //Check the too steep tris
-                if !done_checking {
-                    if let Some(collision_plane) = segment_plane_tallest_collision(&player.tracked_segment, &too_steep_tris) {
-                        let distance_to_steep_tri = -point_plane_distance(&player.tracked_segment.p1, &collision_plane);
-                        player.tracking_position += glm::vec4_to_vec3(&(collision_plane.normal * distance_to_steep_tri));
-                        done_checking = true;
-                    }
-                }
-
-                //Set player falling if not colliding with any tris
-                if !done_checking {
-                    set_player_falling(&mut player);
-                }
-            }
-            MoveState::Grounded => {
-                let mut done_checking = false;
-                let standing_segment = LineSegment {
-                    p0: player.tracked_segment.p1 + glm::vec4(0.0, 0.0, 0.5, 1.0),
-                    p1: player.tracked_segment.p1 - glm::vec4(0.0, 0.0, 0.2, 1.0)
-                };
-                let swept_segment = LineSegment {
-                    p0: 0.5 * player.tracked_segment.p0 + 0.5 * player.tracked_segment.p1,
-                    p1: 0.5 * player.last_tracked_segment.p0 + 0.5 * player.last_tracked_segment.p1
-                };
-
-                //Check if we're standing on a walkable triangle
-                if !done_checking {
-                    if let Some(collision_plane) = segment_plane_tallest_collision(&standing_segment, &walkable_tris) {
-                        resolve_collision_walkable(&mut player, &collision_plane.point, &mut done_checking);
-                    }
-                }                
-                if !done_checking {
-                    if let Some(collision_plane) = segment_plane_tallest_collision(&standing_segment, &too_steep_tris) {
-                        resolve_collision_too_steep(&mut player, &collision_plane.point);
+                    if best_dist < player.radius {
+                        let push_dir = glm::normalize(&(capsule_ref - best_point));
+                        player.tracking_position += push_dir * (player.radius - best_dist);
+                        if glm::dot(&push_dir, &glm::vec3(0.0, 0.0, 1.0)) >= MIN_NORMAL_LIKENESS {
+                            player.movement_state = MoveState::Grounded;
+                            player.tracking_velocity.z = 0.0;
+                        }
                     }
                 }
                 
-                //Check if we're standing on a too-steep triangle
-                if !done_checking {
-                    if let Some(collision_plane) = segment_plane_tallest_collision(&swept_segment, &walkable_tris) {
-                        resolve_collision_walkable(&mut player, &collision_plane.point, &mut done_checking);
-                    }
-                }                
-                if !done_checking {
-                    if let Some(collision_plane) = segment_plane_tallest_collision(&swept_segment, &too_steep_tris) {
-                        resolve_collision_too_steep(&mut player, &collision_plane.point);
-                    }
-                }
-
-                //If we're still not grounded, we're falling
-                if !done_checking {
-                    set_player_falling(&mut player);
-                }
-
-                //Local collision resolution functions
-
-                fn resolve_collision_walkable(player: &mut Player, collision_point: &glm::TVec4<f32>, done_checking: &mut bool) {
-                    eject_player(player, collision_point);
-                    player.movement_state = MoveState::Grounded;
-                    *done_checking = true;
-                }
-                fn resolve_collision_too_steep(player: &mut Player, collision_point: &glm::TVec4<f32>) {
-                    eject_player(player, collision_point);
-                    player.movement_state = MoveState::Sliding;
-                }
-                fn eject_player(player: &mut Player, collision_point: &glm::TVec4<f32>) {
-                    player.tracking_velocity = glm::zero();
-                    player.tracking_position += glm::vec4_to_vec3(&(collision_point - player.tracked_segment.p1));
-                }
             }
         }
-        */
 
         //After all collision processing has been completed, update the tracking space matrices once more
         world_from_tracking = glm::translation(&player.tracking_position);
@@ -1347,6 +1219,10 @@ fn main() {
                 if imgui_ui.radio_button_bool(im_str!("Visualize shadow cascades"), scene_data.fragment_flag == FragmentFlag::CascadeZones) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::CascadeZones); }
                 imgui_ui.separator();
 
+                imgui_ui.text(im_str!("What does a mouse click do?"));
+                if imgui_ui.radio_button_bool(im_str!("Places the dragon"), click_action == ClickAction::PlacingDragon) { handle_radio_flag(&mut click_action, ClickAction::PlacingDragon); }
+                imgui_ui.separator();
+
                 imgui_ui.text(im_str!("Lighting controls:"));
                 let ambient_slider = Slider::new(im_str!("Ambient strength")).range(RangeInclusive::new(0.0, 0.5));
                 ambient_slider.build(&imgui_ui, &mut scene_data.ambient_strength);
@@ -1361,7 +1237,6 @@ fn main() {
                     if imgui_ui.button(im_str!("Reset player position"), [0.0, 32.0]) {
                         reset_player_position(&mut player);
                     }
-                    imgui_ui.same_line(0.0);
                 }
 
                 //Fullscreen button
@@ -1383,7 +1258,6 @@ fn main() {
                         resize_main_window(&mut window, &mut default_framebuffer, &mut screen_state, window_size, (200, 200), WindowMode::Windowed);
                     }
                 }
-                imgui_ui.same_line(0.0);
 
                 //Do quit button
                 if imgui_ui.button(im_str!("Quit"), [0.0, 32.0]) { window.set_should_close(true); }
