@@ -5,8 +5,8 @@ use crate::clamp;
 
 #[derive(Clone, Debug)]
 pub struct LineSegment {
-    pub p0: glm::TVec4<f32>,
-    pub p1: glm::TVec4<f32>
+    pub p0: glm::TVec3<f32>,
+    pub p1: glm::TVec3<f32>
 }
 
 impl LineSegment {
@@ -24,12 +24,12 @@ impl LineSegment {
 
 //An infinite plane as defined by a point on the plane and a vector normal to the plane
 pub struct Plane {
-    pub point: glm::TVec4<f32>,
-    pub normal: glm::TVec4<f32>,
+    pub point: glm::TVec3<f32>,
+    pub normal: glm::TVec3<f32>,
 }
 
 impl Plane {
-    pub fn new(point: glm::TVec4<f32>, normal: glm::TVec4<f32>) -> Self {
+    pub fn new(point: glm::TVec3<f32>, normal: glm::TVec3<f32>) -> Self {
         Plane {
             point,
             normal
@@ -162,7 +162,7 @@ impl Terrain {
     }
 }
 
-pub fn segment_hit_plane(plane: &Plane, segment: &LineSegment) -> Option<glm::TVec4<f32>> {
+pub fn segment_hit_plane(plane: &Plane, segment: &LineSegment) -> Option<glm::TVec3<f32>> {
     let denominator = glm::dot(&plane.normal, &(segment.p1 - segment.p0));
 
     //Check for divide-by-zero
@@ -170,7 +170,7 @@ pub fn segment_hit_plane(plane: &Plane, segment: &LineSegment) -> Option<glm::TV
         let x = glm::dot(&plane.normal, &(plane.point - segment.p0)) / denominator;
         if x > 0.0 && x <= 1.0 {
             let result = (1.0 - x) * segment.p0 + x * segment.p1;
-            Some(glm::vec4(result.x, result.y, result.z, 1.0))
+            Some(glm::vec3(result.x, result.y, result.z))
         } else {
             None
         }        
@@ -222,9 +222,9 @@ pub fn robust_point_in_triangle(test_point: &glm::TVec3<f32>, tri: &Triangle) ->
     dot1 > lower && dot1 < upper && dot2 > lower && dot2 < upper
 }
 
-pub fn ray_hit_plane(ray_origin: &glm::TVec4<f32>, ray_direction: &glm::TVec4<f32>, plane: &Plane) -> Option<(f32, glm::TVec4<f32>)> {
+pub fn ray_hit_plane(ray_origin: &glm::TVec3<f32>, ray_direction: &glm::TVec3<f32>, plane: &Plane) -> Option<(f32, glm::TVec3<f32>)> {
     //Pre-compute the denominator to avoid divide-by-zero
-    //Denominator of zero means that the ray is parallel to the plane
+    //Denominator of zero means that the ray is parallel to the plane, hence no intersection
     let denominator = glm::dot(&ray_direction, &plane.normal);
     if denominator == 0.0 { return None; }
 
@@ -235,14 +235,14 @@ pub fn ray_hit_plane(ray_origin: &glm::TVec4<f32>, ray_direction: &glm::TVec4<f3
 }
 
 //Returns the first intersection point between a ray and terrain mesh
-pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec4<f32>, ray_direction: &glm::TVec4<f32>) -> Option<glm::TVec4<f32>> {
+pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec3<f32>, ray_direction: &glm::TVec3<f32>) -> Option<glm::TVec3<f32>> {
     let mut smallest_t = f32::INFINITY;
     let mut closest_intersection = None;
     for i in (0..terrain.indices.len()).step_by(3) {
         //Get the vertices of the triangle
         let triangle = get_terrain_triangle(&terrain, i);
         let normal = terrain.face_normals[i / 3];
-        let plane = Plane::new(glm::vec4(triangle.a.x, triangle.a.y, triangle.a.z, 1.0), glm::vec4(normal.x, normal.y, normal.z, 1.0));
+        let plane = Plane::new(triangle.a, normal);
 
         let (t, intersection) = match ray_hit_plane(&ray_origin, &ray_direction, &plane) {
             Some(hit) => { hit }
@@ -250,7 +250,7 @@ pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec4<f32>, ray_dire
         };
 
         //Robust triangle-point collision in 3D
-        if t > 0.0 && t < smallest_t && robust_point_in_triangle(&glm::vec4_to_vec3(&intersection), &triangle) {
+        if t > 0.0 && t < smallest_t && robust_point_in_triangle(&intersection, &triangle) {
             smallest_t = t;
             closest_intersection = Some(intersection);            
         }
@@ -259,7 +259,7 @@ pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec4<f32>, ray_dire
     closest_intersection
 }
 
-pub fn segment_hit_bounded_plane(plane: &Plane, segment: &LineSegment, boundaries: &PlaneBoundaries) -> Option<glm::TVec4<f32>> {
+pub fn segment_hit_bounded_plane(plane: &Plane, segment: &LineSegment, boundaries: &PlaneBoundaries) -> Option<glm::TVec3<f32>> {
     let collision_point = segment_hit_plane(&plane, &segment);
     if let Some(point) = collision_point {
         let on_aabb = point.x > boundaries.xmin &&
@@ -277,39 +277,12 @@ pub fn segment_hit_bounded_plane(plane: &Plane, segment: &LineSegment, boundarie
     }
 }
 
-pub fn point_plane_distance(point: &glm::TVec4<f32>, plane: &Plane) -> f32 {
+pub fn point_plane_distance(point: &glm::TVec3<f32>, plane: &Plane) -> f32 {
     glm::dot(&plane.normal, &(point - plane.point))
 }
 
 pub fn sign(test: &glm::TVec2<f32>, p0: &glm::TVec2<f32>, p1: &glm::TVec2<f32>) -> f32 {
     (test.x - p1.x) * (p0.y - p1.y) - (p0.x - p1.x) * (test.y - p1.y)
-}
-
-pub fn aabb_get_top_plane(aabb: &AABB) -> (Plane, PlaneBoundaries) {    
-    let mut pos = aabb.position;
-    pos.z += aabb.height * 2.0;
-    let plane = Plane::new(pos, glm::vec4(0.0, 0.0, 1.0, 0.0));
-    let aabb_boundaries = PlaneBoundaries {
-        xmin: -aabb.width + aabb.position.x,
-        xmax: aabb.width + aabb.position.x,
-        ymin: -aabb.depth + aabb.position.y,
-        ymax: aabb.depth + aabb.position.y
-    };
-
-    (plane, aabb_boundaries)
-}
-
-pub fn aabb_get_bottom_plane(aabb: &AABB) -> (Plane, PlaneBoundaries) {
-    let pos = aabb.position;
-    let plane = Plane::new(pos, glm::vec4(0.0, 0.0, -1.0, 0.0));
-    let aabb_boundaries = PlaneBoundaries {
-        xmin: -aabb.width + aabb.position.x,
-        xmax: aabb.width + aabb.position.x,
-        ymin: -aabb.depth + aabb.position.y,
-        ymax: aabb.depth + aabb.position.y
-    };
-
-    (plane, aabb_boundaries)
 }
 
 //The returned plane's reference point is the intersection point

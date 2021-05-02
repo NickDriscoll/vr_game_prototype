@@ -72,6 +72,8 @@ fn write_matrix_to_buffer(buffer: &mut [f32], index: usize, matrix: glm::TMat4<f
 }
 
 fn main() {
+    //First is do a bunch of OpenXR initialization
+
     //Initialize the configuration data
     let config = {
         match Configuration::from_file(Configuration::CONFIG_FILEPATH) {
@@ -316,6 +318,8 @@ fn main() {
         }
         _ => {}
     }
+
+    //Initializing GLFW and creating a window
 
     //Initialize glfw
     let mut glfw = match glfw::init(glfw::FAIL_ON_ERRORS) {
@@ -641,6 +645,7 @@ fn main() {
         jumps_remaining: Player::MAX_JUMPS,
         was_holding_left_trigger: false
     };
+    println!("RenderEntity is {} bytes", size_of::<RenderEntity>());
 
     //Water gun state
     const MAX_WATER_PRESSURE: f32 = 30.0;
@@ -701,7 +706,7 @@ fn main() {
             None => { "testmap" }
         };
         terrain = Terrain::from_ozt(&format!("models/{}.ozt", terrain_name));
-        println!("Collision triangles for {}.ozt: {}", terrain_name, terrain.indices.len() / 3);
+        println!("Loaded {} collision triangles from {}.ozt", terrain.indices.len() / 3, terrain_name);
 
         //Load the scene data from the level file
         match File::open(&format!("maps/{}.lvl", terrain_name)) {
@@ -736,8 +741,7 @@ fn main() {
                     let mut entity = RenderEntity::from_ozy(&format!("models/{}", ozy_name), standard_program, matrices_count, &mut texture_keeper, &default_tex_params);
                     entity.update_buffer(&matrix_floats);                
                     scene_data.entities.insert(entity);
-                }
-                
+                }                
             }
             Err(e) => {
                 panic!("Couldn't open level file: {}", e);
@@ -991,13 +995,14 @@ fn main() {
                     let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
                     let world_space_vec = hand_transform * hand_space_vec;
                     let hand_origin = hand_transform * glm::vec4(0.0, 0.0, 0.0, 1.0);
+                    let hand_origin = glm::vec4_to_vec3(&hand_origin);
 
                     //Calculate water gun force vector
                     water_gun_force = glm::vec4_to_vec3(&(-state.current_state * world_space_vec));
 
                     if state.current_state > 0.0 {
                         //Calculate scale of water pillar
-                        match ray_hit_terrain(&terrain, &hand_origin, &world_space_vec) {
+                        match ray_hit_terrain(&terrain, &hand_origin, &glm::vec4_to_vec3(&world_space_vec)) {
                             Some(point) => {
                                 water_pillar_scale.y = glm::length(&(point - hand_origin)); 
                             }
@@ -1062,12 +1067,12 @@ fn main() {
             let view_space_mouse = glm::matrix_comp_mult(&normalized_coords, &max_coords);
             let world_space_mouse = screen_state.get_world_from_view() * view_space_mouse;
 
-            let ray_origin = glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0);
-            let mouse_ray_dir = glm::normalize(&(world_space_mouse - ray_origin));
+            let ray_origin = glm::vec3(camera_position.x, camera_position.y, camera_position.z);
+            let mouse_ray_dir = glm::normalize(&(glm::vec4_to_vec3(&world_space_mouse) - ray_origin));
 
             //Update dragon's position if the ray hit
             if let Some(point) = ray_hit_terrain(&terrain, &ray_origin, &mouse_ray_dir) {
-                dragon_position = glm::vec4_to_vec3(&point);
+                dragon_position = point;
             }
         }
 
@@ -1088,21 +1093,19 @@ fn main() {
 
         //We try to do all work related to terrain collision here in order
         //to avoid iterating over all of the triangles more than once
+        player.movement_state = MoveState::Falling;
         for i in (0..terrain.indices.len()).step_by(3) {
             let triangle = get_terrain_triangle(&terrain, i);                              //Get the triangle in question
             let triangle_plane = Plane::new(
-                glm::vec4(triangle.a.x, triangle.a.y, triangle.a.z, 1.0),
-                glm::vec4(triangle.normal.x, triangle.normal.y, triangle.normal.z, 0.0)
+                triangle.a,
+                triangle.normal
             );
 
             //Check if this triangle is hitting the camera
             if camera_collision {
-                let seg = LineSegment {
-                    p0: glm::vec4(last_camera_position.x, last_camera_position.y, last_camera_position.z, 1.0),
-                    p1: glm::vec4(camera_position.x, camera_position.y, camera_position.z, 1.0)
-                };
+                let cam_pos = glm::vec3(camera_position.x, camera_position.y, camera_position.z);
 
-                let dist1 = point_plane_distance(&seg.p1, &triangle_plane);
+                let dist1 = point_plane_distance(&cam_pos, &triangle_plane);
                 let point_on_plane = { 
                     let p = camera_position + triangle.normal * -dist1 ;
                     glm::vec4(p.x, p.y, p.z, 1.0)
@@ -1120,35 +1123,52 @@ fn main() {
                 }
             }
 
+            //Check if we need to snap the player to the ground
+            {
+                let test_segment = LineSegment {
+                    p0: player.tracked_segment.p1,
+                    p1: player.tracked_segment.p1 - glm::vec3(0.0, 0.0, 0.05)
+                };
+                if let Some(point) = segment_hit_plane(&triangle_plane, &test_segment) {
+                    if robust_point_in_triangle(&point, &triangle) {
+                        if glm::dot(&triangle.normal, &glm::vec3(0.0, 0.0, 1.0)) >= MIN_NORMAL_LIKENESS {
+                            player.tracking_position += point - player.tracked_segment.p1;
+                            player.movement_state = MoveState::Grounded;
+                        } else {
+                            println!("failed that test");
+                        }
+                    }
+                }
+            }
+
             //Check player capsule against triangle
             const MIN_NORMAL_LIKENESS: f32 = 0.7;
             {
                 let player_capsule = Capsule {
                     segment: LineSegment {
                         p0: player.tracked_segment.p0,
-                        p1: player.tracked_segment.p1 + glm::vec4(0.0, 0.0, player.radius, 0.0)
+                        p1: player.tracked_segment.p1 + glm::vec3(0.0, 0.0, player.radius)
                     },
                     radius: player.radius
                 };
                 let capsule_ray = glm::normalize(&(player_capsule.segment.p1 - player_capsule.segment.p0));
 
                 let ref_point = match ray_hit_plane(&player_capsule.segment.p0, &capsule_ray, &triangle_plane) {
-                    Some((_, intersection)) => { 
-                        let inter = glm::vec4_to_vec3(&intersection);
-                        if robust_point_in_triangle(&inter, &triangle) {
-                            inter
+                    Some((_, intersection)) => {
+                        if robust_point_in_triangle(&intersection, &triangle) {
+                            intersection
                         } else {
-                            closest_point_on_triangle(&inter, &triangle).1
+                            closest_point_on_triangle(&intersection, &triangle).1
                         }
                     }
                     None => { triangle.a }
                 };
                 
                 //The point on the capsule line-segment that is to be used as the focus for the sphere
-                let capsule_ref = closest_point_on_line_segment(&ref_point, &glm::vec4_to_vec3(&player_capsule.segment.p0), &glm::vec4_to_vec3(&player_capsule.segment.p1));
+                let capsule_ref = closest_point_on_line_segment(&ref_point, &player_capsule.segment.p0, &player_capsule.segment.p1);
                 
-                //Now do a triangle-sphere test with a sphere at this reference point                
-                let dist1 = point_plane_distance(&glm::vec4(capsule_ref.x, capsule_ref.y, capsule_ref.z, 1.0), &triangle_plane);
+                //Now do a triangle-sphere test with a sphere at this reference point
+                let dist1 = point_plane_distance(&capsule_ref, &triangle_plane);
                 let point_on_plane = { 
                     let p = capsule_ref + triangle.normal * -dist1 ;
                     glm::vec4(p.x, p.y, p.z, 1.0)
@@ -1159,6 +1179,7 @@ fn main() {
                     player.tracking_position += triangle.normal * (player.radius - dist1);
                     if glm::dot(&triangle.normal, &glm::vec3(0.0, 0.0, 1.0)) >= MIN_NORMAL_LIKENESS {
                         player.movement_state = MoveState::Grounded;
+                        player.jumps_remaining = Player::MAX_JUMPS;
                         player.tracking_velocity.z = 0.0;
                     }
                 } else {
@@ -1169,11 +1190,11 @@ fn main() {
                         player.tracking_position += push_dir * (player.radius - best_dist);
                         if glm::dot(&push_dir, &glm::vec3(0.0, 0.0, 1.0)) >= MIN_NORMAL_LIKENESS {
                             player.movement_state = MoveState::Grounded;
+                            player.jumps_remaining = Player::MAX_JUMPS;
                             player.tracking_velocity.z = 0.0;
                         }
                     }
                 }
-                
             }
         }
 

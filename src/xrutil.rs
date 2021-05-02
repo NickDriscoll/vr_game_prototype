@@ -150,8 +150,8 @@ pub fn tracked_player_segment(view_space: &Option<xr::Space>, tracking_space: &O
             let head = world_from_tracking * glm::vec4(pose.position.x, pose.position.y, pose.position.z, 1.0);
             let feet = world_from_tracking * glm::vec4(pose.position.x, pose.position.y, 0.0, 1.0);
             LineSegment {
-                p0: head,
-                p1: feet
+                p0: glm::vec3(head.x, head.y, head.z),
+                p1: glm::vec3(feet.x, feet.y, feet.z)
             }
         }
         None => { LineSegment {p0: glm::zero(), p1: glm::zero()} }
