@@ -4,6 +4,10 @@ use std::io::BufReader;
 use std::io::prelude::*;
 use crate::collision::*;
 
+pub enum AudioCommand {
+    SetListenerPosition([f32; 3])
+}
+
 #[derive(PartialEq, Eq)]
 pub enum MoveState {
     Grounded,

@@ -1,4 +1,5 @@
 #![allow(non_snake_case)]
+extern crate minimp3 as mp3;
 extern crate nalgebra_glm as glm;
 extern crate openxr as xr;
 extern crate ozy_engine as ozy;
@@ -11,6 +12,7 @@ mod xrutil;
 use render::{compute_shadow_cascade_matrices, render_main_scene, render_cascaded_shadow_map, CascadedShadowMap, FragmentFlag, RenderEntity, SceneData, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
+use alto::Source;
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
 use gl::types::*;
 use imgui::{ColorEdit, DrawCmd, EditableColor, FontAtlasRefMut, Slider, TextureId, im_str};
@@ -22,6 +24,8 @@ use std::process::exit;
 use std::mem::size_of;
 use std::os::raw::c_void;
 use std::ptr;
+use std::sync::mpsc;
+use std::thread;
 use std::time::Instant;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use ozy::{glutil, io};
@@ -72,7 +76,7 @@ fn write_matrix_to_buffer(buffer: &mut [f32], index: usize, matrix: glm::TMat4<f
 }
 
 fn main() {
-    //First is do a bunch of OpenXR initialization
+    //Do a bunch of OpenXR initialization
 
     //Initialize the configuration data
     let config = {
@@ -83,7 +87,7 @@ fn main() {
                 let mut string_options = HashMap::new();
                 int_options.insert(String::from(Configuration::WINDOWED_WIDTH), 1280);
                 int_options.insert(String::from(Configuration::WINDOWED_HEIGHT), 720);
-                string_options.insert(String::from(Configuration::LEVEL_NAME), String::from("testmap"));
+                string_options.insert(String::from(Configuration::LEVEL_NAME), String::from("recreate"));
                 let c = Configuration {
                     int_options,
                     string_options
@@ -318,6 +322,86 @@ fn main() {
         }
         _ => {}
     }
+
+    //Init audio system
+    let (audio_sender, audio_receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let alto_context = match alto::Alto::load_default() {
+            Ok(a) => { 
+                let alto = a;
+                match alto.default_output() {
+                    Some(string) => {
+                        match alto.open(Some(&string)) {
+                            Ok(dev) => {
+                                match dev.new_context(None) {
+                                    Ok(ctxt) => {
+                                        println!("Successfully initialized the OpenAL context.");
+                                        ctxt
+                                    }
+                                    Err(e) => {
+                                        println!("Error creating OpenAL context: {}", e);
+                                        return;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                println!("Error opening default audio device: {}", e);
+                                return;
+                            }
+                        }
+                    }
+                    None => {
+                        println!("Couldn't query for default audio device.");
+                        return;
+                    }
+                }
+            }
+            Err(e) => {
+                println!("Error initializing OpenAL: {}", e);
+                return;
+            }
+        };
+        
+        let mut decoder = mp3::Decoder::new(File::open("music/relaxing_botw_mono.mp3").unwrap());
+
+        let mut kanye_source = alto_context.new_streaming_source().unwrap();
+        //kanye_source.set_position([57.56477, 9.46257, 4.1154327]).unwrap();
+        loop {
+            //Process all commands from the main thread
+            while let Ok(command) = audio_receiver.try_recv() {
+                match command {
+                    AudioCommand::SetListenerPosition(pos) => {                        
+                        alto_context.set_position(pos).unwrap();
+                    }
+                }
+            }
+
+            if kanye_source.buffers_processed() > 10 {
+                kanye_source.unqueue_buffer().unwrap();
+            }
+            for i in 0..200 {
+                if let Ok(frame) = decoder.next_frame() {
+                    let mut mono_samples = Vec::with_capacity(frame.data.len());
+                    for sample in frame.data {
+                        mono_samples.push(
+                            alto::Mono {
+                                center: sample
+                            }
+                        )
+                    }
+
+                    if let Ok(sample_buffer) = alto_context.new_buffer(mono_samples, frame.sample_rate) {
+                        kanye_source.queue_buffer(sample_buffer).unwrap();
+                        kanye_source.play();
+                    }
+                }
+            }
+        }
+
+    });
+
+    //Create a source for the music
+    
 
     //Initializing GLFW and creating a window
 
@@ -1142,7 +1226,7 @@ fn main() {
             }
 
             //Check player capsule against triangle
-            const MIN_NORMAL_LIKENESS: f32 = 0.7;
+            const MIN_NORMAL_LIKENESS: f32 = 0.5;
             {
                 let player_capsule = Capsule {
                     segment: LineSegment {
@@ -1209,6 +1293,9 @@ fn main() {
         last_camera_position = camera_position;
 
         //Pre-render phase
+
+        //Tell the audio thread about the current world state
+        //audio_sender.send(AudioCommand::SetListenerPosition([camera_position.x, camera_position.y, camera_position.z])).unwrap();
 
         //Draw ImGui
         if do_imgui {
@@ -1278,6 +1365,10 @@ fn main() {
                         let window_size = get_window_size(&config);
                         resize_main_window(&mut window, &mut default_framebuffer, &mut screen_state, window_size, (200, 200), WindowMode::Windowed);
                     }
+                }
+
+                if imgui_ui.button(im_str!("Print camera position"), [0.0, 32.0]) {
+                    println!("Camera position on frame {}: ({}, {}, {})", frame_count, camera_position.x, camera_position.y, camera_position.z);
                 }
 
                 //Do quit button
@@ -1495,19 +1586,11 @@ fn main() {
             gl::UseProgram(imgui_program);
             glutil::bind_matrix4(imgui_program, "projection", screen_state.get_clipping_from_screen());
             {
-                let draw_data = imgui_ui.render();                
-                if draw_data.total_vtx_count > 0 {                    
+                let draw_data = imgui_ui.render();
+                if draw_data.total_vtx_count > 0 {
                     for list in draw_data.draw_lists() {
                         let vert_size = 8;
                         let mut verts = vec![0.0; list.vtx_buffer().len() * vert_size];
-                        let mut inds = vec![0; list.idx_buffer().len()];
-
-                        let mut current_index = 0;
-                        let idx_buffer = list.idx_buffer();
-                        for idx in idx_buffer.iter() {
-                            inds[current_index] = *idx;
-                            current_index += 1;
-                        }
 
                         let mut current_vertex = 0;
                         let vtx_buffer = list.vtx_buffer();
@@ -1525,7 +1608,7 @@ fn main() {
                             current_vertex += 1;
                         }
 
-                        let imgui_vao = glutil::create_vertex_array_object(&verts, &inds, &[2, 2, 4]);
+                        let imgui_vao = glutil::create_vertex_array_object(&verts, list.idx_buffer(), &[2, 2, 4]);
 
                         for command in list.commands() {
                             match command {
@@ -1545,6 +1628,11 @@ fn main() {
                             }
                         }
                         
+                        let mut bufs = [0, 0];
+                        gl::GetIntegerv(gl::ARRAY_BUFFER_BINDING, &mut bufs[0]);
+                        gl::GetIntegerv(gl::ELEMENT_ARRAY_BUFFER_BINDING, &mut bufs[1]);
+                        let bufs = [bufs[0] as GLuint, bufs[1] as GLuint];
+                        gl::DeleteBuffers(2, &bufs[0]);
                         gl::DeleteVertexArrays(1, &imgui_vao);
                     }
                 }

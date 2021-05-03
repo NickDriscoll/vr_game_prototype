@@ -17,6 +17,8 @@ nalgebra-glm = "*"
 raw-window-handle = "*"
 rand = "0.7.3"
 imgui = "0.7.0"
+alto = "3.0.4"
+minimp3 = "0.5.1"
 
 [dependencies.openxr]
 version = "*"
