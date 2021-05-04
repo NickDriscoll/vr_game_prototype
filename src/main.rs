@@ -12,14 +12,14 @@ mod xrutil;
 use render::{compute_shadow_cascade_matrices, render_main_scene, render_cascaded_shadow_map, CascadedShadowMap, FragmentFlag, RenderEntity, SceneData, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
-use alto::Source;
+use alto::{sys::ALint, AltoError, Source};
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
 use gl::types::*;
 use imgui::{ColorEdit, DrawCmd, EditableColor, FontAtlasRefMut, Slider, TextureId, im_str};
 use core::ops::RangeInclusive;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{ErrorKind};
+use std::io::{ErrorKind, Seek, SeekFrom};
 use std::process::exit;
 use std::mem::size_of;
 use std::os::raw::c_void;
@@ -362,9 +362,13 @@ fn main() {
             }
         };
         
-        let mut decoder = mp3::Decoder::new(File::open("music/relaxing_botw_mono.mp3").unwrap());
+        const MUSIC_PATH: &str = "music/spirit_temple.mp3";
+        let mut decoder = mp3::Decoder::new(File::open(MUSIC_PATH).unwrap());
 
         let mut kanye_source = alto_context.new_streaming_source().unwrap();
+        let mut queued = -1;
+        let mut processed = -1;
+        let mut flag = false;
         //kanye_source.set_position([57.56477, 9.46257, 4.1154327]).unwrap();
         loop {
             //Process all commands from the main thread
@@ -376,32 +380,48 @@ fn main() {
                 }
             }
 
-            if kanye_source.buffers_processed() > 10 {
-                kanye_source.unqueue_buffer().unwrap();
+            const MAX_FRAMES_QUEUED: ALint = 10;
+            if kanye_source.buffers_queued() == MAX_FRAMES_QUEUED && !flag {
+                kanye_source.play();
+                flag = true;
             }
-            for i in 0..200 {
-                if let Ok(frame) = decoder.next_frame() {
-                    let mut mono_samples = Vec::with_capacity(frame.data.len());
-                    for sample in frame.data {
-                        mono_samples.push(
-                            alto::Mono {
-                                center: sample
-                            }
-                        )
-                    }
 
-                    if let Ok(sample_buffer) = alto_context.new_buffer(mono_samples, frame.sample_rate) {
-                        kanye_source.queue_buffer(sample_buffer).unwrap();
-                        kanye_source.play();
+            if kanye_source.buffers_queued() < MAX_FRAMES_QUEUED {
+                match decoder.next_frame() {
+                    Ok(frame) => {
+                        let mut mono_samples = Vec::with_capacity(frame.data.len());
+
+                        for sample in frame.data {
+                            mono_samples.push(
+                                alto::Mono {
+                                    center: sample
+                                }
+                            )
+                        }
+
+                        if let Ok(sample_buffer) = alto_context.new_buffer(mono_samples, frame.sample_rate * 2) {
+                            kanye_source.queue_buffer(sample_buffer).unwrap();
+                        }
+                    }
+                    Err(e) => {
+                        match e {
+                            mp3::Error::Eof => {
+                                println!("Looping the mp3");
+                                decoder.reader_mut().seek(SeekFrom::Start(0)).unwrap();
+                            }
+                            _ => { println!("Error decoding mp3 frame: {}", e); }
+                        }
                     }
                 }
+
+
+            }
+
+            while kanye_source.buffers_processed() > 0 {
+                kanye_source.unqueue_buffer().unwrap();
             }
         }
-
     });
-
-    //Create a source for the music
-    
 
     //Initializing GLFW and creating a window
 
@@ -1295,7 +1315,7 @@ fn main() {
         //Pre-render phase
 
         //Tell the audio thread about the current world state
-        //audio_sender.send(AudioCommand::SetListenerPosition([camera_position.x, camera_position.y, camera_position.z])).unwrap();
+        audio_sender.send(AudioCommand::SetListenerPosition([camera_position.x, camera_position.y, camera_position.z])).unwrap();
 
         //Draw ImGui
         if do_imgui {
@@ -1628,6 +1648,7 @@ fn main() {
                             }
                         }
                         
+                        //Free the vertex and index buffers
                         let mut bufs = [0, 0];
                         gl::GetIntegerv(gl::ARRAY_BUFFER_BINDING, &mut bufs[0]);
                         gl::GetIntegerv(gl::ELEMENT_ARRAY_BUFFER_BINDING, &mut bufs[1]);
