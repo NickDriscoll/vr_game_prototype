@@ -39,6 +39,10 @@ use crate::structs::*;
 #[cfg(windows)]
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
 
+fn vec_to_array(vec: glm::TVec3<f32>) -> [f32; 3] {    
+    [vec.x, vec.y, vec.z]
+}
+
 //Sets a flag to a value or unsets the flag if it already is the value
 fn handle_radio_flag<F: Eq + Default>(current_flag: &mut F, new_flag: F) {
     if *current_flag != new_flag {
@@ -322,106 +326,6 @@ fn main() {
         }
         _ => {}
     }
-
-    //Init audio system
-    let (audio_sender, audio_receiver) = mpsc::channel();
-    thread::spawn(move || {
-        let alto_context = match alto::Alto::load_default() {
-            Ok(a) => { 
-                let alto = a;
-                match alto.default_output() {
-                    Some(string) => {
-                        match alto.open(Some(&string)) {
-                            Ok(dev) => {
-                                match dev.new_context(None) {
-                                    Ok(ctxt) => {
-                                        println!("Successfully initialized the OpenAL context.");
-                                        ctxt
-                                    }
-                                    Err(e) => {
-                                        println!("Error creating OpenAL context: {}", e);
-                                        return;
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                println!("Error opening default audio device: {}", e);
-                                return;
-                            }
-                        }
-                    }
-                    None => {
-                        println!("Couldn't query for default audio device.");
-                        return;
-                    }
-                }
-            }
-            Err(e) => {
-                println!("Error initializing OpenAL: {}", e);
-                return;
-            }
-        };
-        
-        const MUSIC_PATH: &str = "music/spirit_temple.mp3";
-        let mut decoder = mp3::Decoder::new(File::open(MUSIC_PATH).unwrap());
-
-        let mut kanye_source = alto_context.new_streaming_source().unwrap();
-        let mut queued = -1;
-        let mut processed = -1;
-        let mut flag = false;
-        //kanye_source.set_position([57.56477, 9.46257, 4.1154327]).unwrap();
-        loop {
-            //Process all commands from the main thread
-            while let Ok(command) = audio_receiver.try_recv() {
-                match command {
-                    AudioCommand::SetListenerPosition(pos) => {                        
-                        alto_context.set_position(pos).unwrap();
-                    }
-                }
-            }
-
-            const MAX_FRAMES_QUEUED: ALint = 10;
-            if kanye_source.buffers_queued() == MAX_FRAMES_QUEUED && !flag {
-                kanye_source.play();
-                flag = true;
-            }
-
-            if kanye_source.buffers_queued() < MAX_FRAMES_QUEUED {
-                match decoder.next_frame() {
-                    Ok(frame) => {
-                        let mut mono_samples = Vec::with_capacity(frame.data.len());
-
-                        for sample in frame.data {
-                            mono_samples.push(
-                                alto::Mono {
-                                    center: sample
-                                }
-                            )
-                        }
-
-                        if let Ok(sample_buffer) = alto_context.new_buffer(mono_samples, frame.sample_rate * 2) {
-                            kanye_source.queue_buffer(sample_buffer).unwrap();
-                        }
-                    }
-                    Err(e) => {
-                        match e {
-                            mp3::Error::Eof => {
-                                println!("Looping the mp3");
-                                decoder.reader_mut().seek(SeekFrom::Start(0)).unwrap();
-                            }
-                            _ => { println!("Error decoding mp3 frame: {}", e); }
-                        }
-                    }
-                }
-
-
-            }
-
-            while kanye_source.buffers_processed() > 0 {
-                kanye_source.unqueue_buffer().unwrap();
-            }
-        }
-    });
 
     //Initializing GLFW and creating a window
 
@@ -884,6 +788,122 @@ fn main() {
     let mut last_xr_render_time = xr::Time::from_nanos(0);
     let mut elapsed_time = 0.0;
 
+    //Init audio system
+    let (audio_sender, audio_receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let alto_context = match alto::Alto::load_default() {
+            Ok(a) => { 
+                let alto = a;
+                match alto.default_output() {
+                    Some(string) => {
+                        match alto.open(Some(&string)) {
+                            Ok(dev) => {
+                                match dev.new_context(None) {
+                                    Ok(ctxt) => {
+                                        println!("Successfully initialized the OpenAL context.");
+                                        ctxt
+                                    }
+                                    Err(e) => {
+                                        println!("Error creating OpenAL context: {}", e);
+                                        return;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                println!("Error opening default audio device: {}", e);
+                                return;
+                            }
+                        }
+                    }
+                    None => {
+                        println!("Couldn't query for default audio device.");
+                        return;
+                    }
+                }
+            }
+            Err(e) => {
+                println!("Error initializing OpenAL: {}", e);
+                return;
+            }
+        };
+        
+        const MUSIC_PATH: &str = "music/relaxing_botw_mono.mp3";
+        let mut decoder = mp3::Decoder::new(File::open(MUSIC_PATH).unwrap());
+
+        let mut kanye_source = alto_context.new_streaming_source().unwrap();
+        let mut flag = false;
+        loop {
+            //Process all commands from the main thread
+            while let Ok(command) = audio_receiver.try_recv() {
+                match command {
+                    AudioCommand::SetListenerPosition(pos) => { alto_context.set_position(pos).unwrap(); }
+                    AudioCommand::SetListenerVelocity(vel) => { alto_context.set_velocity(vel).unwrap(); }
+                    AudioCommand::SetListenerOrientation(ori) => { alto_context.set_orientation(ori).unwrap(); }
+                    AudioCommand::SetSourcePosition(pos, i) => { kanye_source.set_position(pos).unwrap(); }
+                }
+            }
+
+            const MAX_FRAMES_QUEUED: ALint = 10;
+            if kanye_source.buffers_queued() == MAX_FRAMES_QUEUED && !flag {
+                kanye_source.play();
+                flag = true;
+            }
+
+            if kanye_source.buffers_queued() < MAX_FRAMES_QUEUED {
+                match decoder.next_frame() {
+                    Ok(frame) => {
+                        if frame.channels == 1 {
+                            let mut mono_samples = Vec::with_capacity(frame.data.len());
+                            for sample in frame.data {
+                                mono_samples.push(
+                                    alto::Mono {
+                                        center: sample
+                                    }
+                                )
+                            }
+
+                            if let Ok(sample_buffer) = alto_context.new_buffer(mono_samples, frame.sample_rate) {
+                                kanye_source.queue_buffer(sample_buffer).unwrap();
+                            }
+                        } else if frame.channels == 2 {
+                            let mut stereo_samples = Vec::with_capacity(frame.data.len());
+                            for i in (0..frame.data.len()).step_by(2) {
+                                stereo_samples.push(
+                                    alto::Stereo {
+                                        left: frame.data[i],
+                                        right: frame.data[i + 1]
+                                    }
+                                );
+                            }
+
+                            if let Ok(sample_buffer) = alto_context.new_buffer(stereo_samples, frame.sample_rate) {
+                                kanye_source.queue_buffer(sample_buffer).unwrap();
+                            }
+                        } else {
+                            println!("Audio must have one or two channels.");
+                            return;
+                        }
+                    }
+                    Err(e) => {
+                        match e {
+                            mp3::Error::Eof => {
+                                println!("Looping the mp3");
+                                decoder.reader_mut().seek(SeekFrom::Start(0)).unwrap();
+                            }
+                            _ => { println!("Error decoding mp3 frame: {}", e); }
+                        }
+                    }
+                }
+
+
+            }
+
+            while kanye_source.buffers_processed() > 0 {
+                kanye_source.unqueue_buffer().unwrap();
+            }
+        }
+    });
+
     //Main loop
     while !window.should_close() {
         let imgui_io = imgui_context.io_mut();
@@ -1184,6 +1204,8 @@ fn main() {
         if let Some(entity) = scene_data.entities.get_mut_element(dragon_entity_index) {
             let mm = glm::translation(&glm::vec3(0.0, 0.0, f32::sin(elapsed_time * 1.5) + 1.0)) * glm::translation(&dragon_position) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
             unsafe { entity.update_single_transform(0, &mm); }
+            let pos = [mm[12], mm[13], mm[14]];
+            audio_sender.send(AudioCommand::SetSourcePosition(pos, 0)).unwrap();
         }
 
         //Update tracking space location
@@ -1310,12 +1332,22 @@ fn main() {
         shadow_view = glm::look_at(&(scene_data.sun_direction * 20.0), &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
 
         player.last_tracked_segment = player.tracked_segment.clone();
+
+        //Tell the audio thread about the current world state
+        let camera_vel = camera_position - last_camera_position;
+        let camera_forward = glm::vec4_to_vec3(&(screen_state.get_world_from_view() * glm::vec4(0.0, 0.0, -1.0, 0.0)));
+        let camera_up = glm::vec4_to_vec3(&(screen_state.get_world_from_view() * glm::vec4(0.0, 1.0, 0.0, 0.0)));
+
+        let camera_vel = vec_to_array(camera_vel);
+        let camera_forward = vec_to_array(camera_forward);
+        let camera_up = vec_to_array(camera_up);
+        audio_sender.send(AudioCommand::SetListenerPosition([camera_position.x, camera_position.y, camera_position.z])).unwrap();
+        audio_sender.send(AudioCommand::SetListenerVelocity(camera_vel)).unwrap();
+        audio_sender.send(AudioCommand::SetListenerOrientation((camera_forward, camera_up))).unwrap();
+
         last_camera_position = camera_position;
 
         //Pre-render phase
-
-        //Tell the audio thread about the current world state
-        audio_sender.send(AudioCommand::SetListenerPosition([camera_position.x, camera_position.y, camera_position.z])).unwrap();
 
         //Draw ImGui
         if do_imgui {

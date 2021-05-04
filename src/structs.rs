@@ -5,7 +5,10 @@ use std::io::prelude::*;
 use crate::collision::*;
 
 pub enum AudioCommand {
-    SetListenerPosition([f32; 3])
+    SetListenerPosition([f32; 3]),
+    SetListenerVelocity([f32; 3]),
+    SetListenerOrientation(([f32; 3], [f32; 3])),
+    SetSourcePosition([f32; 3], usize)
 }
 
 #[derive(PartialEq, Eq)]
