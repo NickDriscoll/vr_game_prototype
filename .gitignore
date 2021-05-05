@@ -3,6 +3,7 @@
 /.idea
 /.vscode
 /source_maps
+/screenshots
 settings.cfg
 *.ini
 *.7z

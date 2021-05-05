@@ -16,9 +16,11 @@ gl = "*"
 nalgebra-glm = "*"
 raw-window-handle = "*"
 rand = "0.7.3"
+image = "*"
 imgui = "0.7.0"
 alto = "3.0.4"
 minimp3 = "0.5.1"
+chrono = "*"
 
 [dependencies.openxr]
 version = "*"

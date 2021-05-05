@@ -13,13 +13,17 @@ use render::{compute_shadow_cascade_matrices, render_main_scene, render_cascaded
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
 use alto::{sys::ALint, AltoError, Source};
+use chrono::offset::Local;
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
 use gl::types::*;
+use image::{ImageBuffer, DynamicImage};
 use imgui::{ColorEdit, DrawCmd, EditableColor, FontAtlasRefMut, Slider, TextureId, im_str};
 use core::ops::RangeInclusive;
 use std::collections::HashMap;
+use std::fs;
 use std::fs::File;
 use std::io::{ErrorKind, Seek, SeekFrom};
+use std::path::Path;
 use std::process::exit;
 use std::mem::size_of;
 use std::os::raw::c_void;
@@ -776,6 +780,7 @@ fn main() {
     let mut hmd_pov = false;
     let mut do_vsync = true;
     let mut do_imgui = true;
+    let mut screenshot_this_frame = false;
     if let Some(_) = &xr_instance { 
         hmd_pov = true;
         do_vsync = false;
@@ -1439,6 +1444,10 @@ fn main() {
                     println!("Camera position on frame {}: ({}, {}, {})", frame_count, camera_position.x, camera_position.y, camera_position.z);
                 }
 
+                if imgui_ui.button(im_str!("Take screenshot"), [0.0, 32.0]) {
+                    screenshot_this_frame = true;
+                }
+
                 //Do quit button
                 if imgui_ui.button(im_str!("Quit"), [0.0, 32.0]) { window.set_should_close(true); }
 
@@ -1639,6 +1648,36 @@ fn main() {
                 );
                 default_framebuffer.bind();
                 render_main_scene(&scene_data, &freecam_viewdata);
+            }
+
+            //Take a screenshot here as to not get the dev gui in it
+            if screenshot_this_frame {
+                let mut buffer = vec![0u8; (screen_state.get_window_size().x * screen_state.get_window_size().y) as usize * 4];
+                gl::ReadPixels(0, 0, screen_state.get_window_size().x as GLint, screen_state.get_window_size().y as GLint, gl::RGBA, gl::UNSIGNED_BYTE, buffer.as_mut_slice() as *mut [u8] as *mut c_void);
+
+                let dynamic_image = match ImageBuffer::from_raw(screen_state.get_window_size().x, screen_state.get_window_size().y, buffer) {
+                    Some(im) => { Some(DynamicImage::ImageRgba8(im).flipv()) }
+                    None => { 
+                        println!("Unable to convert raw to image::DynamicImage");
+                        None
+                    }
+                };
+
+                if let Some(dyn_image) = dynamic_image {
+                    //Create the screenshot directory if there isn't one
+                    let screenshot_dir = "screenshots";
+                    if !Path::new(screenshot_dir).is_dir() {
+                        if let Err(e) = fs::create_dir(screenshot_dir) {
+                            println!("Unable to create screenshot directory: {}", e);
+                        }
+                    }
+
+                    if let Err(e) = dyn_image.save(format!("{}/{}.png", screenshot_dir, Local::now().format("%F_%H%M%S"))) {
+                        println!("Error taking screenshot: {}", e);
+                    }
+                }
+
+                screenshot_this_frame = false;
             }
 
             //Render 2D elements
