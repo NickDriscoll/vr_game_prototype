@@ -598,7 +598,7 @@ fn main() {
 
 	//Create the skybox cubemap
 	scene_data.skybox_cubemap = unsafe {
-		let name = "siege";
+		let name = "totality";
 		let paths = [
 			&format!("skyboxes/{}_rt.tga", name),		//Right side
 			&format!("skyboxes/{}_lf.tga", name),		//Left side
@@ -772,7 +772,6 @@ fn main() {
     let mut is_fullscreen = false;
     let mut wireframe = false;
     let mut true_wireframe = false;
-    //let mut placing = false;
     let mut click_action = ClickAction::None;
     let mut hmd_pov = false;
     let mut do_vsync = true;
@@ -827,7 +826,7 @@ fn main() {
             }
         };
         
-        const MUSIC_PATH: &str = "music/relaxing_botw_mono.mp3";
+        const MUSIC_PATH: &str = "music/sample_mono.mp3";
         let mut decoder = mp3::Decoder::new(File::open(MUSIC_PATH).unwrap());
 
         let mut kanye_source = alto_context.new_streaming_source().unwrap();
@@ -859,7 +858,7 @@ fn main() {
                                     alto::Mono {
                                         center: sample
                                     }
-                                )
+                                );
                             }
 
                             if let Ok(sample_buffer) = alto_context.new_buffer(mono_samples, frame.sample_rate) {
@@ -1333,17 +1332,34 @@ fn main() {
 
         player.last_tracked_segment = player.tracked_segment.clone();
 
-        //Tell the audio thread about the current world state
-        let camera_vel = camera_position - last_camera_position;
-        let camera_forward = glm::vec4_to_vec3(&(screen_state.get_world_from_view() * glm::vec4(0.0, 0.0, -1.0, 0.0)));
-        let camera_up = glm::vec4_to_vec3(&(screen_state.get_world_from_view() * glm::vec4(0.0, 1.0, 0.0, 0.0)));
+        //Tell the audio thread about the listener's current state
+        {
+            //Just doing the match here to determine if the listener should be the HMD or the free camera
+            let (listener_pos, listener_vel, listener_forward, listener_up) = match &xr_instance {
+                Some(_) => {
+                    let head_pose_mat = match xrutil::locate_space(&view_space, &tracking_space, last_xr_render_time) {
+                        Some(space) => { xrutil::pose_to_mat4(&space, &world_from_tracking) }
+                        None => { glm::identity() }
+                    };
 
-        let camera_vel = vec_to_array(camera_vel);
-        let camera_forward = vec_to_array(camera_forward);
-        let camera_up = vec_to_array(camera_up);
-        audio_sender.send(AudioCommand::SetListenerPosition([camera_position.x, camera_position.y, camera_position.z])).unwrap();
-        audio_sender.send(AudioCommand::SetListenerVelocity(camera_vel)).unwrap();
-        audio_sender.send(AudioCommand::SetListenerOrientation((camera_forward, camera_up))).unwrap();
+                    let pos = player.tracked_segment.p0;
+                    let vel = pos - player.last_tracked_segment.p0;
+                    let forward = glm::vec4_to_vec3(&(head_pose_mat * glm::vec4(0.0, 0.0, -1.0, 0.0)));
+                    let up = glm::vec4_to_vec3(&(head_pose_mat * glm::vec4(0.0, 1.0, 0.0, 0.0)));
+                    (vec_to_array(pos), vec_to_array(vel), vec_to_array(forward), vec_to_array(up))
+                }
+                None => {
+                    let camera_vel = camera_position - last_camera_position;
+                    let camera_forward = glm::vec4_to_vec3(&(screen_state.get_world_from_view() * glm::vec4(0.0, 0.0, -1.0, 0.0)));
+                    let camera_up = glm::vec4_to_vec3(&(screen_state.get_world_from_view() * glm::vec4(0.0, 1.0, 0.0, 0.0)));
+                    
+                    (vec_to_array(camera_position), vec_to_array(camera_vel), vec_to_array(camera_forward), vec_to_array(camera_up))
+                }
+            };
+            audio_sender.send(AudioCommand::SetListenerPosition(listener_pos)).unwrap();
+            audio_sender.send(AudioCommand::SetListenerVelocity(listener_vel)).unwrap();
+            audio_sender.send(AudioCommand::SetListenerOrientation((listener_forward, listener_up))).unwrap();
+        }
 
         last_camera_position = camera_position;
 
