@@ -3,6 +3,7 @@ extern crate minimp3 as mp3;
 extern crate nalgebra_glm as glm;
 extern crate openxr as xr;
 extern crate ozy_engine as ozy;
+extern crate tinyfiledialogs as tfd;
 
 mod collision;
 mod structs;
@@ -29,6 +30,7 @@ use std::mem::size_of;
 use std::os::raw::c_void;
 use std::ptr;
 use std::sync::mpsc;
+use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::Instant;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
@@ -42,6 +44,13 @@ use crate::structs::*;
 
 #[cfg(windows)]
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
+
+//Sends the message or prints an error
+fn send_or_error<T>(s: &Sender<T>, message: T) {
+    if let Err(e) = s.send(message) {
+        println!("Error sending message to thread: {}", e);
+    }
+}
 
 fn vec_to_array(vec: glm::TVec3<f32>) -> [f32; 3] {    
     [vec.x, vec.y, vec.z]
@@ -597,12 +606,10 @@ fn main() {
         cascade_distances
     };
 
-    //Create the cube that will be user to render the skybox
-	scene_data.skybox_vao = ozy::prims::skybox_cube_vao();
-
 	//Create the skybox cubemap
+	scene_data.skybox_vao = ozy::prims::skybox_cube_vao();
 	scene_data.skybox_cubemap = unsafe {
-		let name = "totality";
+		let name = "siege";
 		let paths = [
 			&format!("skyboxes/{}_rt.tga", name),		//Right side
 			&format!("skyboxes/{}_lf.tga", name),		//Left side
@@ -622,6 +629,7 @@ fn main() {
 		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
 
 		//Place each piece of the skybox on the correct face
+        //gl::TEXTURE_CUBEMAP_POSITIVE_X + i gets you the right cube face
 		for i in 0..6 {
 			let image_data = glutil::image_data_from_path(paths[i], ColorSpace::Gamma);
 			gl::TexImage2D(gl::TEXTURE_CUBE_MAP_POSITIVE_X + i as u32,
@@ -762,7 +770,7 @@ fn main() {
     }
 
     //Create dragon
-    let mut dragon_position = glm::vec3(19.209993, 0.5290663, 0.0);
+    let mut dragon_position = glm::vec3(56.009315, 21.064762, 17.284132);
     let dragon_entity_index = scene_data.entities.insert(RenderEntity::from_ozy("models/dragon.ozy", standard_program, 1, &mut texture_keeper, &default_tex_params));
 
     //Create controller entities
@@ -793,6 +801,7 @@ fn main() {
     let mut elapsed_time = 0.0;
 
     //Init audio system
+    let mut bgm_volume = 50.0;
     let (audio_sender, audio_receiver) = mpsc::channel();
     thread::spawn(move || {
         let alto_context = match alto::Alto::load_default() {
@@ -830,12 +839,23 @@ fn main() {
                 return;
             }
         };
-        
-        const MUSIC_PATH: &str = "music/sample_mono.mp3";
-        let mut decoder = mp3::Decoder::new(File::open(MUSIC_PATH).unwrap());
+        alto_context.set_gain(bgm_volume).unwrap();
+
+        let mut decoder = {        
+            //const MUSIC_PATH: &str = "music/sample_mono.mp3";
+            const MUSIC_PATH: &str = "music/王と王妃と奴隷.mp3";
+            let bgm_file = match File::open(MUSIC_PATH) {
+                Ok(f) => { f }
+                Err(e) => {
+                    println!("Couldn't open bgm file: {}", e);
+                    return;
+                }
+            };
+            mp3::Decoder::new(bgm_file)
+        };
 
         let mut kanye_source = alto_context.new_streaming_source().unwrap();
-        let mut flag = false;
+        let mut kickstart_bgm = false;
         loop {
             //Process all commands from the main thread
             while let Ok(command) = audio_receiver.try_recv() {
@@ -844,13 +864,40 @@ fn main() {
                     AudioCommand::SetListenerVelocity(vel) => { alto_context.set_velocity(vel).unwrap(); }
                     AudioCommand::SetListenerOrientation(ori) => { alto_context.set_orientation(ori).unwrap(); }
                     AudioCommand::SetSourcePosition(pos, i) => { kanye_source.set_position(pos).unwrap(); }
+                    AudioCommand::SetListenerGain(volume) => {
+                        let gain_factor = (f32::exp(volume / 100.0) - 1.0) / (glm::e::<f32>() - 1.0);
+                        alto_context.set_gain(gain_factor).unwrap();
+                    }
+                    AudioCommand::SelectNewBGM => {
+                        kanye_source.pause();
+                        match tfd::open_file_dialog("Choose bgm", "music/", Some((&["*.mp3"], "mp3 files (*.mp3)"))) {
+                            Some(res) => {
+                                kanye_source.stop();
+                                let bgm_file = match File::open(res) {
+                                    Ok(f) => { f }
+                                    Err(e) => {
+                                        println!("Couldn't open bgm file: {}", e);
+                                        return;
+                                    }
+                                };
+                                decoder = mp3::Decoder::new(bgm_file);
+                            
+                                //Clear out any residual sound data from the old mp3
+                                while kanye_source.buffers_queued() > 0 {
+                                    kanye_source.unqueue_buffer().unwrap();
+                                }
+                                kickstart_bgm = false;
+                            }
+                            None => { kanye_source.play(); }
+                        }
+                    }
                 }
             }
 
             const MAX_FRAMES_QUEUED: ALint = 10;
-            if kanye_source.buffers_queued() == MAX_FRAMES_QUEUED && !flag {
+            if kanye_source.buffers_queued() == MAX_FRAMES_QUEUED && !kickstart_bgm {
                 kanye_source.play();
-                flag = true;
+                kickstart_bgm = true;
             }
 
             if kanye_source.buffers_queued() < MAX_FRAMES_QUEUED {
@@ -1204,12 +1251,12 @@ fn main() {
             }
         }
 
-        //Spin the dragon
+        //Construct the dragon's model matrix
         if let Some(entity) = scene_data.entities.get_mut_element(dragon_entity_index) {
-            let mm = glm::translation(&glm::vec3(0.0, 0.0, f32::sin(elapsed_time * 1.5) + 1.0)) * glm::translation(&dragon_position) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0));
+            let mm = glm::translation(&dragon_position) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0)) * ozy::routines::uniform_scale(0.5);
             unsafe { entity.update_single_transform(0, &mm); }
             let pos = [mm[12], mm[13], mm[14]];
-            audio_sender.send(AudioCommand::SetSourcePosition(pos, 0)).unwrap();
+            send_or_error(&audio_sender, AudioCommand::SetSourcePosition(pos, 0));
         }
 
         //Update tracking space location
@@ -1263,6 +1310,8 @@ fn main() {
                     if robust_point_in_triangle(&point, &triangle) {
                         if glm::dot(&triangle.normal, &glm::vec3(0.0, 0.0, 1.0)) >= MIN_NORMAL_LIKENESS {
                             player.tracking_position += point - player.tracked_segment.p1;
+                            player.tracking_velocity = glm::vec3(0.0, 0.0, player.tracking_velocity.z);
+                            player.jumps_remaining = Player::MAX_JUMPS;
                             player.movement_state = MoveState::Grounded;
                         } else {
                             println!("failed that test");
@@ -1308,9 +1357,9 @@ fn main() {
                 if robust_point_in_triangle(&glm::vec4_to_vec3(&point_on_plane), &triangle) && f32::abs(dist1) < player.radius {
                     player.tracking_position += triangle.normal * (player.radius - dist1);
                     if glm::dot(&triangle.normal, &glm::vec3(0.0, 0.0, 1.0)) >= MIN_NORMAL_LIKENESS {
-                        player.movement_state = MoveState::Grounded;
+                        player.tracking_velocity = glm::zero();
                         player.jumps_remaining = Player::MAX_JUMPS;
-                        player.tracking_velocity.z = 0.0;
+                        player.movement_state = MoveState::Grounded;
                     }
                 } else {
                     let (best_dist, best_point) = closest_point_on_triangle(&capsule_ref, &triangle);
@@ -1319,9 +1368,9 @@ fn main() {
                         let push_dir = glm::normalize(&(capsule_ref - best_point));
                         player.tracking_position += push_dir * (player.radius - best_dist);
                         if glm::dot(&push_dir, &glm::vec3(0.0, 0.0, 1.0)) >= MIN_NORMAL_LIKENESS {
-                            player.movement_state = MoveState::Grounded;
+                            player.tracking_velocity = glm::zero();
                             player.jumps_remaining = Player::MAX_JUMPS;
-                            player.tracking_velocity.z = 0.0;
+                            player.movement_state = MoveState::Grounded;
                         }
                     }
                 }
@@ -1361,9 +1410,11 @@ fn main() {
                     (vec_to_array(camera_position), vec_to_array(camera_vel), vec_to_array(camera_forward), vec_to_array(camera_up))
                 }
             };
-            audio_sender.send(AudioCommand::SetListenerPosition(listener_pos)).unwrap();
-            audio_sender.send(AudioCommand::SetListenerVelocity(listener_vel)).unwrap();
-            audio_sender.send(AudioCommand::SetListenerOrientation((listener_forward, listener_up))).unwrap();
+
+            send_or_error(&audio_sender, AudioCommand::SetListenerPosition(listener_pos));
+            send_or_error(&audio_sender, AudioCommand::SetListenerVelocity(listener_vel));
+            send_or_error(&audio_sender, AudioCommand::SetListenerOrientation((listener_forward, listener_up)));
+            send_or_error(&audio_sender, AudioCommand::SetListenerGain(bgm_volume));
         }
 
         last_camera_position = camera_position;
@@ -1410,6 +1461,14 @@ fn main() {
 
                 let sun_color_editor = ColorEdit::new(im_str!("Sun color"), EditableColor::Float3(&mut scene_data.sun_color));
                 if sun_color_editor.build(&imgui_ui) {}
+
+                imgui_ui.separator();
+
+                imgui_ui.text(im_str!("Music controls"));
+                Slider::new(im_str!("BGM Volume")).range(RangeInclusive::new(0.0, 100.0)).build(&imgui_ui, &mut bgm_volume);
+                if imgui_ui.button(im_str!("Choose mp3"), [0.0, 32.0]) {
+                    send_or_error(&audio_sender, AudioCommand::SelectNewBGM);
+                }
 
                 imgui_ui.separator();
                 

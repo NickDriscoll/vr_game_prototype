@@ -8,7 +8,9 @@ pub enum AudioCommand {
     SetListenerPosition([f32; 3]),
     SetListenerVelocity([f32; 3]),
     SetListenerOrientation(([f32; 3], [f32; 3])),
-    SetSourcePosition([f32; 3], usize)
+    SetSourcePosition([f32; 3], usize),
+    SetListenerGain(f32),
+    SelectNewBGM
 }
 
 #[derive(PartialEq, Eq)]

@@ -21,6 +21,7 @@ imgui = "0.7.0"
 alto = "3.0.4"
 minimp3 = "0.5.1"
 chrono = "*"
+tinyfiledialogs = "3.3.10"
 
 [dependencies.openxr]
 version = "*"

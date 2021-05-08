@@ -304,7 +304,7 @@ pub fn compute_shadow_cascade_matrices(shadow_cascade_distances: &[f32; SHADOW_C
 
         let projection_depth = 10.0;
         let shadow_projection = glm::ortho(
-            min_x, max_x, min_y, max_y, -10.0 * projection_depth, projection_depth * 4.0
+            min_x, max_x, min_y, max_y, -12.0 * projection_depth, projection_depth * 6.0
         );
 
         out_mats[i] = shadow_projection * shadow_view;
