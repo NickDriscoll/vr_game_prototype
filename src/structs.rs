@@ -10,7 +10,8 @@ pub enum AudioCommand {
     SetListenerOrientation(([f32; 3], [f32; 3])),
     SetSourcePosition([f32; 3], usize),
     SetListenerGain(f32),
-    SelectNewBGM
+    SelectNewBGM,
+    PlayPause
 }
 
 #[derive(PartialEq, Eq)]
@@ -38,7 +39,7 @@ pub struct Player {
     pub movement_state: MoveState,
     pub radius: f32,
     pub jumps_remaining: usize,
-    pub was_holding_left_trigger: bool
+    pub was_holding_jump: bool
 }
 
 impl Player {

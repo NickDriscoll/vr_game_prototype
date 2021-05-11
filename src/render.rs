@@ -174,7 +174,7 @@ impl ViewData {
 
 //This is the function that renders the image you would actually see on screen/in HMD
 pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
-    let texture_map_names = ["albedo_map", "normal_map", "roughness_map", "shadow_map"];
+    let texture_map_names = ["albedo_tex", "normal_tex", "roughness_tex", "shadow_map"];
     let sun_shadow_map = &scene_data.sun_shadow_map;
 
     //Main scene rendering
@@ -304,7 +304,7 @@ pub fn compute_shadow_cascade_matrices(shadow_cascade_distances: &[f32; SHADOW_C
 
         let projection_depth = 10.0;
         let shadow_projection = glm::ortho(
-            min_x, max_x, min_y, max_y, -12.0 * projection_depth, projection_depth * 6.0
+            min_x, max_x, min_y, max_y, -8.0 * projection_depth, projection_depth * 6.0
         );
 
         out_mats[i] = shadow_projection * shadow_view;

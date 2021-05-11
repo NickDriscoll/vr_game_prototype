@@ -235,7 +235,7 @@ pub fn ray_hit_plane(ray_origin: &glm::TVec3<f32>, ray_direction: &glm::TVec3<f3
 }
 
 //Returns the first intersection point between a ray and terrain mesh
-pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec3<f32>, ray_direction: &glm::TVec3<f32>) -> Option<glm::TVec3<f32>> {
+pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec3<f32>, ray_direction: &glm::TVec3<f32>) -> Option<(f32, glm::TVec3<f32>)> {
     let mut smallest_t = f32::INFINITY;
     let mut closest_intersection = None;
     for i in (0..terrain.indices.len()).step_by(3) {
@@ -250,9 +250,9 @@ pub fn ray_hit_terrain(terrain: &Terrain, ray_origin: &glm::TVec3<f32>, ray_dire
         };
 
         //Robust triangle-point collision in 3D
-        if t > 0.0 && t < smallest_t && robust_point_in_triangle(&intersection, &triangle) {
+        if t >= 0.0 && t < smallest_t && robust_point_in_triangle(&intersection, &triangle) {
             smallest_t = t;
-            closest_intersection = Some(intersection);            
+            closest_intersection = Some((smallest_t, intersection));
         }
     }
 
@@ -331,4 +331,10 @@ pub fn closest_point_on_triangle(test_point: &glm::TVec3<f32>, triangle: &Triang
     update_best(&test_point, &triangle.b, &triangle.c);
     update_best(&test_point, &triangle.c, &triangle.a);
     (best_dist, best_point)
+}
+
+pub fn projected_point_on_plane(point: &glm::TVec3<f32>, plane: &Plane) -> (f32, glm::TVec3<f32>) {
+    let dist1 = point_plane_distance(point, plane);
+    let p = point + plane.normal * -dist1 ;
+    (dist1, glm::vec3(p.x, p.y, p.z))
 }

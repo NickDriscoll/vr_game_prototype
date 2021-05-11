@@ -24,10 +24,10 @@ in float clip_space_z;
 
 out vec4 frag_color;
 
-//Material maps
-uniform sampler2D albedo_map;
-uniform sampler2D normal_map;
-uniform sampler2D roughness_map;
+//Material textures
+uniform sampler2D albedo_tex;
+uniform sampler2D normal_tex;
+uniform sampler2D roughness_tex;
 
 uniform sampler2D shadow_map;                       //Shadow map texture
 uniform vec3 view_position;                         //World space position of the camera
@@ -51,7 +51,7 @@ vec4 simple_diffuse(vec3 color, float diffuse, float ambient) {
 
 float determine_shadowed(vec3 f_shadow_pos, int cascade) {
     //float bias = 0.0001;
-    float bias = 0.01 * (1.0 - max(0.0, dot(tangent_space_normal, tangent_sun_direction)));
+    float bias = 0.005 * (1.0 - max(0.0, dot(tangent_space_normal, tangent_sun_direction)));
     vec2 sample_uv = f_shadow_pos.xy;
     sample_uv.x = sample_uv.x * SHADOW_CASCADES_RECIPROCAL;
     sample_uv.x += cascade * SHADOW_CASCADES_RECIPROCAL;
@@ -61,11 +61,11 @@ float determine_shadowed(vec3 f_shadow_pos, int cascade) {
 
 void main() {
     //Sample the albedo map for the fragment's base color
-    vec3 albedo = texture(albedo_map, scaled_uvs).xyz;
+    vec3 albedo = texture(albedo_tex, scaled_uvs).xyz;
 
     //Compute this frag's tangent space normal
     if (complex_normals) {
-        vec3 sampled_normal = texture(normal_map, scaled_uvs).xyz;
+        vec3 sampled_normal = texture(normal_tex, scaled_uvs).xyz;
         tangent_space_normal = normalize(sampled_normal * 2.0 - 1.0);
     } else {
         tangent_space_normal = vec3(0.0, 0.0, 1.0);
@@ -162,7 +162,7 @@ void main() {
 
     //Compute specular light w/ blinn-phong
     float specular = 0.0;
-    float roughness = texture(roughness_map, scaled_uvs).x;
+    float roughness = texture(roughness_tex, scaled_uvs).x;
     vec3 view_direction = normalize(tangent_view_position - tangent_space_pos);
     vec3 halfway = normalize(view_direction + tangent_sun_direction);
     float specular_angle = max(0.0, dot(halfway, tangent_space_normal));

@@ -13,7 +13,7 @@ mod xrutil;
 use render::{compute_shadow_cascade_matrices, render_main_scene, render_cascaded_shadow_map, CascadedShadowMap, FragmentFlag, RenderEntity, SceneData, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
-use alto::{sys::ALint, AltoError, Source};
+use alto::{sys::ALint, AltoError, Source, SourceState};
 use chrono::offset::Local;
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
 use gl::types::*;
@@ -71,7 +71,7 @@ fn reset_player_position(player: &mut Player) {
     player.tracked_segment = LineSegment::zero();
     player.last_tracked_segment = LineSegment::zero();
     player.jumps_remaining = Player::MAX_JUMPS;
-    player.movement_state = MoveState::Grounded;
+    player.movement_state = MoveState::Falling;
 }
 
 fn resize_main_window(window: &mut Window, framebuffer: &mut Framebuffer, screen_state: &mut ScreenState, size: glm::TVec2<u32>, pos: (i32, i32), window_mode: WindowMode) {    
@@ -93,6 +93,8 @@ fn write_matrix_to_buffer(buffer: &mut [f32], index: usize, matrix: glm::TMat4<f
 }
 
 fn main() {
+    let Z_UP = glm::vec3(0.0, 0.0, 1.0);
+
     //Do a bunch of OpenXR initialization
 
     //Initialize the configuration data
@@ -250,8 +252,8 @@ fn main() {
     //Create the XrActions
     let left_hand_pose_action = xrutil::make_action(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_pose", "Left hand pose");
     let left_hand_aim_action = xrutil::make_action::<xr::Posef>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_aim", "Left hand aim");
-    let left_trigger_action = xrutil::make_action::<f32>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_trigger", "Left hand trigger");
-    let right_trigger_action = xrutil::make_action::<f32>(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_trigger", "Right hand trigger");
+    let left_gadget_action = xrutil::make_action::<f32>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_gadget", "Left hand gadget");
+    let right_gadget_action = xrutil::make_action::<f32>(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_gadget", "Right hand gadget");
     let right_hand_grip_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_pose", "Right hand pose");
     let right_hand_aim_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_aim", "Right hand aim");
     let go_home_action = xrutil::make_action::<bool>(&right_hand_subaction_path, &xr_controller_actionset, "item_menu", "Interact with item menu");
@@ -261,8 +263,8 @@ fn main() {
     match (&xr_instance,
            &left_hand_pose_action,
            &left_hand_aim_action,
-           &left_trigger_action,
-           &right_trigger_action,
+           &left_gadget_action,
+           &right_gadget_action,
            &right_hand_grip_action,
            &player_move_action,
            &left_grip_pose_path,
@@ -456,7 +458,7 @@ fn main() {
 
     //Define tracking space with z-up instead of the default y-up
     let space_pose = {
-        let quat = glm::quat_rotation(&glm::vec3(0.0, 0.0, 1.0), &glm::vec3(0.0, 1.0, 0.0));
+        let quat = glm::quat_rotation(&Z_UP, &glm::vec3(0.0, 1.0, 0.0));
         xr::Posef {
             orientation: xr::Quaternionf {
                 x: quat.coords.x,
@@ -656,16 +658,15 @@ fn main() {
 
     //Player state
     let mut player = Player {
-        tracking_position: glm::vec3(0.0, 0.0, 1.0),
+        tracking_position: glm::zero(),
         tracking_velocity: glm::zero(),
         tracked_segment: LineSegment::zero(),
         last_tracked_segment: LineSegment::zero(),
         movement_state: MoveState::Falling,
         radius: 0.15,
         jumps_remaining: Player::MAX_JUMPS,
-        was_holding_left_trigger: false
+        was_holding_jump: false
     };
-    println!("RenderEntity is {} bytes", size_of::<RenderEntity>());
 
     //Water gun state
     const MAX_WATER_PRESSURE: f32 = 30.0;
@@ -776,7 +777,7 @@ fn main() {
     //Create controller entities
     let mut wand_entity_index = 0;
     if let Some(_) = &xr_instance {
-        let entity = RenderEntity::from_ozy("models/wand.ozy", standard_program, 2, &mut texture_keeper, &default_tex_params);
+        let entity = RenderEntity::from_ozy("models/stick.ozy", standard_program, 2, &mut texture_keeper, &default_tex_params);
         wand_entity_index = scene_data.entities.insert(entity);
     }
 
@@ -789,7 +790,7 @@ fn main() {
     let mut do_vsync = true;
     let mut do_imgui = true;
     let mut screenshot_this_frame = false;
-    if let Some(_) = &xr_instance { 
+    if let Some(_) = &xr_instance {
         hmd_pov = true;
         do_vsync = false;
         glfw.set_swap_interval(SwapInterval::None);
@@ -801,9 +802,24 @@ fn main() {
     let mut elapsed_time = 0.0;
 
     //Init audio system
-    let mut bgm_volume = 50.0;
+    //const DEFAULT_MUSIC_PATH: &str = "music/王と王妃と奴隷.mp3";
+    const DEFAULT_MUSIC_PATH: &str = "music/fire_temple.mp3";
+    let mut bgm_volume = 20.0;
     let (audio_sender, audio_receiver) = mpsc::channel();
     thread::spawn(move || {
+        fn load_decoder(path: &str) -> mp3::Decoder<File> {
+            let bgm_file = match File::open(path) {
+                Ok(f) => { f }
+                Err(e) => {
+                    println!("Couldn't open bgm file: {}", e);
+                    exit(-1);
+                }
+            };
+            mp3::Decoder::new(bgm_file)
+        }
+
+        //Initializing the OpenAL context
+        //This can fail if OpenAL is not installed on the host system
         let alto_context = match alto::Alto::load_default() {
             Ok(a) => { 
                 let alto = a;
@@ -817,44 +833,34 @@ fn main() {
                                         ctxt
                                     }
                                     Err(e) => {
-                                        println!("Error creating OpenAL context: {}", e);
+                                        tfd::message_box_ok("OpenAL Error", &format!("Error creating OpenAL context: {}", e), tfd::MessageBoxIcon::Error);
                                         return;
                                     }
                                 }
                             }
                             Err(e) => {
-                                println!("Error opening default audio device: {}", e);
+                                tfd::message_box_ok("OpenAL Error", &format!("Error opening default audio device: {}", e), tfd::MessageBoxIcon::Error);
                                 return;
                             }
                         }
                     }
                     None => {
-                        println!("Couldn't query for default audio device.");
+                        tfd::message_box_ok("OpenAL Error", "Couldn't query for default audio device.", tfd::MessageBoxIcon::Error);
                         return;
                     }
                 }
             }
             Err(e) => {
-                println!("Error initializing OpenAL: {}", e);
+                tfd::message_box_ok("OpenAL Error", format!("Error initializing OpenAL: {}", e), tfd::MessageBoxIcon::Error);
                 return;
             }
         };
         alto_context.set_gain(bgm_volume).unwrap();
 
-        let mut decoder = {        
-            //const MUSIC_PATH: &str = "music/sample_mono.mp3";
-            const MUSIC_PATH: &str = "music/王と王妃と奴隷.mp3";
-            let bgm_file = match File::open(MUSIC_PATH) {
-                Ok(f) => { f }
-                Err(e) => {
-                    println!("Couldn't open bgm file: {}", e);
-                    return;
-                }
-            };
-            mp3::Decoder::new(bgm_file)
-        };
+        let mut decoder = load_decoder(DEFAULT_MUSIC_PATH);
 
         let mut kanye_source = alto_context.new_streaming_source().unwrap();
+        kanye_source.play();
         let mut kickstart_bgm = false;
         loop {
             //Process all commands from the main thread
@@ -873,14 +879,7 @@ fn main() {
                         match tfd::open_file_dialog("Choose bgm", "music/", Some((&["*.mp3"], "mp3 files (*.mp3)"))) {
                             Some(res) => {
                                 kanye_source.stop();
-                                let bgm_file = match File::open(res) {
-                                    Ok(f) => { f }
-                                    Err(e) => {
-                                        println!("Couldn't open bgm file: {}", e);
-                                        return;
-                                    }
-                                };
-                                decoder = mp3::Decoder::new(bgm_file);
+                                decoder = load_decoder(&res);
                             
                                 //Clear out any residual sound data from the old mp3
                                 while kanye_source.buffers_queued() > 0 {
@@ -891,16 +890,24 @@ fn main() {
                             None => { kanye_source.play(); }
                         }
                     }
+                    AudioCommand::PlayPause => {
+                        match kanye_source.state() {
+                            SourceState::Playing | SourceState::Initial => {
+                                kanye_source.pause();
+                            }
+                            SourceState::Paused | SourceState::Stopped => {
+                                kanye_source.play();
+                            }
+                            SourceState::Unknown(code) => { println!("Source is in an unknown state: {}", code); }
+                        }
+                    }
                 }
             }
 
-            const MAX_FRAMES_QUEUED: ALint = 10;
-            if kanye_source.buffers_queued() == MAX_FRAMES_QUEUED && !kickstart_bgm {
-                kanye_source.play();
-                kickstart_bgm = true;
-            }
+            const IDEAL_FRAMES_QUEUED: ALint = 10;
 
-            if kanye_source.buffers_queued() < MAX_FRAMES_QUEUED {
+            //If there are fewer than the ideal frames queued, queue a frame
+            if kanye_source.buffers_queued() < IDEAL_FRAMES_QUEUED {
                 match decoder.next_frame() {
                     Ok(frame) => {
                         if frame.channels == 1 {
@@ -931,7 +938,7 @@ fn main() {
                                 kanye_source.queue_buffer(sample_buffer).unwrap();
                             }
                         } else {
-                            println!("Audio must have one or two channels.");
+                            println!("Audio file must have one or two channels.");
                             return;
                         }
                     }
@@ -945,12 +952,16 @@ fn main() {
                         }
                     }
                 }
-
-
             }
 
+            //Unqueue any processed buffers
             while kanye_source.buffers_processed() > 0 {
                 kanye_source.unqueue_buffer().unwrap();
+            }
+
+            if kanye_source.buffers_queued() == IDEAL_FRAMES_QUEUED && !kickstart_bgm {
+                kanye_source.play();
+                kickstart_bgm = true;
             }
         }
     });
@@ -979,8 +990,8 @@ fn main() {
 
         //Get action states
         let left_stick_state = xrutil::get_actionstate(&xr_session, &player_move_action);
-        let left_trigger_state = xrutil::get_actionstate(&xr_session, &left_trigger_action);
-        let right_trigger_state = xrutil::get_actionstate(&xr_session, &right_trigger_action);
+        let left_trigger_state = xrutil::get_actionstate(&xr_session, &left_gadget_action);
+        let right_trigger_state = xrutil::get_actionstate(&xr_session, &right_gadget_action);
         let right_trackpad_force_state = xrutil::get_actionstate(&xr_session, &go_home_action);
 
         //Emergency escape button
@@ -1119,12 +1130,14 @@ fn main() {
             }
         }
 
-        //Calculate the velocity of tracking space
+        //Handle player inputs
         {
             const MOVEMENT_SPEED: f32 = 5.0;
             const DEADZONE_MAGNITUDE: f32 = 0.1;
+
+            //Responding to the player's input movement vector 
             if let Some(stick_state) = &left_stick_state {
-                if stick_state.changed_since_last_sync && player.movement_state != MoveState::Sliding {                            
+                if stick_state.changed_since_last_sync {                            
                     if let Some(pose) = xrutil::locate_space(&left_hand_aim_space, &tracking_space, stick_state.last_change_time) {
                         let hand_space_vec = glm::vec4(stick_state.current_state.x, stick_state.current_state.y, 0.0, 0.0);
                         let magnitude = glm::length(&hand_space_vec);
@@ -1136,12 +1149,9 @@ fn main() {
                         } else {
                             //World space untreated vector
                             let untreated = xrutil::pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec;
-                            let ugh = glm::normalize(&glm::vec3(untreated.x, untreated.y, 0.0)) * MOVEMENT_SPEED * magnitude;
-                            if player.movement_state == MoveState::Grounded {
-                                player.tracking_velocity = glm::vec3(ugh.x, ugh.y, player.tracking_velocity.z);
-                            } else {
-                                player.tracking_velocity = glm::vec3(ugh.x, ugh.y, player.tracking_velocity.z);
-                            }
+                            let ugh = glm::normalize(&glm::vec3(untreated.x, untreated.y, 0.0)) * MOVEMENT_SPEED * magnitude;                            
+                            player.tracking_velocity = glm::vec3(ugh.x, ugh.y, player.tracking_velocity.z);
+                            player.movement_state = MoveState::Falling;
                         }
                     }
                 }
@@ -1150,69 +1160,69 @@ fn main() {
             if let Some(state) = &left_trigger_state {
                 let holding = state.current_state == 1.0;
 
-                if holding && !player.was_holding_left_trigger && player.jumps_remaining > 0 {
-                    player.tracking_velocity = glm::vec3(player.tracking_velocity.x, player.tracking_velocity.y, 10.0);
+                if holding && !player.was_holding_jump && player.jumps_remaining > 0 {
+                    player.tracking_velocity.z = 10.0;
                     set_player_falling(&mut player);
-                } else if state.current_state < 1.0 && player.was_holding_left_trigger && player.tracking_velocity.z > 0.0 {
+                } else if state.current_state < 1.0 && player.was_holding_jump && player.tracking_velocity.z > 0.0 {
                     player.tracking_velocity.z /= 2.0;
                 }
 
-                player.was_holding_left_trigger = holding;
+                player.was_holding_jump = holding;
             }
-        }
 
-        //Do water gun stuff
-        {
-            //Calculate the force of shooting the water gun
-            if let Some(state) = right_trigger_state {
-                if let Some(pose) = xrutil::locate_space(&right_hand_aim_space, &tracking_space, last_xr_render_time) {
-                    let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
-                    let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
-                    let world_space_vec = hand_transform * hand_space_vec;
-                    let hand_origin = hand_transform * glm::vec4(0.0, 0.0, 0.0, 1.0);
-                    let hand_origin = glm::vec4_to_vec3(&hand_origin);
-
-                    //Calculate water gun force vector
-                    water_gun_force = glm::vec4_to_vec3(&(-state.current_state * world_space_vec));
-
-                    if state.current_state > 0.0 {
-                        //Calculate scale of water pillar
-                        match ray_hit_terrain(&terrain, &hand_origin, &glm::vec4_to_vec3(&world_space_vec)) {
-                            Some(point) => {
-                                water_pillar_scale.y = glm::length(&(point - hand_origin)); 
+            //Do water gun stuff
+            {
+                //Calculate the force of shooting the water gun
+                if let Some(state) = right_trigger_state {
+                    if let Some(pose) = xrutil::locate_space(&right_hand_aim_space, &tracking_space, last_xr_render_time) {
+                        let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
+                        let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
+                        let world_space_vec = hand_transform * hand_space_vec;
+                        let hand_origin = hand_transform * glm::vec4(0.0, 0.0, 0.0, 1.0);
+                        let hand_origin = glm::vec4_to_vec3(&hand_origin);
+    
+                        //Calculate water gun force vector
+                        water_gun_force = glm::vec4_to_vec3(&(-state.current_state * world_space_vec));
+    
+                        if state.current_state > 0.0 {
+                            //Calculate scale of water pillar
+                            match ray_hit_terrain(&terrain, &hand_origin, &glm::vec4_to_vec3(&world_space_vec)) {
+                                Some((_, point)) => {
+                                    water_pillar_scale.y = glm::length(&(point - hand_origin)); 
+                                }
+                                None => {
+                                    water_pillar_scale.y = 100.0;
+                                }
                             }
-                            None => {
-                                water_pillar_scale.y = 100.0;
+    
+                            if player.movement_state != MoveState::Falling {
+                                set_player_falling(&mut player);
                             }
-                        }
-
-                        if player.movement_state != MoveState::Falling {
-                            set_player_falling(&mut player);
                         }
                     }
                 }
-            }
-
-            if water_gun_force != glm::zero() && remaining_water > 0.0 {
-                let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
-                if !infinite_ammo {
-                    remaining_water -= glm::length(&update_force);
+    
+                if water_gun_force != glm::zero() && remaining_water > 0.0 {
+                    let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
+                    if !infinite_ammo {
+                        remaining_water -= glm::length(&update_force);
+                    }
+                    let xz_scale = remaining_water / MAX_WATER_REMAINING;
+                    water_pillar_scale.x = xz_scale;
+                    water_pillar_scale.z = xz_scale;
+                    player.tracking_velocity += update_force;
+    
+                    if let Some(entity) = scene_data.entities.get_mut_element(water_cylinder_entity_index) {
+                        //Update the water gun's pillar of water
+                        entity.uv_offset += glm::vec2(0.0, 5.0) * delta_time;
+                        entity.uv_scale.y = water_pillar_scale.y;
+                    }
+                } else {
+                    water_pillar_scale = glm::zero();
                 }
-                let xz_scale = remaining_water / MAX_WATER_REMAINING;
-                water_pillar_scale.x = xz_scale;
-                water_pillar_scale.z = xz_scale;
-                player.tracking_velocity += update_force;
-
-                if let Some(entity) = scene_data.entities.get_mut_element(water_cylinder_entity_index) {
-                    //Update the water gun's pillar of water
-                    entity.uv_offset += glm::vec2(0.0, 5.0) * delta_time;
-                    entity.uv_scale.y = water_pillar_scale.y;
+                if player.movement_state != MoveState::Falling {
+                    remaining_water = MAX_WATER_REMAINING;
                 }
-            } else {
-                water_pillar_scale = glm::zero();
-            }
-            if player.movement_state != MoveState::Falling {
-                remaining_water = MAX_WATER_REMAINING;
             }
         }
 
@@ -1246,14 +1256,14 @@ fn main() {
             let mouse_ray_dir = glm::normalize(&(glm::vec4_to_vec3(&world_space_mouse) - ray_origin));
 
             //Update dragon's position if the ray hit
-            if let Some(point) = ray_hit_terrain(&terrain, &ray_origin, &mouse_ray_dir) {
+            if let Some((_, point)) = ray_hit_terrain(&terrain, &ray_origin, &mouse_ray_dir) {
                 dragon_position = point;
             }
         }
 
         //Construct the dragon's model matrix
         if let Some(entity) = scene_data.entities.get_mut_element(dragon_entity_index) {
-            let mm = glm::translation(&dragon_position) * glm::rotation(elapsed_time, &glm::vec3(0.0, 0.0, 1.0)) * ozy::routines::uniform_scale(0.5);
+            let mm = glm::translation(&dragon_position) * glm::rotation(elapsed_time, &Z_UP) * ozy::routines::uniform_scale(0.5);
             unsafe { entity.update_single_transform(0, &mm); }
             let pos = [mm[12], mm[13], mm[14]];
             send_or_error(&audio_sender, AudioCommand::SetSourcePosition(pos, 0));
@@ -1270,7 +1280,6 @@ fn main() {
 
         //We try to do all work related to terrain collision here in order
         //to avoid iterating over all of the triangles more than once
-        player.movement_state = MoveState::Falling;
         for i in (0..terrain.indices.len()).step_by(3) {
             let triangle = get_terrain_triangle(&terrain, i);                              //Get the triangle in question
             let triangle_plane = Plane::new(
@@ -1281,41 +1290,16 @@ fn main() {
             //Check if this triangle is hitting the camera
             if camera_collision {
                 let cam_pos = glm::vec3(camera_position.x, camera_position.y, camera_position.z);
-
-                let dist1 = point_plane_distance(&cam_pos, &triangle_plane);
-                let point_on_plane = { 
-                    let p = camera_position + triangle.normal * -dist1 ;
-                    glm::vec4(p.x, p.y, p.z, 1.0)
-                };
+                let (dist, point_on_plane) = projected_point_on_plane(&cam_pos, &triangle_plane);
                 
-                if robust_point_in_triangle(&glm::vec4_to_vec3(&point_on_plane), &triangle) && f32::abs(dist1) < camera_hit_sphere_radius {
-                    camera_position += triangle.normal * (camera_hit_sphere_radius - dist1);
+                if robust_point_in_triangle(&point_on_plane, &triangle) && f32::abs(dist) < camera_hit_sphere_radius {
+                    camera_position += triangle.normal * (camera_hit_sphere_radius - dist);
                 } else {
                     //Check if the camera is hitting an edge
                     let (best_dist, best_point) = closest_point_on_triangle(&camera_position, &triangle);
 
                     if best_dist < camera_hit_sphere_radius {
                         camera_position += glm::normalize(&(camera_position - best_point)) * (camera_hit_sphere_radius - best_dist);
-                    }
-                }
-            }
-
-            //Check if we need to snap the player to the ground
-            {
-                let test_segment = LineSegment {
-                    p0: player.tracked_segment.p1,
-                    p1: player.tracked_segment.p1 - glm::vec3(0.0, 0.0, 0.05)
-                };
-                if let Some(point) = segment_hit_plane(&triangle_plane, &test_segment) {
-                    if robust_point_in_triangle(&point, &triangle) {
-                        if glm::dot(&triangle.normal, &glm::vec3(0.0, 0.0, 1.0)) >= MIN_NORMAL_LIKENESS {
-                            player.tracking_position += point - player.tracked_segment.p1;
-                            player.tracking_velocity = glm::vec3(0.0, 0.0, player.tracking_velocity.z);
-                            player.jumps_remaining = Player::MAX_JUMPS;
-                            player.movement_state = MoveState::Grounded;
-                        } else {
-                            println!("failed that test");
-                        }
                     }
                 }
             }
@@ -1347,30 +1331,30 @@ fn main() {
                 let capsule_ref = closest_point_on_line_segment(&ref_point, &player_capsule.segment.p0, &player_capsule.segment.p1);
                 
                 //Now do a triangle-sphere test with a sphere at this reference point
-                let dist1 = point_plane_distance(&capsule_ref, &triangle_plane);
-                let point_on_plane = { 
-                    let p = capsule_ref + triangle.normal * -dist1 ;
-                    glm::vec4(p.x, p.y, p.z, 1.0)
-                };
+                let (dist, point_on_plane) = projected_point_on_plane(&capsule_ref, &triangle_plane);
                 
                 //Branch on whether or not the sphere is colliding with the face of the triangle or an edge
-                if robust_point_in_triangle(&glm::vec4_to_vec3(&point_on_plane), &triangle) && f32::abs(dist1) < player.radius {
-                    player.tracking_position += triangle.normal * (player.radius - dist1);
-                    if glm::dot(&triangle.normal, &glm::vec3(0.0, 0.0, 1.0)) >= MIN_NORMAL_LIKENESS {
+                if robust_point_in_triangle(&point_on_plane, &triangle) && f32::abs(dist) < player.radius {
+                    if glm::dot(&triangle.normal, &Z_UP) >= MIN_NORMAL_LIKENESS {
+                        let denom = glm::dot(&triangle.normal, &Z_UP);
+                        let t = (glm::dot(&triangle.normal, &(triangle.a - capsule_ref)) + player.radius) / denom;
                         player.tracking_velocity = glm::zero();
                         player.jumps_remaining = Player::MAX_JUMPS;
-                        player.movement_state = MoveState::Grounded;
+                        player.tracking_position += Z_UP * t;
+                        remaining_water = MAX_WATER_REMAINING;
+                    } else {                        
+                        player.tracking_position += triangle.normal * (player.radius - dist);
                     }
+                    //player.movement_state = MoveState::Grounded;
                 } else {
                     let (best_dist, best_point) = closest_point_on_triangle(&capsule_ref, &triangle);
 
                     if best_dist < player.radius {
                         let push_dir = glm::normalize(&(capsule_ref - best_point));
                         player.tracking_position += push_dir * (player.radius - best_dist);
-                        if glm::dot(&push_dir, &glm::vec3(0.0, 0.0, 1.0)) >= MIN_NORMAL_LIKENESS {
+                        if glm::dot(&push_dir, &Z_UP) >= MIN_NORMAL_LIKENESS {
                             player.tracking_velocity = glm::zero();
                             player.jumps_remaining = Player::MAX_JUMPS;
-                            player.movement_state = MoveState::Grounded;
                         }
                     }
                 }
@@ -1382,7 +1366,7 @@ fn main() {
         tracking_from_world = glm::affine_inverse(world_from_tracking);
 
         //Compute the view_projection matrices for the shadow maps
-        shadow_view = glm::look_at(&(scene_data.sun_direction * 20.0), &glm::zero(), &glm::vec3(0.0, 0.0, 1.0));
+        shadow_view = glm::look_at(&(scene_data.sun_direction * 20.0), &glm::zero(), &Z_UP);
 
         player.last_tracked_segment = player.tracked_segment.clone();
 
@@ -1425,7 +1409,7 @@ fn main() {
         if do_imgui {
             let win = imgui::Window::new(im_str!("Hacking window"));
             if let Some(win_token) = win.begin(&imgui_ui) {
-                imgui_ui.text(im_str!("FPS: {:.2}\tFrame: {}", framerate, frame_count));
+                imgui_ui.text(im_str!("Frametime: {:.2}ms\tFPS: {:.2}\tFrame: {}", delta_time * 1000.0, framerate, frame_count));
                 imgui_ui.checkbox(im_str!("Wireframe view"), &mut wireframe);
                 imgui_ui.checkbox(im_str!("TRUE wireframe view"), &mut true_wireframe);
                 imgui_ui.checkbox(im_str!("Complex normals"), &mut scene_data.complex_normals);
@@ -1456,16 +1440,22 @@ fn main() {
                 imgui_ui.separator();
 
                 imgui_ui.text(im_str!("Lighting controls:"));
-                let ambient_slider = Slider::new(im_str!("Ambient strength")).range(RangeInclusive::new(0.0, 0.5));
-                ambient_slider.build(&imgui_ui, &mut scene_data.ambient_strength);
+                Slider::new(im_str!("Ambient strength")).range(RangeInclusive::new(0.0, 0.5)).build(&imgui_ui, &mut scene_data.ambient_strength);
 
                 let sun_color_editor = ColorEdit::new(im_str!("Sun color"), EditableColor::Float3(&mut scene_data.sun_color));
                 if sun_color_editor.build(&imgui_ui) {}
 
                 imgui_ui.separator();
 
+                //Music controls section
                 imgui_ui.text(im_str!("Music controls"));
-                Slider::new(im_str!("BGM Volume")).range(RangeInclusive::new(0.0, 100.0)).build(&imgui_ui, &mut bgm_volume);
+                Slider::new(im_str!("Master Volume")).range(RangeInclusive::new(0.0, 100.0)).build(&imgui_ui, &mut bgm_volume);
+
+                if imgui_ui.button(im_str!("Play/Pause"), [0.0, 32.0]) {
+                    send_or_error(&audio_sender, AudioCommand::PlayPause);
+                }
+
+                imgui_ui.same_line(0.0);
                 if imgui_ui.button(im_str!("Choose mp3"), [0.0, 32.0]) {
                     send_or_error(&audio_sender, AudioCommand::SelectNewBGM);
                 }
@@ -1529,7 +1519,7 @@ fn main() {
         //Create a view matrix from the camera state
         {
             let new_view_matrix = glm::rotation(camera_orientation.y, &glm::vec3(1.0, 0.0, 0.0)) *
-                                  glm::rotation(camera_orientation.x, &glm::vec3(0.0, 0.0, 1.0)) *
+                                  glm::rotation(camera_orientation.x, &Z_UP) *
                                   glm::translation(&(-camera_position));
             screen_state.update_view(new_view_matrix);
         }
