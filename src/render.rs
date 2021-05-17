@@ -5,7 +5,7 @@ use ozy::io::OzyMesh;
 use ozy::render::{TextureKeeper};
 use ozy::structs::OptionVec;
 use ozy::glutil::ColorSpace;
-use crate::glutil;
+use ozy::glutil;
 use gl::types::*;
 
 pub const NEAR_DISTANCE: f32 = 0.0625;
@@ -15,8 +15,10 @@ pub const SHADOW_CASCADES: usize = 6;
 pub const INSTANCED_ATTRIBUTE: GLuint = 5;
 pub const TEXTURE_MAP_COUNT: usize = 3;
 
-//Represents all of the data necessary to render an object that exists in the 3D scene
+//Represents all of the data necessary to render an object (potentially instanced) that exists in the 3D scene
+#[derive(Clone)]
 pub struct RenderEntity {
+    pub should_be_rendered: bool,
     pub vao: GLuint,
     pub transform_buffer: GLuint,       //GPU buffer with one 4x4 homogenous transform per instance
     pub index_count: GLint,
@@ -40,6 +42,7 @@ impl RenderEntity {
 
                 let transform_buffer = glutil::create_instanced_transform_buffer(vao, instances, INSTANCED_ATTRIBUTE);
                 RenderEntity {
+                    should_be_rendered: true,
                     vao,
                     transform_buffer,
                     index_count: meshdata.vertex_array.indices.len() as GLint,
@@ -185,6 +188,10 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
     let sun_c = glm::vec3(scene_data.sun_color[0], scene_data.sun_color[1], scene_data.sun_color[2]);
     for opt_entity in scene_data.entities.iter() {
         if let Some(entity) = opt_entity {
+            if !entity.should_be_rendered {
+                continue;
+            }
+
             let p = entity.shader;
             gl::UseProgram(p);
             glutil::bind_matrix4_array(p, "shadow_matrices", &sun_shadow_map.matrices);

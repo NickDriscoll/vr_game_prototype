@@ -6,6 +6,7 @@ extern crate ozy_engine as ozy;
 extern crate tinyfiledialogs as tfd;
 
 mod collision;
+mod gadget;
 mod structs;
 mod render;
 mod xrutil;
@@ -32,7 +33,7 @@ use std::ptr;
 use std::sync::mpsc;
 use std::sync::mpsc::Sender;
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use ozy::{glutil, io};
 use ozy::glutil::ColorSpace;
@@ -40,10 +41,21 @@ use ozy::render::{Framebuffer, RenderTarget, ScreenState, TextureKeeper};
 use ozy::structs::OptionVec;
 
 use crate::collision::*;
+use crate::gadget::*;
 use crate::structs::*;
 
 #[cfg(windows)]
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
+
+fn shader_compile_or_error(vert: &str, frag: &str) -> GLuint {
+    match glutil::compile_program_from_files(vert, frag)  { 
+        Ok(program) => { program }
+        Err(e) => {
+            tfd::message_box_ok("Error compiling OpenGL shader.", &format!("An error occurred while compiling the OpenGL shader:\n\nVert:\t{}\nFrag:\t{}\n\n{}", vert, frag, e), tfd::MessageBoxIcon::Error);
+            exit(-1);
+        }
+    }
+}
 
 //Sends the message or prints an error
 fn send_or_error<T>(s: &Sender<T>, message: T) {
@@ -553,10 +565,10 @@ fn main() {
     };
 
     //Compile shader programs
-    let standard_program = unsafe { glutil::compile_program_from_files("shaders/standard.vert", "shaders/standard.frag") };
-    let shadow_program = unsafe { glutil::compile_program_from_files("shaders/shadow.vert", "shaders/shadow.frag") };
-    let skybox_program = unsafe { glutil::compile_program_from_files("shaders/skybox.vert", "shaders/skybox.frag") };
-    let imgui_program = unsafe { glutil::compile_program_from_files("shaders/ui/imgui.vert", "shaders/ui/imgui.frag") };
+    let standard_program = shader_compile_or_error("shaders/standard.vert", "shaders/standard.frag");
+    let shadow_program = shader_compile_or_error("shaders/shadow.vert", "shaders/shadow.frag");
+    let skybox_program = shader_compile_or_error("shaders/skybox.vert", "shaders/skybox.frag");
+    let imgui_program = shader_compile_or_error("shaders/ui/imgui.vert", "shaders/ui/imgui.frag");
     
     //Initialize default framebuffer
     let mut default_framebuffer = Framebuffer {
@@ -571,7 +583,7 @@ fn main() {
     let mut mouse_clicked = false;
     let mut camera_position = glm::vec3(0.0, -8.0, 5.5);
     let mut last_camera_position = camera_position;
-    let mut camera_input: glm::TVec4<f32> = glm::zero();             //This is a unit vector in view space that represents the input camera movement vector
+    let mut camera_input: glm::TVec3<f32> = glm::zero();             //This is a unit vector in view space that represents the input camera movement vector
     let mut camera_orientation = glm::vec2(0.0, -glm::half_pi::<f32>() * 0.6);
     let mut camera_speed = 5.0;
     let camera_hit_sphere_radius = 0.5;
@@ -774,12 +786,15 @@ fn main() {
     let mut dragon_position = glm::vec3(56.009315, 21.064762, 17.284132);
     let dragon_entity_index = scene_data.entities.insert(RenderEntity::from_ozy("models/dragon.ozy", standard_program, 1, &mut texture_keeper, &default_tex_params));
 
-    //Create controller entities
-    let mut wand_entity_index = 0;
-    if let Some(_) = &xr_instance {
-        let entity = RenderEntity::from_ozy("models/stick.ozy", standard_program, 2, &mut texture_keeper, &default_tex_params);
-        wand_entity_index = scene_data.entities.insert(entity);
-    }
+    //Load gadget models
+    let mut wand_entity = RenderEntity::from_ozy("models/wand.ozy", standard_program, 2, &mut texture_keeper, &default_tex_params);
+    let mut stick_entity = RenderEntity::from_ozy("models/stick.ozy", standard_program, 2, &mut texture_keeper, &default_tex_params);
+
+    //Gadget state setup
+    let mut left_hand_gadget = Gadget::Shotgun;
+    let mut right_hand_gadget = Gadget::Shotgun;
+    let mut left_gadget_index = scene_data.entities.insert(wand_entity.clone());
+    let mut right_gadget_index = scene_data.entities.insert(stick_entity.clone());
 
     //Set up global flags lol
     let mut is_fullscreen = false;
@@ -798,15 +813,16 @@ fn main() {
 
     let mut frame_count = 0;
     let mut last_frame_instant = Instant::now();
-    let mut last_xr_render_time = xr::Time::from_nanos(0);
+    let mut last_xr_render_time = xr::Time::from_nanos(1);
     let mut elapsed_time = 0.0;
 
     //Init audio system
     //const DEFAULT_MUSIC_PATH: &str = "music/王と王妃と奴隷.mp3";
-    const DEFAULT_MUSIC_PATH: &str = "music/fire_temple.mp3";
+    const DEFAULT_MUSIC_PATH: &str = "music/town_battle.mp3";
     let mut bgm_volume = 20.0;
     let (audio_sender, audio_receiver) = mpsc::channel();
     thread::spawn(move || {
+        const IDEAL_FRAMES_QUEUED: ALint = 10;
         fn load_decoder(path: &str) -> mp3::Decoder<File> {
             let bgm_file = match File::open(path) {
                 Ok(f) => { f }
@@ -816,6 +832,11 @@ fn main() {
                 }
             };
             mp3::Decoder::new(bgm_file)
+        }
+
+        fn set_linearized_gain(ctxt: &alto::Context, volume: f32) {            
+            let gain_factor = (f32::exp(volume / 100.0) - 1.0) / (glm::e::<f32>() - 1.0);
+            ctxt.set_gain(gain_factor).unwrap();
         }
 
         //Initializing the OpenAL context
@@ -845,23 +866,22 @@ fn main() {
                         }
                     }
                     None => {
-                        tfd::message_box_ok("OpenAL Error", "Couldn't query for default audio device.", tfd::MessageBoxIcon::Error);
+                        tfd::message_box_ok("OpenAL Error", "No default audio output device found", tfd::MessageBoxIcon::Error);
                         return;
                     }
                 }
             }
             Err(e) => {
-                tfd::message_box_ok("OpenAL Error", format!("Error initializing OpenAL: {}", e), tfd::MessageBoxIcon::Error);
+                tfd::message_box_ok("OpenAL Error", &format!("Error initializing OpenAL: {}", e), tfd::MessageBoxIcon::Error);
                 return;
             }
         };
-        alto_context.set_gain(bgm_volume).unwrap();
+        set_linearized_gain(&alto_context, bgm_volume);
 
         let mut decoder = load_decoder(DEFAULT_MUSIC_PATH);
 
         let mut kanye_source = alto_context.new_streaming_source().unwrap();
-        kanye_source.play();
-        let mut kickstart_bgm = false;
+        let mut kickstart_bgm = true;
         loop {
             //Process all commands from the main thread
             while let Ok(command) = audio_receiver.try_recv() {
@@ -870,10 +890,7 @@ fn main() {
                     AudioCommand::SetListenerVelocity(vel) => { alto_context.set_velocity(vel).unwrap(); }
                     AudioCommand::SetListenerOrientation(ori) => { alto_context.set_orientation(ori).unwrap(); }
                     AudioCommand::SetSourcePosition(pos, i) => { kanye_source.set_position(pos).unwrap(); }
-                    AudioCommand::SetListenerGain(volume) => {
-                        let gain_factor = (f32::exp(volume / 100.0) - 1.0) / (glm::e::<f32>() - 1.0);
-                        alto_context.set_gain(gain_factor).unwrap();
-                    }
+                    AudioCommand::SetListenerGain(volume) => { set_linearized_gain(&alto_context, volume); }
                     AudioCommand::SelectNewBGM => {
                         kanye_source.pause();
                         match tfd::open_file_dialog("Choose bgm", "music/", Some((&["*.mp3"], "mp3 files (*.mp3)"))) {
@@ -885,7 +902,7 @@ fn main() {
                                 while kanye_source.buffers_queued() > 0 {
                                     kanye_source.unqueue_buffer().unwrap();
                                 }
-                                kickstart_bgm = false;
+                                kickstart_bgm = true;
                             }
                             None => { kanye_source.play(); }
                         }
@@ -894,9 +911,11 @@ fn main() {
                         match kanye_source.state() {
                             SourceState::Playing | SourceState::Initial => {
                                 kanye_source.pause();
+                                kickstart_bgm = false;
                             }
                             SourceState::Paused | SourceState::Stopped => {
                                 kanye_source.play();
+                                kickstart_bgm = true;
                             }
                             SourceState::Unknown(code) => { println!("Source is in an unknown state: {}", code); }
                         }
@@ -904,9 +923,7 @@ fn main() {
                 }
             }
 
-            const IDEAL_FRAMES_QUEUED: ALint = 10;
-
-            //If there are fewer than the ideal frames queued, queue a frame
+            //If there are fewer than the ideal frames queued, prepare and queue a frame
             if kanye_source.buffers_queued() < IDEAL_FRAMES_QUEUED {
                 match decoder.next_frame() {
                     Ok(frame) => {
@@ -959,12 +976,26 @@ fn main() {
                 kanye_source.unqueue_buffer().unwrap();
             }
 
-            if kanye_source.buffers_queued() == IDEAL_FRAMES_QUEUED && !kickstart_bgm {
+            if kanye_source.buffers_queued() > 0 && kickstart_bgm && kanye_source.state() != SourceState::Playing {
+                println!("starting...");
                 kanye_source.play();
-                kickstart_bgm = true;
             }
+
+            //Don't burn up the CPU
+            thread::sleep(Duration::from_millis(10));
         }
     });
+
+    let key_directions = {
+        let mut hm = HashMap::new();
+        hm.insert(Key::W, glm::vec3(0.0, 0.0, -1.0));
+        hm.insert(Key::S, glm::vec3(0.0, 0.0, 1.0));
+        hm.insert(Key::A, glm::vec3(-1.0, 0.0, 0.0));
+        hm.insert(Key::D, glm::vec3(1.0, 0.0, 0.0));
+        hm.insert(Key::Q, glm::vec3(0.0, -1.0, 0.0));
+        hm.insert(Key::E, glm::vec3(0.0, 1.0, 0.0));
+        hm
+    };
 
     //Main loop
     while !window.should_close() {
@@ -1007,62 +1038,40 @@ fn main() {
             match event {
                 WindowEvent::Close => { window.set_should_close(true); }
                 WindowEvent::Key(key, _, Action::Press, _) => {
-                    match key {
-                        Key::Escape => { do_imgui = !do_imgui; }
-                        Key::W => {
-                            camera_input.z += -1.0;
+                    match key_directions.get(&key) {
+                        Some(dir) => {
+                            camera_input += dir;
                         }
-                        Key::S => {
-                            camera_input.z += 1.0;
+                        None => {
+                            match key {
+                                Key::Escape => { do_imgui = !do_imgui; }
+                                Key::LeftShift => {
+                                    camera_speed *= 5.0;
+                                }
+                                Key::LeftControl => {
+                                    camera_speed /= 5.0;
+                                }
+                                _ => {}
+                            }
                         }
-                        Key::A => {
-                            camera_input.x += -1.0;
-                        }
-                        Key::D => {
-                            camera_input.x += 1.0;
-                        }
-                        Key::Q => {
-                            camera_input.y -= 1.0;
-                        }
-                        Key::E => {
-                            camera_input.y += 1.0;
-                        }
-                        Key::LeftShift => {
-                            camera_speed *= 5.0;
-                        }
-                        Key::LeftControl => {
-                            camera_speed /= 5.0;
-                        }
-                        _ => {}
                     }
                 }
                 WindowEvent::Key(key, _, Action::Release, _) => {
-                    match key {
-                        Key::W => {
-                            camera_input.z -= -1.0;
+                    match key_directions.get(&key) {
+                        Some(dir) => {
+                            camera_input -= dir;
                         }
-                        Key::S => {
-                            camera_input.z -= 1.0;
+                        None => {
+                            match key {
+                                Key::LeftShift => {
+                                    camera_speed /= 5.0;
+                                }
+                                Key::LeftControl => {
+                                    camera_speed *= 5.0;
+                                }
+                                _ => {}
+                            }
                         }
-                        Key::A => {
-                            camera_input.x -= -1.0;
-                        }
-                        Key::D => {
-                            camera_input.x -= 1.0;
-                        }
-                        Key::Q => {
-                            camera_input.y += 1.0;
-                        }
-                        Key::E => {
-                            camera_input.y -= 1.0;
-                        }
-                        Key::LeftShift => {
-                            camera_speed /= 5.0;
-                        }
-                        Key::LeftControl => {
-                            camera_speed *= 5.0;
-                        }
-                        _ => {}
                     }
                 }
                 WindowEvent::MouseButton(glfw::MouseButtonLeft, action, ..) => {
@@ -1157,72 +1166,107 @@ fn main() {
                 }
             }
 
-            if let Some(state) = &left_trigger_state {
-                let holding = state.current_state == 1.0;
+            //Then match on what gadgets the player is holding            
+            match left_hand_gadget {
+                Gadget::Shotgun => {
 
-                if holding && !player.was_holding_jump && player.jumps_remaining > 0 {
-                    player.tracking_velocity.z = 10.0;
-                    set_player_falling(&mut player);
-                } else if state.current_state < 1.0 && player.was_holding_jump && player.tracking_velocity.z > 0.0 {
-                    player.tracking_velocity.z /= 2.0;
                 }
+                Gadget::StickyHand => {
 
-                player.was_holding_jump = holding;
-            }
-
-            //Do water gun stuff
-            {
-                //Calculate the force of shooting the water gun
-                if let Some(state) = right_trigger_state {
-                    if let Some(pose) = xrutil::locate_space(&right_hand_aim_space, &tracking_space, last_xr_render_time) {
-                        let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
-                        let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
-                        let world_space_vec = hand_transform * hand_space_vec;
-                        let hand_origin = hand_transform * glm::vec4(0.0, 0.0, 0.0, 1.0);
-                        let hand_origin = glm::vec4_to_vec3(&hand_origin);
-    
-                        //Calculate water gun force vector
-                        water_gun_force = glm::vec4_to_vec3(&(-state.current_state * world_space_vec));
-    
-                        if state.current_state > 0.0 {
-                            //Calculate scale of water pillar
-                            match ray_hit_terrain(&terrain, &hand_origin, &glm::vec4_to_vec3(&world_space_vec)) {
-                                Some((_, point)) => {
-                                    water_pillar_scale.y = glm::length(&(point - hand_origin)); 
+                }
+                Gadget::WaterCannon => {
+                    //Calculate the force of shooting the water gun for the left hand
+                    if let Some(state) = left_trigger_state {
+                        if let Some(pose) = xrutil::locate_space(&left_hand_aim_space, &tracking_space, last_xr_render_time) {
+                            let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
+                            let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
+                            let world_space_vec = hand_transform * hand_space_vec;
+        
+                            //Calculate water gun force vector
+                            water_gun_force = glm::vec4_to_vec3(&(-state.current_state * world_space_vec));
+        
+                            if state.current_state > 0.0 {
+                                water_pillar_scale.y = 100.0;
+                                if player.movement_state != MoveState::Falling {
+                                    set_player_falling(&mut player);
                                 }
-                                None => {
-                                    water_pillar_scale.y = 100.0;
-                                }
-                            }
-    
-                            if player.movement_state != MoveState::Falling {
-                                set_player_falling(&mut player);
                             }
                         }
                     }
-                }
-    
-                if water_gun_force != glm::zero() && remaining_water > 0.0 {
-                    let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
-                    if !infinite_ammo {
-                        remaining_water -= glm::length(&update_force);
+        
+                    if water_gun_force != glm::zero() && remaining_water > 0.0 {
+                        let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
+                        if !infinite_ammo {
+                            remaining_water -= glm::length(&update_force);
+                        }
+                        let xz_scale = remaining_water / MAX_WATER_REMAINING;
+                        water_pillar_scale.x = xz_scale;
+                        water_pillar_scale.z = xz_scale;
+                        player.tracking_velocity += update_force;
+        
+                        if let Some(entity) = scene_data.entities.get_mut_element(water_cylinder_entity_index) {
+                            //Update the water gun's pillar of water
+                            entity.uv_offset += glm::vec2(0.0, 5.0) * delta_time;
+                            entity.uv_scale.y = water_pillar_scale.y;
+                        }
+                    } else {
+                        water_pillar_scale = glm::zero();
                     }
-                    let xz_scale = remaining_water / MAX_WATER_REMAINING;
-                    water_pillar_scale.x = xz_scale;
-                    water_pillar_scale.z = xz_scale;
-                    player.tracking_velocity += update_force;
-    
-                    if let Some(entity) = scene_data.entities.get_mut_element(water_cylinder_entity_index) {
-                        //Update the water gun's pillar of water
-                        entity.uv_offset += glm::vec2(0.0, 5.0) * delta_time;
-                        entity.uv_scale.y = water_pillar_scale.y;
+                }
+            }
+
+            match right_hand_gadget {
+                Gadget::Shotgun => {
+
+                }
+                Gadget::StickyHand => {
+
+                }
+                Gadget::WaterCannon => {
+                    //Calculate the force of shooting the water gun for the right hand
+                    if let Some(state) = right_trigger_state {
+                        if let Some(pose) = xrutil::locate_space(&right_hand_aim_space, &tracking_space, last_xr_render_time) {
+                            let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
+                            let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
+                            let world_space_vec = hand_transform * hand_space_vec;
+                            let hand_origin = hand_transform * glm::vec4(0.0, 0.0, 0.0, 1.0);
+                            let hand_origin = glm::vec4_to_vec3(&hand_origin);
+        
+                            //Calculate water gun force vector
+                            water_gun_force = glm::vec4_to_vec3(&(-state.current_state * world_space_vec));
+        
+                            if state.current_state > 0.0 {
+                                water_pillar_scale.y = 100.0;
+                                if player.movement_state != MoveState::Falling {
+                                    set_player_falling(&mut player);
+                                }
+                            }
+                        }
                     }
-                } else {
-                    water_pillar_scale = glm::zero();
+        
+                    if water_gun_force != glm::zero() && remaining_water > 0.0 {
+                        let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
+                        if !infinite_ammo {
+                            remaining_water -= glm::length(&update_force);
+                        }
+                        let xz_scale = remaining_water / MAX_WATER_REMAINING;
+                        water_pillar_scale.x = xz_scale;
+                        water_pillar_scale.z = xz_scale;
+                        player.tracking_velocity += update_force;
+        
+                        if let Some(entity) = scene_data.entities.get_mut_element(water_cylinder_entity_index) {
+                            //Update the water gun's pillar of water
+                            entity.uv_offset += glm::vec2(0.0, 5.0) * delta_time;
+                            entity.uv_scale.y = water_pillar_scale.y;
+                        }
+                    } else {
+                        water_pillar_scale = glm::zero();
+                    }
                 }
-                if player.movement_state != MoveState::Falling {
-                    remaining_water = MAX_WATER_REMAINING;
-                }
+            }
+
+            if player.movement_state != MoveState::Falling {
+                remaining_water = MAX_WATER_REMAINING;
             }
         }
 
@@ -1231,7 +1275,8 @@ fn main() {
             window.set_cursor_pos(screen_state.get_window_size().x as f64 / 2.0, screen_state.get_window_size().y as f64 / 2.0);
         }
 
-        let camera_velocity = camera_speed * glm::vec4_to_vec3(&(glm::affine_inverse(*screen_state.get_view_from_world()) * camera_input));
+        
+        let camera_velocity = camera_speed * glm::vec4_to_vec3(&(glm::affine_inverse(*screen_state.get_view_from_world()) * glm::vec3_to_vec4(&camera_input)));
         camera_position += camera_velocity * delta_time;
 
         //Place dragon at clicking position
@@ -1299,7 +1344,8 @@ fn main() {
                     let (best_dist, best_point) = closest_point_on_triangle(&camera_position, &triangle);
 
                     if best_dist < camera_hit_sphere_radius {
-                        camera_position += glm::normalize(&(camera_position - best_point)) * (camera_hit_sphere_radius - best_dist);
+                        let new_pos = camera_position + glm::normalize(&(camera_position - best_point)) * (camera_hit_sphere_radius - best_dist);
+                        camera_position = new_pos;
                     }
                 }
             }
@@ -1316,6 +1362,7 @@ fn main() {
                 };
                 let capsule_ray = glm::normalize(&(player_capsule.segment.p1 - player_capsule.segment.p0));
 
+                //Finding the closest point on the triangle to the line segment of the capsule
                 let ref_point = match ray_hit_plane(&player_capsule.segment.p0, &capsule_ray, &triangle_plane) {
                     Some((_, intersection)) => {
                         if robust_point_in_triangle(&intersection, &triangle) {
@@ -1345,7 +1392,6 @@ fn main() {
                     } else {                        
                         player.tracking_position += triangle.normal * (player.radius - dist);
                     }
-                    //player.movement_state = MoveState::Grounded;
                 } else {
                     let (best_dist, best_point) = closest_point_on_triangle(&capsule_ref, &triangle);
 
@@ -1398,7 +1444,6 @@ fn main() {
             send_or_error(&audio_sender, AudioCommand::SetListenerPosition(listener_pos));
             send_or_error(&audio_sender, AudioCommand::SetListenerVelocity(listener_vel));
             send_or_error(&audio_sender, AudioCommand::SetListenerOrientation((listener_forward, listener_up)));
-            send_or_error(&audio_sender, AudioCommand::SetListenerGain(bgm_volume));
         }
 
         last_camera_position = camera_position;
@@ -1416,6 +1461,7 @@ fn main() {
                 imgui_ui.checkbox(im_str!("Camera collision"), &mut camera_collision);
                 if let Some(_) = &xr_instance {
                     imgui_ui.checkbox(im_str!("HMD Point-of-view"), &mut hmd_pov);
+                    imgui_ui.checkbox(im_str!("Infinite ammo"), &mut infinite_ammo);
                 } else {
                     if imgui_ui.checkbox(im_str!("Lock FPS (v-sync)"), &mut do_vsync) {
                         if do_vsync {
@@ -1449,7 +1495,9 @@ fn main() {
 
                 //Music controls section
                 imgui_ui.text(im_str!("Music controls"));
-                Slider::new(im_str!("Master Volume")).range(RangeInclusive::new(0.0, 100.0)).build(&imgui_ui, &mut bgm_volume);
+                if Slider::new(im_str!("Master Volume")).range(RangeInclusive::new(0.0, 100.0)).build(&imgui_ui, &mut bgm_volume) {
+                    send_or_error(&audio_sender, AudioCommand::SetListenerGain(bgm_volume));
+                }
 
                 if imgui_ui.button(im_str!("Play/Pause"), [0.0, 32.0]) {
                     send_or_error(&audio_sender, AudioCommand::PlayPause);
@@ -1550,16 +1598,15 @@ fn main() {
 
                             //Right here is where we want to update the controller objects' transforms
                             {
-                                let mut transforms = [0.0; 16 * 2];
-                                if let Some(pose) = left_grip_pose {
-                                    write_matrix_to_buffer(&mut transforms, 0, xrutil::pose_to_mat4(&pose, &world_from_tracking));
+                                if let Some(pose) = &left_grip_pose {
+                                    if let Some(entity) = scene_data.entities.get_mut_element(left_gadget_index) {
+                                        entity.update_single_transform(0, &xrutil::pose_to_mat4(pose, &world_from_tracking))
+                                    }
                                 }
-                                if let Some(pose) = right_grip_pose {
-                                    write_matrix_to_buffer(&mut transforms, 1, xrutil::pose_to_mat4(&pose, &world_from_tracking));
-                                }
-
-                                if let Some(entity) = scene_data.entities.get_mut_element(wand_entity_index) {
-                                    entity.update_buffer(&transforms);
+                                if let Some(pose) = &right_grip_pose {
+                                    if let Some(entity) = scene_data.entities.get_mut_element(right_gadget_index) {
+                                        entity.update_single_transform(0, &xrutil::pose_to_mat4(pose, &world_from_tracking))
+                                    }
                                 }
                             }
 
