@@ -3,6 +3,7 @@
 /.idea
 /.vscode
 /source_maps
+/redist
 /screenshots
 settings.cfg
 *.py

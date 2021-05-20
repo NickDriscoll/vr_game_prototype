@@ -131,7 +131,7 @@ impl Default for SceneData {
             fragment_flag: FragmentFlag::Default,
             complex_normals: true,
             skybox_cubemap: 0,
-            skybox_vao: 0,
+            skybox_vao: ozy::prims::skybox_cube_vao(),
             skybox_program: 0,
             sun_direction: glm::normalize(&glm::vec3(1.0, 0.6, 1.0)),
             sun_color: [1.0, 1.0, 1.0],

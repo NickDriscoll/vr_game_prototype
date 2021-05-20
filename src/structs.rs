@@ -17,8 +17,7 @@ pub enum AudioCommand {
 #[derive(PartialEq, Eq)]
 pub enum MoveState {
     Grounded,
-    Falling,
-    Sliding
+    Falling
 }
 
 #[derive(PartialEq, Eq)]

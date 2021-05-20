@@ -1,3 +1,4 @@
+//#![windows_subsystem = "windows"]
 #![allow(non_snake_case)]
 extern crate minimp3 as mp3;
 extern crate nalgebra_glm as glm;
@@ -14,7 +15,7 @@ mod xrutil;
 use render::{compute_shadow_cascade_matrices, render_main_scene, render_cascaded_shadow_map, CascadedShadowMap, FragmentFlag, RenderEntity, SceneData, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
-use alto::{sys::ALint, AltoError, Source, SourceState};
+use alto::{sys::ALint, Source, SourceState};
 use chrono::offset::Local;
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
 use gl::types::*;
@@ -29,7 +30,6 @@ use std::path::Path;
 use std::process::exit;
 use std::mem::size_of;
 use std::os::raw::c_void;
-use std::ptr;
 use std::sync::mpsc;
 use std::sync::mpsc::Sender;
 use std::thread;
@@ -51,7 +51,7 @@ fn shader_compile_or_error(vert: &str, frag: &str) -> GLuint {
     match glutil::compile_program_from_files(vert, frag)  { 
         Ok(program) => { program }
         Err(e) => {
-            tfd::message_box_ok("Error compiling OpenGL shader.", &format!("An error occurred while compiling the OpenGL shader:\n\nVert:\t{}\nFrag:\t{}\n\n{}", vert, frag, e), tfd::MessageBoxIcon::Error);
+            tfd::message_box_ok("Error compiling OpenGL shader.", &format!("An error occurred while compiling an OpenGL shader:\n\nVert:\t{}\nFrag:\t{}\n\n{}", vert, frag, e), tfd::MessageBoxIcon::Error);
             exit(-1);
         }
     }
@@ -406,6 +406,7 @@ fn main() {
 
 		#[cfg(gloutput)]
 		{
+            use std::ptr;
 			gl::Enable(gl::DEBUG_OUTPUT);									                                    //Enable verbose debug output
 			gl::Enable(gl::DEBUG_OUTPUT_SYNCHRONOUS);						                                    //Synchronously call the debug callback function
 			gl::DebugMessageCallback(ozy::glutil::gl_debug_callback, ptr::null());		                        //Register the debug callback
@@ -600,8 +601,9 @@ fn main() {
     scene_data.sun_shadow_map = sun_shadow_map;
     scene_data.skybox_program = skybox_program;
 
-    //The shadow cascade distances are negative bc they apply to view space
     let shadow_cascade_distances = {
+        //Manually picking the cascade distances because math is hard
+        //The shadow cascade distances are negative bc they apply to view space
         let mut cascade_distances = [0.0; render::SHADOW_CASCADES + 1];
         cascade_distances[0] = -(render::NEAR_DISTANCE);
         cascade_distances[1] = -(render::NEAR_DISTANCE + 5.0);
@@ -621,7 +623,6 @@ fn main() {
     };
 
 	//Create the skybox cubemap
-	scene_data.skybox_vao = ozy::prims::skybox_cube_vao();
 	scene_data.skybox_cubemap = unsafe {
 		let name = "siege";
 		let paths = [
@@ -817,9 +818,8 @@ fn main() {
     let mut elapsed_time = 0.0;
 
     //Init audio system
-    //const DEFAULT_MUSIC_PATH: &str = "music/王と王妃と奴隷.mp3";
     const DEFAULT_MUSIC_PATH: &str = "music/town_battle.mp3";
-    let mut bgm_volume = 20.0;
+    let mut bgm_volume = 50.0;
     let (audio_sender, audio_receiver) = mpsc::channel();
     thread::spawn(move || {
         const IDEAL_FRAMES_QUEUED: ALint = 10;
@@ -849,30 +849,27 @@ fn main() {
                         match alto.open(Some(&string)) {
                             Ok(dev) => {
                                 match dev.new_context(None) {
-                                    Ok(ctxt) => {
-                                        println!("Successfully initialized the OpenAL context.");
-                                        ctxt
-                                    }
+                                    Ok(ctxt) => { ctxt }
                                     Err(e) => {
-                                        tfd::message_box_ok("OpenAL Error", &format!("Error creating OpenAL context: {}", e), tfd::MessageBoxIcon::Error);
+                                        tfd::message_box_ok("OpenAL Error", &format!("Error creating OpenAL context: {}\n\nThe game will still work, but without any audio.", e), tfd::MessageBoxIcon::Warning);
                                         return;
                                     }
                                 }
                             }
                             Err(e) => {
-                                tfd::message_box_ok("OpenAL Error", &format!("Error opening default audio device: {}", e), tfd::MessageBoxIcon::Error);
+                                tfd::message_box_ok("OpenAL Error", &format!("Error opening default audio device: {}\n\nThe game will still work, but without any audio.", e), tfd::MessageBoxIcon::Warning);
                                 return;
                             }
                         }
                     }
                     None => {
-                        tfd::message_box_ok("OpenAL Error", "No default audio output device found", tfd::MessageBoxIcon::Error);
+                        tfd::message_box_ok("OpenAL Error", "No default audio output device found\n\nThe game will still work, but without any audio.", tfd::MessageBoxIcon::Warning);
                         return;
                     }
                 }
             }
             Err(e) => {
-                tfd::message_box_ok("OpenAL Error", &format!("Error initializing OpenAL: {}", e), tfd::MessageBoxIcon::Error);
+                tfd::message_box_ok("OpenAL Error", &format!("Error initializing OpenAL: {}\n\nThe game will still work, but without any audio.", e), tfd::MessageBoxIcon::Warning);
                 return;
             }
         };
@@ -976,12 +973,12 @@ fn main() {
                 kanye_source.unqueue_buffer().unwrap();
             }
 
-            if kanye_source.buffers_queued() > 0 && kickstart_bgm && kanye_source.state() != SourceState::Playing {
+            if kanye_source.state() != SourceState::Playing && kickstart_bgm && kanye_source.buffers_queued() == IDEAL_FRAMES_QUEUED {
                 println!("starting...");
                 kanye_source.play();
             }
 
-            //Don't burn up the CPU
+            //Sleeping to avoid throttling a CPU core
             thread::sleep(Duration::from_millis(10));
         }
     });
@@ -1275,7 +1272,6 @@ fn main() {
             window.set_cursor_pos(screen_state.get_window_size().x as f64 / 2.0, screen_state.get_window_size().y as f64 / 2.0);
         }
 
-        
         let camera_velocity = camera_speed * glm::vec4_to_vec3(&(glm::affine_inverse(*screen_state.get_view_from_world()) * glm::vec3_to_vec4(&camera_input)));
         camera_position += camera_velocity * delta_time;
 
@@ -1331,21 +1327,34 @@ fn main() {
                 triangle.a,
                 triangle.normal
             );
+            let triangle_sphere = {
+                let focus = 0.5 * (triangle.c + 0.5 * (triangle.a + triangle.b));
+                let radius = {
+                    let a_dist = glm::distance(&focus, &triangle.a);
+                    let b_dist = glm::distance(&focus, &triangle.b);
+                    let c_dist = glm::distance(&focus, &triangle.c);
+                    glm::max3_scalar(a_dist, b_dist, c_dist)
+                };
+                Sphere {
+                    focus,
+                    radius
+                }
+            };
 
             //Check if this triangle is hitting the camera
             if camera_collision {
-                let cam_pos = glm::vec3(camera_position.x, camera_position.y, camera_position.z);
-                let (dist, point_on_plane) = projected_point_on_plane(&cam_pos, &triangle_plane);
-                
-                if robust_point_in_triangle(&point_on_plane, &triangle) && f32::abs(dist) < camera_hit_sphere_radius {
-                    camera_position += triangle.normal * (camera_hit_sphere_radius - dist);
-                } else {
-                    //Check if the camera is hitting an edge
-                    let (best_dist, best_point) = closest_point_on_triangle(&camera_position, &triangle);
+                if glm::distance(&camera_position, &triangle_sphere.focus) < camera_hit_sphere_radius + triangle_sphere.radius {
+                    let (dist, point_on_plane) = projected_point_on_plane(&camera_position, &triangle_plane);                
+                    if robust_point_in_triangle(&point_on_plane, &triangle) && f32::abs(dist) < camera_hit_sphere_radius {
+                        camera_position += triangle.normal * (camera_hit_sphere_radius - dist);
+                    } else {
+                        //Check if the camera is hitting an edge
+                        let (best_dist, best_point) = closest_point_on_triangle(&camera_position, &triangle);
 
-                    if best_dist < camera_hit_sphere_radius {
-                        let new_pos = camera_position + glm::normalize(&(camera_position - best_point)) * (camera_hit_sphere_radius - best_dist);
-                        camera_position = new_pos;
+                        if best_dist < camera_hit_sphere_radius {
+                            let new_pos = camera_position + glm::normalize(&(camera_position - best_point)) * (camera_hit_sphere_radius - best_dist);
+                            camera_position = new_pos;
+                        }
                     }
                 }
             }

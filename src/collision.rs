@@ -53,8 +53,8 @@ pub struct AABB {
 }
 
 pub struct Sphere {
-    focus: glm::TVec3<f32>,
-    radius: f32
+    pub focus: glm::TVec3<f32>,
+    pub radius: f32
 }
 
 pub struct Capsule {
@@ -179,18 +179,6 @@ pub fn segment_hit_plane(plane: &Plane, segment: &LineSegment) -> Option<glm::TV
     }
 }
 
-pub fn simple_point_in_triangle(test_point: &glm::TVec2<f32>, p0: &glm::TVec2<f32>, p1: &glm::TVec2<f32>, p2: &glm::TVec2<f32>) -> bool {
-    //Check if this collision point is actually in the triangle
-    let d1 = sign(&test_point, &p0, &p1);
-    let d2 = sign(&test_point, &p1, &p2);
-    let d3 = sign(&test_point, &p2, &p0);
-
-    let has_neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
-    let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
-
-    !(has_neg && has_pos)
-}
-
 //Precondition: point is in plane of triangle
 pub fn robust_point_in_triangle(test_point: &glm::TVec3<f32>, tri: &Triangle) -> bool {
     const EPSILON: f32 = 0.0001;
@@ -198,7 +186,6 @@ pub fn robust_point_in_triangle(test_point: &glm::TVec3<f32>, tri: &Triangle) ->
     //First get normal of (a, b, intersection)
     let n1 = {
         let n = glm::cross(&(tri.a - tri.b), &(test_point - tri.b));
-
         glm::normalize(&n)
     };
 
@@ -279,10 +266,6 @@ pub fn segment_hit_bounded_plane(plane: &Plane, segment: &LineSegment, boundarie
 
 pub fn point_plane_distance(point: &glm::TVec3<f32>, plane: &Plane) -> f32 {
     glm::dot(&plane.normal, &(point - plane.point))
-}
-
-pub fn sign(test: &glm::TVec2<f32>, p0: &glm::TVec2<f32>, p1: &glm::TVec2<f32>) -> f32 {
-    (test.x - p1.x) * (p0.y - p1.y) - (p0.x - p1.x) * (test.y - p1.y)
 }
 
 //The returned plane's reference point is the intersection point
