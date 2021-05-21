@@ -319,5 +319,10 @@ pub fn closest_point_on_triangle(test_point: &glm::TVec3<f32>, triangle: &Triang
 pub fn projected_point_on_plane(point: &glm::TVec3<f32>, plane: &Plane) -> (f32, glm::TVec3<f32>) {
     let dist1 = point_plane_distance(point, plane);
     let p = point + plane.normal * -dist1 ;
-    (dist1, glm::vec3(p.x, p.y, p.z))
+    (dist1, p)
+}
+
+//Midpoint between two points in 3D
+pub fn midpoint(p0: &glm::TVec3<f32>, p1: &glm::TVec3<f32>) -> glm::TVec3<f32> {
+    0.5 * (p0 + p1)
 }

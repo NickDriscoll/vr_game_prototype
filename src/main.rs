@@ -974,7 +974,6 @@ fn main() {
             }
 
             if kanye_source.state() != SourceState::Playing && kickstart_bgm && kanye_source.buffers_queued() == IDEAL_FRAMES_QUEUED {
-                println!("starting...");
                 kanye_source.play();
             }
 
@@ -1163,25 +1162,25 @@ fn main() {
                 }
             }
 
-            //Then match on what gadgets the player is holding            
-            match left_hand_gadget {
-                Gadget::Shotgun => {
+            //Then match on what gadgets the player is holding
+            if let Some(state) = left_trigger_state {            
+                match left_hand_gadget {
+                    Gadget::Shotgun => {
 
-                }
-                Gadget::StickyHand => {
+                    }
+                    Gadget::StickyHand => {
 
-                }
-                Gadget::WaterCannon => {
-                    //Calculate the force of shooting the water gun for the left hand
-                    if let Some(state) = left_trigger_state {
+                    }
+                    Gadget::WaterCannon => {
+                        //Calculate the force of shooting the water gun for the left hand
                         if let Some(pose) = xrutil::locate_space(&left_hand_aim_space, &tracking_space, last_xr_render_time) {
                             let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
                             let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
                             let world_space_vec = hand_transform * hand_space_vec;
-        
+            
                             //Calculate water gun force vector
                             water_gun_force = glm::vec4_to_vec3(&(-state.current_state * world_space_vec));
-        
+            
                             if state.current_state > 0.0 {
                                 water_pillar_scale.y = 100.0;
                                 if player.movement_state != MoveState::Falling {
@@ -1189,49 +1188,28 @@ fn main() {
                                 }
                             }
                         }
-                    }
-        
-                    if water_gun_force != glm::zero() && remaining_water > 0.0 {
-                        let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
-                        if !infinite_ammo {
-                            remaining_water -= glm::length(&update_force);
-                        }
-                        let xz_scale = remaining_water / MAX_WATER_REMAINING;
-                        water_pillar_scale.x = xz_scale;
-                        water_pillar_scale.z = xz_scale;
-                        player.tracking_velocity += update_force;
-        
-                        if let Some(entity) = scene_data.entities.get_mut_element(water_cylinder_entity_index) {
-                            //Update the water gun's pillar of water
-                            entity.uv_offset += glm::vec2(0.0, 5.0) * delta_time;
-                            entity.uv_scale.y = water_pillar_scale.y;
-                        }
-                    } else {
-                        water_pillar_scale = glm::zero();
                     }
                 }
             }
 
-            match right_hand_gadget {
-                Gadget::Shotgun => {
-
-                }
-                Gadget::StickyHand => {
-
-                }
-                Gadget::WaterCannon => {
-                    //Calculate the force of shooting the water gun for the right hand
-                    if let Some(state) = right_trigger_state {
+            if let Some(state) = right_trigger_state {
+                match right_hand_gadget {
+                    Gadget::Shotgun => {
+    
+                    }
+                    Gadget::StickyHand => {
+    
+                    }
+                    Gadget::WaterCannon => {
+                        //Calculate the force of shooting the water gun for the right hand
                         if let Some(pose) = xrutil::locate_space(&right_hand_aim_space, &tracking_space, last_xr_render_time) {
                             let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
                             let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
                             let world_space_vec = hand_transform * hand_space_vec;
-                            let hand_origin = hand_transform * glm::vec4(0.0, 0.0, 0.0, 1.0);
-                            let hand_origin = glm::vec4_to_vec3(&hand_origin);
-        
+            
                             //Calculate water gun force vector
                             water_gun_force = glm::vec4_to_vec3(&(-state.current_state * world_space_vec));
-        
+            
                             if state.current_state > 0.0 {
                                 water_pillar_scale.y = 100.0;
                                 if player.movement_state != MoveState::Falling {
@@ -1239,32 +1217,35 @@ fn main() {
                                 }
                             }
                         }
-                    }
-        
-                    if water_gun_force != glm::zero() && remaining_water > 0.0 {
-                        let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
-                        if !infinite_ammo {
-                            remaining_water -= glm::length(&update_force);
-                        }
-                        let xz_scale = remaining_water / MAX_WATER_REMAINING;
-                        water_pillar_scale.x = xz_scale;
-                        water_pillar_scale.z = xz_scale;
-                        player.tracking_velocity += update_force;
-        
-                        if let Some(entity) = scene_data.entities.get_mut_element(water_cylinder_entity_index) {
-                            //Update the water gun's pillar of water
-                            entity.uv_offset += glm::vec2(0.0, 5.0) * delta_time;
-                            entity.uv_scale.y = water_pillar_scale.y;
-                        }
-                    } else {
-                        water_pillar_scale = glm::zero();
+                        
                     }
                 }
+
             }
 
             if player.movement_state != MoveState::Falling {
                 remaining_water = MAX_WATER_REMAINING;
             }
+        }
+
+        //Apply watergun force to player
+        if water_gun_force != glm::zero() && remaining_water > 0.0 {
+            let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
+            if !infinite_ammo {
+                remaining_water -= glm::length(&update_force);
+            }
+            let xz_scale = remaining_water / MAX_WATER_REMAINING;
+            water_pillar_scale.x = xz_scale;
+            water_pillar_scale.z = xz_scale;
+            player.tracking_velocity += update_force;
+
+            if let Some(entity) = scene_data.entities.get_mut_element(water_cylinder_entity_index) {
+                //Update the water gun's pillar of water
+                entity.uv_offset += glm::vec2(0.0, 5.0) * delta_time;
+                entity.uv_scale.y = water_pillar_scale.y;
+            }
+        } else {
+            water_pillar_scale = glm::zero();
         }
 
         //If the user is controlling the camera, force the mouse cursor into the center of the screen
@@ -1328,12 +1309,13 @@ fn main() {
                 triangle.normal
             );
             let triangle_sphere = {
-                let focus = 0.5 * (triangle.c + 0.5 * (triangle.a + triangle.b));
+                let focus = midpoint(&triangle.c, &midpoint(&triangle.a, &triangle.b));
                 let radius = {
-                    let a_dist = glm::distance(&focus, &triangle.a);
-                    let b_dist = glm::distance(&focus, &triangle.b);
-                    let c_dist = glm::distance(&focus, &triangle.c);
-                    glm::max3_scalar(a_dist, b_dist, c_dist)
+                    glm::max3_scalar(
+                        glm::distance(&focus, &triangle.a),
+                        glm::distance(&focus, &triangle.b),
+                        glm::distance(&focus, &triangle.c)
+                    )
                 };
                 Sphere {
                     focus,
@@ -1362,54 +1344,59 @@ fn main() {
             //Check player capsule against triangle
             const MIN_NORMAL_LIKENESS: f32 = 0.5;
             {
-                let player_capsule = Capsule {
-                    segment: LineSegment {
-                        p0: player.tracked_segment.p0,
-                        p1: player.tracked_segment.p1 + glm::vec3(0.0, 0.0, player.radius)
-                    },
-                    radius: player.radius
+                //Coarse test with sphere
+                let player_sphere = Sphere {
+                    focus: midpoint(&(player.tracked_segment.p0 + glm::vec3(0.0, 0.0, player.radius)), &player.tracked_segment.p1),
+                    radius: glm::distance(&(player.tracked_segment.p0 + glm::vec3(0.0, 0.0, player.radius)), &player.tracked_segment.p1)
                 };
-                let capsule_ray = glm::normalize(&(player_capsule.segment.p1 - player_capsule.segment.p0));
-
-                //Finding the closest point on the triangle to the line segment of the capsule
-                let ref_point = match ray_hit_plane(&player_capsule.segment.p0, &capsule_ray, &triangle_plane) {
-                    Some((_, intersection)) => {
-                        if robust_point_in_triangle(&intersection, &triangle) {
-                            intersection
-                        } else {
-                            closest_point_on_triangle(&intersection, &triangle).1
+                if glm::distance(&player_sphere.focus, &triangle_sphere.focus) < player_sphere.radius + triangle_sphere.radius {
+                    let player_capsule = Capsule {
+                        segment: LineSegment {
+                            p0: player.tracked_segment.p0,
+                            p1: player.tracked_segment.p1 + glm::vec3(0.0, 0.0, player.radius)
+                        },
+                        radius: player.radius
+                    };
+                    let capsule_ray = player_capsule.segment.p1 - player_capsule.segment.p0;
+    
+                    //Finding the closest point on the triangle to the line segment of the capsule
+                    let ref_point = match ray_hit_plane(&player_capsule.segment.p0, &capsule_ray, &triangle_plane) {
+                        Some((_, intersection)) => {
+                            if robust_point_in_triangle(&intersection, &triangle) { intersection }
+                            else { closest_point_on_triangle(&intersection, &triangle).1 }
                         }
-                    }
-                    None => { triangle.a }
-                };
-                
-                //The point on the capsule line-segment that is to be used as the focus for the sphere
-                let capsule_ref = closest_point_on_line_segment(&ref_point, &player_capsule.segment.p0, &player_capsule.segment.p1);
-                
-                //Now do a triangle-sphere test with a sphere at this reference point
-                let (dist, point_on_plane) = projected_point_on_plane(&capsule_ref, &triangle_plane);
-                
-                //Branch on whether or not the sphere is colliding with the face of the triangle or an edge
-                if robust_point_in_triangle(&point_on_plane, &triangle) && f32::abs(dist) < player.radius {
-                    if glm::dot(&triangle.normal, &Z_UP) >= MIN_NORMAL_LIKENESS {
-                        let denom = glm::dot(&triangle.normal, &Z_UP);
-                        let t = (glm::dot(&triangle.normal, &(triangle.a - capsule_ref)) + player.radius) / denom;
-                        player.tracking_velocity = glm::zero();
-                        player.jumps_remaining = Player::MAX_JUMPS;
-                        player.tracking_position += Z_UP * t;
-                        remaining_water = MAX_WATER_REMAINING;
-                    } else {                        
-                        player.tracking_position += triangle.normal * (player.radius - dist);
-                    }
-                } else {
-                    let (best_dist, best_point) = closest_point_on_triangle(&capsule_ref, &triangle);
-
-                    if best_dist < player.radius {
-                        let push_dir = glm::normalize(&(capsule_ref - best_point));
-                        player.tracking_position += push_dir * (player.radius - best_dist);
-                        if glm::dot(&push_dir, &Z_UP) >= MIN_NORMAL_LIKENESS {
+                        None => { triangle.a }
+                    };
+                    
+                    //The point on the capsule line-segment that is to be used as the focus for the sphere
+                    let capsule_ref = closest_point_on_line_segment(&ref_point, &player_capsule.segment.p0, &player_capsule.segment.p1);
+                    
+                    //Now do a triangle-sphere test with a sphere at this reference point
+                    let (dist, point_on_plane) = projected_point_on_plane(&capsule_ref, &triangle_plane);
+                    
+                    //Branch on if the sphere is colliding with the face of the triangle or one of the edges
+                    if robust_point_in_triangle(&point_on_plane, &triangle) && f32::abs(dist) < player.radius {
+                        let dot_z_up = glm::dot(&triangle.normal, &Z_UP);
+                        if dot_z_up >= MIN_NORMAL_LIKENESS {
+                            let t = (glm::dot(&triangle.normal, &(triangle.a - capsule_ref)) + player.radius) / dot_z_up;
+                            player.tracking_position += Z_UP * t;
                             player.tracking_velocity = glm::zero();
                             player.jumps_remaining = Player::MAX_JUMPS;
+                            remaining_water = MAX_WATER_REMAINING;
+                        } else {                        
+                            player.tracking_position += triangle.normal * (player.radius - dist);
+                        }
+                    } else {
+                        let (best_dist, best_point) = closest_point_on_triangle(&capsule_ref, &triangle);
+    
+                        if best_dist < player.radius {
+                            let push_dir = glm::normalize(&(capsule_ref - best_point));
+                            player.tracking_position += push_dir * (player.radius - best_dist);
+                            if glm::dot(&push_dir, &Z_UP) >= MIN_NORMAL_LIKENESS {
+                                player.tracking_velocity = glm::zero();
+                                player.jumps_remaining = Player::MAX_JUMPS;
+                                remaining_water = MAX_WATER_REMAINING;
+                            }
                         }
                     }
                 }
