@@ -16,7 +16,7 @@ pub const INSTANCED_ATTRIBUTE: GLuint = 5;
 pub const TEXTURE_MAP_COUNT: usize = 3;
 
 //Represents all of the data necessary to render an object (potentially instanced) that exists in the 3D scene
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RenderEntity {
     pub should_be_rendered: bool,
     pub vao: GLuint,
@@ -74,13 +74,26 @@ impl RenderEntity {
 		if transforms.len() > 0 {
 			unsafe {
 				gl::BindBuffer(gl::ARRAY_BUFFER, self.transform_buffer);
-				gl::BufferSubData(gl::ARRAY_BUFFER,
-								0 as GLsizeiptr,
-								(transforms.len() * size_of::<GLfloat>()) as GLsizeiptr,
-								&transforms[0] as *const GLfloat as *const c_void
-								);
+				gl::BufferSubData(
+                    gl::ARRAY_BUFFER,
+					0 as GLsizeiptr,
+					(transforms.len() * size_of::<GLfloat>()) as GLsizeiptr,
+					&transforms[0] as *const GLfloat as *const c_void
+				);
 			}
 		}
+    }
+
+    pub fn update_sub_buffer(&mut self, transforms: &[f32], idx: usize) {
+        unsafe {
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.transform_buffer);
+            gl::BufferSubData(
+                gl::ARRAY_BUFFER,
+                (16 * idx * size_of::<GLfloat>()) as GLsizeiptr,
+                (transforms.len() * size_of::<GLfloat>()) as GLsizeiptr,
+                &transforms[0] as *const GLfloat as *const c_void
+            );
+        }
     }
 }
 

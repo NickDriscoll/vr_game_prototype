@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+//#![allow(dead_code)]
 use crate::render::SceneData;
 use crate::collision::LineSegment;
 
@@ -11,16 +11,15 @@ pub const LEFT_AIM_POSE: &str =                             "/user/hand/left/inp
 pub const LEFT_TRIGGER_FLOAT: &str =                        "/user/hand/left/input/trigger/value";
 pub const LEFT_STICK_VECTOR2: &str =                        "/user/hand/left/input/thumbstick";
 pub const LEFT_TRACKPAD_VECTOR2: &str =                     "/user/hand/left/input/trackpad";
+pub const LEFT_TRACKPAD_CLICK: &str =                       "/user/hand/left/input/trackpad/click";
+pub const LEFT_B_BUTTON: &str =                             "/user/hand/left/input/b/click";
 pub const RIGHT_TRACKPAD_CLICK: &str =                      "/user/hand/right/input/trackpad/click";
 pub const RIGHT_TRACKPAD_FORCE: &str =                      "/user/hand/right/input/trackpad/force";
 pub const RIGHT_TRIGGER_FLOAT: &str =                       "/user/hand/right/input/trigger/value";
 pub const RIGHT_GRIP_POSE: &str =                           "/user/hand/right/input/grip/pose";
 pub const RIGHT_AIM_POSE: &str =                            "/user/hand/right/input/aim/pose";
 pub const RIGHT_A_BUTTON_BOOL: &str =                       "/user/hand/right/input/a/click";
-
-pub fn print_pose(pose: xr::Posef) {
-    println!("Position: ({}, {}, {})", pose.position.x, pose.position.y, pose.position.z);
-}
+pub const RIGHT_B_BUTTON: &str =                            "/user/hand/right/input/b/click";
 
 pub fn suggest_bindings(inst: &xr::Instance, interaction_path: &str, bindings: &[xr::Binding]) {    
     let profile = inst.string_to_path(interaction_path).unwrap();

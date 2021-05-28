@@ -34,6 +34,7 @@ use std::sync::mpsc;
 use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::{Duration, Instant};
+use strum::EnumCount;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use ozy::{glutil, io};
 use ozy::glutil::ColorSpace;
@@ -47,7 +48,7 @@ use crate::structs::*;
 #[cfg(windows)]
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
 
-fn shader_compile_or_error(vert: &str, frag: &str) -> GLuint {
+fn shader_compile_or_crash(vert: &str, frag: &str) -> GLuint {
     match glutil::compile_program_from_files(vert, frag)  { 
         Ok(program) => { program }
         Err(e) => {
@@ -70,11 +71,8 @@ fn vec_to_array(vec: glm::TVec3<f32>) -> [f32; 3] {
 
 //Sets a flag to a value or unsets the flag if it already is the value
 fn handle_radio_flag<F: Eq + Default>(current_flag: &mut F, new_flag: F) {
-    if *current_flag != new_flag {
-        *current_flag = new_flag;
-    } else {
-        *current_flag = F::default();
-    }
+    if *current_flag != new_flag { *current_flag = new_flag; }
+    else { *current_flag = F::default(); }
 }
 
 fn reset_player_position(player: &mut Player) {    
@@ -111,6 +109,7 @@ fn main() {
 
     //Initialize the configuration data
     let config = {
+        //If we can't read from the config file, we create one with the default values
         match Configuration::from_file(Configuration::CONFIG_FILEPATH) {
             Some(cfg) => { cfg }
             None => {
@@ -248,14 +247,17 @@ fn main() {
     let left_grip_pose_path = xrutil::make_path(&xr_instance, xrutil::LEFT_GRIP_POSE);
     let left_aim_pose_path = xrutil::make_path(&xr_instance, xrutil::LEFT_AIM_POSE);
     let left_trigger_float_path = xrutil::make_path(&xr_instance, xrutil::LEFT_TRIGGER_FLOAT);
+    let left_b_path = xrutil::make_path(&xr_instance, xrutil::LEFT_B_BUTTON);
+    let left_stick_vector_path = xrutil::make_path(&xr_instance, xrutil::LEFT_STICK_VECTOR2);
+    let left_trackpad_vector_path = xrutil::make_path(&xr_instance, xrutil::LEFT_TRACKPAD_VECTOR2);
+    let left_trackpad_click_path = xrutil::make_path(&xr_instance, xrutil::LEFT_TRACKPAD_CLICK);
     let right_trigger_float_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_TRIGGER_FLOAT);
     let right_grip_pose_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_GRIP_POSE);
     let right_aim_pose_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_AIM_POSE);
     let right_trackpad_force_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_TRACKPAD_FORCE);
     let right_trackpad_click_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_TRACKPAD_CLICK);
-    let left_stick_vector_path = xrutil::make_path(&xr_instance, xrutil::LEFT_STICK_VECTOR2);
-    let left_trackpad_vector_path = xrutil::make_path(&xr_instance, xrutil::LEFT_TRACKPAD_VECTOR2);
     let right_a_button_bool_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_A_BUTTON_BOOL);
+    let right_b_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_B_BUTTON);
 
     //Create the hand subaction paths
     let left_hand_subaction_path = xrutil::make_path(&xr_instance, xr::USER_HAND_LEFT);
@@ -270,6 +272,8 @@ fn main() {
     let right_hand_aim_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_aim", "Right hand aim");
     let go_home_action = xrutil::make_action::<bool>(&right_hand_subaction_path, &xr_controller_actionset, "item_menu", "Interact with item menu");
     let player_move_action = xrutil::make_action::<xr::Vector2f>(&left_hand_subaction_path, &xr_controller_actionset, "player_move", "Player movement");
+    let left_switch_gadget = xrutil::make_action::<bool>(&left_hand_subaction_path, &xr_controller_actionset, "left_switch_gadget", "Left hand switch gadget");
+    let right_switch_gadget = xrutil::make_action::<bool>(&right_hand_subaction_path, &xr_controller_actionset, "right_switch_gadget", "Right hand switch gadget");
 
     //Suggest interaction profile bindings
     match (&xr_instance,
@@ -291,7 +295,12 @@ fn main() {
            &right_hand_aim_action,
            &right_aim_pose_path,
            &right_trackpad_click_path,
-           &right_a_button_bool_path) {
+           &right_a_button_bool_path,
+           &left_b_path,
+           &left_switch_gadget,
+           &right_b_path,
+           &right_switch_gadget,
+           &left_trackpad_click_path) {
         (Some(inst),
          Some(l_grip_action),
          Some(l_aim_action),
@@ -311,7 +320,12 @@ fn main() {
          Some(r_aim_action),
          Some(r_aim_path),
          Some(r_track_click_path),
-         Some(r_a_button_path)) => {
+         Some(r_a_button_path),
+         Some(l_b_path),
+         Some(l_switch),
+         Some(r_b_path),
+         Some(r_switch),
+        Some(l_track_click_path)) => {
             //Valve Index
             let bindings = [
                 xr::Binding::new(l_grip_action, *l_grip_path),
@@ -321,7 +335,9 @@ fn main() {
                 xr::Binding::new(r_trigger_action, *r_trigger_path),
                 xr::Binding::new(r_action, *r_path),
                 xr::Binding::new(move_action, *l_stick_path),
-                xr::Binding::new(i_menu_action, *r_trackpad_force)
+                xr::Binding::new(i_menu_action, *r_trackpad_force),
+                xr::Binding::new(l_switch, *l_b_path),
+                xr::Binding::new(r_switch, *r_b_path)
             ];
             xrutil::suggest_bindings(inst, xrutil::VALVE_INDEX_INTERACTION_PROFILE, &bindings);
 
@@ -334,7 +350,9 @@ fn main() {
                 xr::Binding::new(r_trigger_action, *r_trigger_path),
                 xr::Binding::new(r_action, *r_path),
                 xr::Binding::new(move_action, *l_trackpad_path),                   
-                xr::Binding::new(i_menu_action, *r_track_click_path)
+                xr::Binding::new(i_menu_action, *r_track_click_path),
+                xr::Binding::new(l_switch, *l_track_click_path),
+                xr::Binding::new(r_switch, *r_track_click_path)
             ];
             xrutil::suggest_bindings(inst, xrutil::HTC_VIVE_INTERACTION_PROFILE, &bindings);
 
@@ -347,7 +365,8 @@ fn main() {
                 xr::Binding::new(r_trigger_action, *r_trigger_path),
                 xr::Binding::new(r_action, *r_path),
                 xr::Binding::new(move_action, *l_stick_path),
-                xr::Binding::new(i_menu_action, *r_a_button_path)
+                xr::Binding::new(l_switch, *l_b_path),
+                xr::Binding::new(r_switch, *r_a_button_path)
             ];
             xrutil::suggest_bindings(inst, xrutil::OCULUS_TOUCH_INTERACTION_PROFILE, &bindings);
         }
@@ -566,10 +585,10 @@ fn main() {
     };
 
     //Compile shader programs
-    let standard_program = shader_compile_or_error("shaders/standard.vert", "shaders/standard.frag");
-    let shadow_program = shader_compile_or_error("shaders/shadow.vert", "shaders/shadow.frag");
-    let skybox_program = shader_compile_or_error("shaders/skybox.vert", "shaders/skybox.frag");
-    let imgui_program = shader_compile_or_error("shaders/ui/imgui.vert", "shaders/ui/imgui.frag");
+    let standard_program = shader_compile_or_crash("shaders/standard.vert", "shaders/standard.frag");
+    let shadow_program = shader_compile_or_crash("shaders/shadow.vert", "shaders/shadow.frag");
+    let skybox_program = shader_compile_or_crash("shaders/skybox.vert", "shaders/skybox.frag");
+    let imgui_program = shader_compile_or_crash("shaders/ui/imgui.vert", "shaders/ui/imgui.frag");
     
     //Initialize default framebuffer
     let mut default_framebuffer = Framebuffer {
@@ -733,14 +752,11 @@ fn main() {
     };
     
     //Load terrain data
-    let terrain;
-    {
+    let terrain = {
         let terrain_name = match config.string_options.get(Configuration::LEVEL_NAME) {
             Some(name) => { name }
             None => { "testmap" }
         };
-        terrain = Terrain::from_ozt(&format!("models/{}.ozt", terrain_name));
-        println!("Loaded {} collision triangles from {}.ozt", terrain.indices.len() / 3, terrain_name);
 
         //Load the scene data from the level file
         match File::open(&format!("maps/{}.lvl", terrain_name)) {
@@ -761,15 +777,11 @@ fn main() {
                     //Read number of matrices
                     let matrices_count = match io::read_u32(&mut file) {
                         Ok(count) => { count as usize } 
-                        Err(e) => {
-                            panic!("Error reading from level file: {}", e);
-                        }
+                        Err(e) => { panic!("Error reading from level file: {}", e); }
                     };
                     let matrix_floats = match io::read_f32_data(&mut file, matrices_count as usize * 16) {
                         Ok(floats) => { floats }
-                        Err(e) => {
-                            panic!("Error reading from level file: {}", e);
-                        }
+                        Err(e) => { panic!("Error reading from level file: {}", e); }
                     };
 
                     let mut entity = RenderEntity::from_ozy(&format!("models/{}", ozy_name), standard_program, matrices_count, &mut texture_keeper, &default_tex_params);
@@ -781,21 +793,36 @@ fn main() {
                 panic!("Couldn't open level file: {}", e);
             }
         }
-    }
+        let t = Terrain::from_ozt(&format!("models/{}.ozt", terrain_name));
+        println!("Loaded {} collision triangles from {}.ozt", t.indices.len() / 3, terrain_name);
+        t
+    };
 
     //Create dragon
     let mut dragon_position = glm::vec3(56.009315, 21.064762, 17.284132);
     let dragon_entity_index = scene_data.entities.insert(RenderEntity::from_ozy("models/dragon.ozy", standard_program, 1, &mut texture_keeper, &default_tex_params));
 
     //Load gadget models
-    let mut wand_entity = RenderEntity::from_ozy("models/wand.ozy", standard_program, 2, &mut texture_keeper, &default_tex_params);
-    let mut stick_entity = RenderEntity::from_ozy("models/stick.ozy", standard_program, 2, &mut texture_keeper, &default_tex_params);
+    let gadget_model_map = {
+        let wand_entity = RenderEntity::from_ozy("models/wand.ozy", standard_program, 2, &mut texture_keeper, &default_tex_params);
+        let stick_entity = RenderEntity::from_ozy("models/stick.ozy", standard_program, 2, &mut texture_keeper, &default_tex_params);
+        let mut h = HashMap::new();
+        h.insert(Gadget::Shotgun, wand_entity);
+        h.insert(Gadget::WaterCannon, stick_entity);
+        h
+    };
 
     //Gadget state setup
     let mut left_hand_gadget = Gadget::Shotgun;
     let mut right_hand_gadget = Gadget::Shotgun;
-    let mut left_gadget_index = scene_data.entities.insert(wand_entity.clone());
-    let mut right_gadget_index = scene_data.entities.insert(stick_entity.clone());
+    let mut left_gadget_index = match gadget_model_map.get(&left_hand_gadget) {
+        Some(entity) => { scene_data.entities.insert(entity.clone()) }
+        None => { panic!("No model found for {:?}", left_hand_gadget); }
+    };
+    let mut right_gadget_index = match gadget_model_map.get(&right_hand_gadget) {
+        Some(entity) => { scene_data.entities.insert(entity.clone()) }
+        None => { panic!("No model found for {:?}", right_hand_gadget); }
+    };
 
     //Set up global flags lol
     let mut is_fullscreen = false;
@@ -878,7 +905,7 @@ fn main() {
         let mut decoder = load_decoder(DEFAULT_MUSIC_PATH);
 
         let mut kanye_source = alto_context.new_streaming_source().unwrap();
-        let mut kickstart_bgm = true;
+        let mut kickstart_bgm = false;
         loop {
             //Process all commands from the main thread
             while let Ok(command) = audio_receiver.try_recv() {
@@ -896,23 +923,20 @@ fn main() {
                                 decoder = load_decoder(&res);
                             
                                 //Clear out any residual sound data from the old mp3
-                                while kanye_source.buffers_queued() > 0 {
-                                    kanye_source.unqueue_buffer().unwrap();
-                                }
+                                kanye_source = alto_context.new_streaming_source().unwrap();
                                 kickstart_bgm = true;
                             }
                             None => { kanye_source.play(); }
                         }
                     }
                     AudioCommand::PlayPause => {
+                        kickstart_bgm = !kickstart_bgm;
                         match kanye_source.state() {
                             SourceState::Playing | SourceState::Initial => {
                                 kanye_source.pause();
-                                kickstart_bgm = false;
                             }
                             SourceState::Paused | SourceState::Stopped => {
                                 kanye_source.play();
-                                kickstart_bgm = true;
                             }
                             SourceState::Unknown(code) => { println!("Source is in an unknown state: {}", code); }
                         }
@@ -1018,15 +1042,10 @@ fn main() {
         //Get action states
         let left_stick_state = xrutil::get_actionstate(&xr_session, &player_move_action);
         let left_trigger_state = xrutil::get_actionstate(&xr_session, &left_gadget_action);
+        let left_switch_state = xrutil::get_actionstate(&xr_session, &left_switch_gadget);
+        let right_switch_state = xrutil::get_actionstate(&xr_session, &right_switch_gadget);
         let right_trigger_state = xrutil::get_actionstate(&xr_session, &right_gadget_action);
         let right_trackpad_force_state = xrutil::get_actionstate(&xr_session, &go_home_action);
-
-        //Emergency escape button
-        if let Some(state) = right_trackpad_force_state {
-            if state.changed_since_last_sync && state.current_state {
-                reset_player_position(&mut player);
-            }
-        }
 
         //Poll window events and handle them
         glfw.poll_events();
@@ -1125,16 +1144,6 @@ fn main() {
         //Begin drawing imgui frame
         let imgui_ui = imgui_context.frame();
 
-        //Gravity the player
-        const GRAVITY_VELOCITY_CAP: f32 = 10.0;
-        const ACCELERATION_GRAVITY: f32 = 20.0;        //20.0 m/s^2
-        if player.movement_state != MoveState::Grounded {
-            player.tracking_velocity.z -= ACCELERATION_GRAVITY * delta_time;
-            if player.tracking_velocity.z > GRAVITY_VELOCITY_CAP {
-                player.tracking_velocity.z = GRAVITY_VELOCITY_CAP;
-            }
-        }
-
         //Handle player inputs
         {
             const MOVEMENT_SPEED: f32 = 5.0;
@@ -1162,11 +1171,40 @@ fn main() {
                 }
             }
 
+            if let Some(state) = left_switch_state {
+                if state.changed_since_last_sync && state.current_state {
+                    let new = (left_hand_gadget as usize + 1) % Gadget::COUNT;
+                    left_hand_gadget = Gadget::from_usize(new);                    
+
+                    if let Some(ent) = scene_data.entities.get_mut_element(left_gadget_index) {
+                        unsafe { ent.update_single_transform(0, &glm::zero()); }
+                    }
+                    if let Some(ent) = gadget_model_map.get(&left_hand_gadget) {
+                        scene_data.entities.replace(left_gadget_index, ent.clone());
+                    }                    
+                }
+            }
+            //println!("{:?}", scene_data.entities[left_gadget_index]);
+
+            if let Some(state) = right_switch_state {
+                if state.changed_since_last_sync && state.current_state {
+                    
+                }
+            }
+
             //Then match on what gadgets the player is holding
             if let Some(state) = left_trigger_state {            
                 match left_hand_gadget {
                     Gadget::Shotgun => {
-
+                        if state.changed_since_last_sync && state.current_state == 1.0 {
+                            if let Some(pose) = xrutil::locate_space(&left_hand_aim_space, &tracking_space, last_xr_render_time) {
+                                let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
+                                let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
+                                let world_space_vec = hand_transform * hand_space_vec;
+                                
+                                player.tracking_velocity += 20.0 * -glm::vec4_to_vec3(&world_space_vec);
+                            }                            
+                        }
                     }
                     Gadget::StickyHand => {
 
@@ -1195,7 +1233,15 @@ fn main() {
             if let Some(state) = right_trigger_state {
                 match right_hand_gadget {
                     Gadget::Shotgun => {
-    
+                        if state.changed_since_last_sync && state.current_state == 1.0 {
+                            if let Some(pose) = xrutil::locate_space(&right_hand_aim_space, &tracking_space, last_xr_render_time) {
+                                let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
+                                let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
+                                let world_space_vec = hand_transform * hand_space_vec;
+                                
+                                player.tracking_velocity += 20.0 * -glm::vec4_to_vec3(&world_space_vec);
+                            }                            
+                        }    
                     }
                     Gadget::StickyHand => {
     
@@ -1220,11 +1266,20 @@ fn main() {
                         
                     }
                 }
-
             }
 
             if player.movement_state != MoveState::Falling {
                 remaining_water = MAX_WATER_REMAINING;
+            }
+        }
+
+        //Gravity the player
+        const GRAVITY_VELOCITY_CAP: f32 = 10.0;
+        const ACCELERATION_GRAVITY: f32 = 20.0;        //20.0 m/s^2
+        if player.movement_state != MoveState::Grounded {
+            player.tracking_velocity.z -= ACCELERATION_GRAVITY * delta_time;
+            if player.tracking_velocity.z > GRAVITY_VELOCITY_CAP {
+                player.tracking_velocity.z = GRAVITY_VELOCITY_CAP;
             }
         }
 
@@ -1308,15 +1363,15 @@ fn main() {
                 triangle.a,
                 triangle.normal
             );
+
+            //We create a bounding sphere for each triangle in order to do a coarse collision step with other objects
             let triangle_sphere = {
                 let focus = midpoint(&triangle.c, &midpoint(&triangle.a, &triangle.b));
-                let radius = {
-                    glm::max3_scalar(
-                        glm::distance(&focus, &triangle.a),
-                        glm::distance(&focus, &triangle.b),
-                        glm::distance(&focus, &triangle.c)
-                    )
-                };
+                let radius = glm::max3_scalar(
+                    glm::distance(&focus, &triangle.a),
+                    glm::distance(&focus, &triangle.b),
+                    glm::distance(&focus, &triangle.c)
+                );
                 Sphere {
                     focus,
                     radius
@@ -1601,7 +1656,7 @@ fn main() {
                                 }
                                 if let Some(pose) = &right_grip_pose {
                                     if let Some(entity) = scene_data.entities.get_mut_element(right_gadget_index) {
-                                        entity.update_single_transform(0, &xrutil::pose_to_mat4(pose, &world_from_tracking))
+                                        entity.update_single_transform(1, &xrutil::pose_to_mat4(pose, &world_from_tracking))
                                     }
                                 }
                             }
