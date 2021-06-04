@@ -3,16 +3,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::io::prelude::*;
 use crate::collision::*;
-
-pub enum AudioCommand {
-    SetListenerPosition([f32; 3]),
-    SetListenerVelocity([f32; 3]),
-    SetListenerOrientation(([f32; 3], [f32; 3])),
-    SetSourcePosition([f32; 3], usize),
-    SetListenerGain(f32),
-    SelectNewBGM,
-    PlayPause
-}
+use crate::gadget::Gadget;
 
 #[derive(PartialEq, Eq)]
 pub enum MoveState {
@@ -43,6 +34,12 @@ pub struct Player {
 
 impl Player {
     pub const MAX_JUMPS: usize = 2;
+}
+
+pub fn ground_player(player: &mut Player, max_energy: &mut f32) {    
+    player.tracking_velocity = glm::zero();
+    player.jumps_remaining = Player::MAX_JUMPS;
+    *max_energy = Gadget::MAX_ENERGY;
 }
 
 pub fn set_player_falling(player: &mut Player) {

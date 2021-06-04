@@ -189,7 +189,7 @@ impl ViewData {
 }
 
 //This is the function that renders the image you would actually see on screen/in HMD
-pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
+pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
     let texture_map_names = ["albedo_tex", "normal_tex", "roughness_tex", "shadow_map"];
     let sun_shadow_map = &scene_data.sun_shadow_map;
 
@@ -259,7 +259,7 @@ pub unsafe fn render_main_scene(scene_data: &SceneData, view_data: &ViewData) {
     gl::DrawElements(gl::TRIANGLES, 36, gl::UNSIGNED_SHORT, ptr::null());
 }
 
-pub unsafe fn render_cascaded_shadow_map(shadow_map: &CascadedShadowMap, entities: &[Option<RenderEntity>]) {
+pub unsafe fn cascaded_shadow_map(shadow_map: &CascadedShadowMap, entities: &[Option<RenderEntity>]) {
     gl::UseProgram(shadow_map.program);
     for i in 0..SHADOW_CASCADES {
         //Configure rendering for this cascade

@@ -3,16 +3,18 @@
 extern crate minimp3 as mp3;
 extern crate nalgebra_glm as glm;
 extern crate openxr as xr;
-extern crate ozy_engine as ozy;
 extern crate tinyfiledialogs as tfd;
 
+extern crate ozy_engine as ozy;
+
+mod audio;
 mod collision;
 mod gadget;
 mod structs;
 mod render;
 mod xrutil;
 
-use render::{compute_shadow_cascade_matrices, render_main_scene, render_cascaded_shadow_map, CascadedShadowMap, FragmentFlag, RenderEntity, SceneData, ViewData};
+use render::{compute_shadow_cascade_matrices, CascadedShadowMap, FragmentFlag, RenderEntity, SceneData, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
 use alto::{sys::ALint, Source, SourceState};
@@ -41,6 +43,7 @@ use ozy::glutil::ColorSpace;
 use ozy::render::{Framebuffer, RenderTarget, ScreenState, TextureKeeper};
 use ozy::structs::OptionVec;
 
+use crate::audio::{AudioCommand};
 use crate::collision::*;
 use crate::gadget::*;
 use crate::structs::*;
@@ -48,7 +51,7 @@ use crate::structs::*;
 #[cfg(windows)]
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
 
-fn shader_compile_or_crash(vert: &str, frag: &str) -> GLuint {
+fn compile_shader_or_crash(vert: &str, frag: &str) -> GLuint {
     match glutil::compile_program_from_files(vert, frag)  { 
         Ok(program) => { program }
         Err(e) => {
@@ -585,10 +588,10 @@ fn main() {
     };
 
     //Compile shader programs
-    let standard_program = shader_compile_or_crash("shaders/standard.vert", "shaders/standard.frag");
-    let shadow_program = shader_compile_or_crash("shaders/shadow.vert", "shaders/shadow.frag");
-    let skybox_program = shader_compile_or_crash("shaders/skybox.vert", "shaders/skybox.frag");
-    let imgui_program = shader_compile_or_crash("shaders/ui/imgui.vert", "shaders/ui/imgui.frag");
+    let standard_program = compile_shader_or_crash("shaders/standard.vert", "shaders/standard.frag");
+    let shadow_program = compile_shader_or_crash("shaders/shadow.vert", "shaders/shadow.frag");
+    let skybox_program = compile_shader_or_crash("shaders/skybox.vert", "shaders/skybox.frag");
+    let imgui_program = compile_shader_or_crash("shaders/ui/imgui.vert", "shaders/ui/imgui.frag");
     
     //Initialize default framebuffer
     let mut default_framebuffer = Framebuffer {
@@ -702,15 +705,15 @@ fn main() {
 
     //Water gun state
     const MAX_WATER_PRESSURE: f32 = 30.0;
-    const MAX_WATER_REMAINING: f32 = 75.0;
     let mut water_gun_force = glm::zero();
     let mut infinite_ammo = false;
-    let mut remaining_water = MAX_WATER_REMAINING;
-    let mut water_pillar_scale: glm::TVec3<f32> = glm::zero();
+    let mut remaining_water = Gadget::MAX_ENERGY;
 
     //Water gun graphics data
+    let mut left_water_pillar_scale: glm::TVec3<f32> = glm::zero();
+    let mut right_water_pillar_scale: glm::TVec3<f32> = glm::zero();
     let water_cylinder_path = "models/water_cylinder.ozy";
-    let water_cylinder_entity_index = scene_data.entities.insert(RenderEntity::from_ozy(water_cylinder_path, standard_program, 1, &mut texture_keeper, &default_tex_params));
+    let water_cylinder_entity_index = scene_data.entities.insert(RenderEntity::from_ozy(water_cylinder_path, standard_program, 2, &mut texture_keeper, &default_tex_params));
     
     //Matrices for relating tracking space and world space
     let mut world_from_tracking = glm::identity();
@@ -807,14 +810,14 @@ fn main() {
         let wand_entity = RenderEntity::from_ozy("models/wand.ozy", standard_program, 2, &mut texture_keeper, &default_tex_params);
         let stick_entity = RenderEntity::from_ozy("models/stick.ozy", standard_program, 2, &mut texture_keeper, &default_tex_params);
         let mut h = HashMap::new();
-        h.insert(Gadget::Shotgun, wand_entity);
-        h.insert(Gadget::WaterCannon, stick_entity);
+        h.insert(GadgetType::Shotgun, wand_entity);
+        h.insert(GadgetType::WaterCannon, stick_entity);
         h
     };
 
     //Gadget state setup
-    let mut left_hand_gadget = Gadget::Shotgun;
-    let mut right_hand_gadget = Gadget::Shotgun;
+    let mut left_hand_gadget = GadgetType::Shotgun;
+    let mut right_hand_gadget = GadgetType::Shotgun;
     let mut left_gadget_index = match gadget_model_map.get(&left_hand_gadget) {
         Some(entity) => { scene_data.entities.insert(entity.clone()) }
         None => { panic!("No model found for {:?}", left_hand_gadget); }
@@ -839,172 +842,16 @@ fn main() {
         glfw.set_swap_interval(SwapInterval::None);
     }
 
+    //Frame timing variables
     let mut frame_count = 0;
     let mut last_frame_instant = Instant::now();
     let mut last_xr_render_time = xr::Time::from_nanos(1);
     let mut elapsed_time = 0.0;
 
     //Init audio system
-    const DEFAULT_MUSIC_PATH: &str = "music/town_battle.mp3";
     let mut bgm_volume = 50.0;
     let (audio_sender, audio_receiver) = mpsc::channel();
-    thread::spawn(move || {
-        const IDEAL_FRAMES_QUEUED: ALint = 10;
-        fn load_decoder(path: &str) -> mp3::Decoder<File> {
-            let bgm_file = match File::open(path) {
-                Ok(f) => { f }
-                Err(e) => {
-                    println!("Couldn't open bgm file: {}", e);
-                    exit(-1);
-                }
-            };
-            mp3::Decoder::new(bgm_file)
-        }
-
-        fn set_linearized_gain(ctxt: &alto::Context, volume: f32) {            
-            let gain_factor = (f32::exp(volume / 100.0) - 1.0) / (glm::e::<f32>() - 1.0);
-            ctxt.set_gain(gain_factor).unwrap();
-        }
-
-        //Initializing the OpenAL context
-        //This can fail if OpenAL is not installed on the host system
-        let alto_context = match alto::Alto::load_default() {
-            Ok(a) => { 
-                let alto = a;
-                match alto.default_output() {
-                    Some(string) => {
-                        match alto.open(Some(&string)) {
-                            Ok(dev) => {
-                                match dev.new_context(None) {
-                                    Ok(ctxt) => { ctxt }
-                                    Err(e) => {
-                                        tfd::message_box_ok("OpenAL Error", &format!("Error creating OpenAL context: {}\n\nThe game will still work, but without any audio.", e), tfd::MessageBoxIcon::Warning);
-                                        return;
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                tfd::message_box_ok("OpenAL Error", &format!("Error opening default audio device: {}\n\nThe game will still work, but without any audio.", e), tfd::MessageBoxIcon::Warning);
-                                return;
-                            }
-                        }
-                    }
-                    None => {
-                        tfd::message_box_ok("OpenAL Error", "No default audio output device found\n\nThe game will still work, but without any audio.", tfd::MessageBoxIcon::Warning);
-                        return;
-                    }
-                }
-            }
-            Err(e) => {
-                tfd::message_box_ok("OpenAL Error", &format!("Error initializing OpenAL: {}\n\nThe game will still work, but without any audio.", e), tfd::MessageBoxIcon::Warning);
-                return;
-            }
-        };
-        set_linearized_gain(&alto_context, bgm_volume);
-
-        let mut decoder = load_decoder(DEFAULT_MUSIC_PATH);
-
-        let mut kanye_source = alto_context.new_streaming_source().unwrap();
-        let mut kickstart_bgm = false;
-        loop {
-            //Process all commands from the main thread
-            while let Ok(command) = audio_receiver.try_recv() {
-                match command {
-                    AudioCommand::SetListenerPosition(pos) => { alto_context.set_position(pos).unwrap(); }
-                    AudioCommand::SetListenerVelocity(vel) => { alto_context.set_velocity(vel).unwrap(); }
-                    AudioCommand::SetListenerOrientation(ori) => { alto_context.set_orientation(ori).unwrap(); }
-                    AudioCommand::SetSourcePosition(pos, i) => { kanye_source.set_position(pos).unwrap(); }
-                    AudioCommand::SetListenerGain(volume) => { set_linearized_gain(&alto_context, volume); }
-                    AudioCommand::SelectNewBGM => {
-                        kanye_source.pause();
-                        match tfd::open_file_dialog("Choose bgm", "music/", Some((&["*.mp3"], "mp3 files (*.mp3)"))) {
-                            Some(res) => {
-                                kanye_source.stop();
-                                decoder = load_decoder(&res);
-                            
-                                //Clear out any residual sound data from the old mp3
-                                kanye_source = alto_context.new_streaming_source().unwrap();
-                                kickstart_bgm = true;
-                            }
-                            None => { kanye_source.play(); }
-                        }
-                    }
-                    AudioCommand::PlayPause => {
-                        kickstart_bgm = !kickstart_bgm;
-                        match kanye_source.state() {
-                            SourceState::Playing | SourceState::Initial => {
-                                kanye_source.pause();
-                            }
-                            SourceState::Paused | SourceState::Stopped => {
-                                kanye_source.play();
-                            }
-                            SourceState::Unknown(code) => { println!("Source is in an unknown state: {}", code); }
-                        }
-                    }
-                }
-            }
-
-            //If there are fewer than the ideal frames queued, prepare and queue a frame
-            if kanye_source.buffers_queued() < IDEAL_FRAMES_QUEUED {
-                match decoder.next_frame() {
-                    Ok(frame) => {
-                        if frame.channels == 1 {
-                            let mut mono_samples = Vec::with_capacity(frame.data.len());
-                            for sample in frame.data {
-                                mono_samples.push(
-                                    alto::Mono {
-                                        center: sample
-                                    }
-                                );
-                            }
-
-                            if let Ok(sample_buffer) = alto_context.new_buffer(mono_samples, frame.sample_rate) {
-                                kanye_source.queue_buffer(sample_buffer).unwrap();
-                            }
-                        } else if frame.channels == 2 {
-                            let mut stereo_samples = Vec::with_capacity(frame.data.len());
-                            for i in (0..frame.data.len()).step_by(2) {
-                                stereo_samples.push(
-                                    alto::Stereo {
-                                        left: frame.data[i],
-                                        right: frame.data[i + 1]
-                                    }
-                                );
-                            }
-
-                            if let Ok(sample_buffer) = alto_context.new_buffer(stereo_samples, frame.sample_rate) {
-                                kanye_source.queue_buffer(sample_buffer).unwrap();
-                            }
-                        } else {
-                            println!("Audio file must have one or two channels.");
-                            return;
-                        }
-                    }
-                    Err(e) => {
-                        match e {
-                            mp3::Error::Eof => {
-                                println!("Looping the mp3");
-                                decoder.reader_mut().seek(SeekFrom::Start(0)).unwrap();
-                            }
-                            _ => { println!("Error decoding mp3 frame: {}", e); }
-                        }
-                    }
-                }
-            }
-
-            //Unqueue any processed buffers
-            while kanye_source.buffers_processed() > 0 {
-                kanye_source.unqueue_buffer().unwrap();
-            }
-
-            if kanye_source.state() != SourceState::Playing && kickstart_bgm && kanye_source.buffers_queued() == IDEAL_FRAMES_QUEUED {
-                kanye_source.play();
-            }
-
-            //Sleeping to avoid throttling a CPU core
-            thread::sleep(Duration::from_millis(10));
-        }
-    });
+    audio::audio_main(audio_receiver, bgm_volume);
 
     let key_directions = {
         let mut hm = HashMap::new();
@@ -1163,7 +1010,7 @@ fn main() {
                         } else {
                             //World space untreated vector
                             let untreated = xrutil::pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec;
-                            let ugh = glm::normalize(&glm::vec3(untreated.x, untreated.y, 0.0)) * MOVEMENT_SPEED * magnitude;                            
+                            let ugh = glm::normalize(&glm::vec3(untreated.x, untreated.y, 0.0)) * MOVEMENT_SPEED * magnitude;
                             player.tracking_velocity = glm::vec3(ugh.x, ugh.y, player.tracking_velocity.z);
                             player.movement_state = MoveState::Falling;
                         }
@@ -1173,103 +1020,101 @@ fn main() {
 
             if let Some(state) = left_switch_state {
                 if state.changed_since_last_sync && state.current_state {
-                    let new = (left_hand_gadget as usize + 1) % Gadget::COUNT;
-                    left_hand_gadget = Gadget::from_usize(new);                    
+                    let new = (left_hand_gadget as usize + 1) % GadgetType::COUNT;
+                    left_hand_gadget = GadgetType::from_usize(new);                    
 
                     if let Some(ent) = scene_data.entities.get_mut_element(left_gadget_index) {
                         unsafe { ent.update_single_transform(0, &glm::zero()); }
                     }
                     if let Some(ent) = gadget_model_map.get(&left_hand_gadget) {
                         scene_data.entities.replace(left_gadget_index, ent.clone());
-                    }                    
+                    }
                 }
             }
-            //println!("{:?}", scene_data.entities[left_gadget_index]);
 
             if let Some(state) = right_switch_state {
                 if state.changed_since_last_sync && state.current_state {
+                    let new = (right_hand_gadget as usize + 1) % GadgetType::COUNT;
+                    right_hand_gadget = GadgetType::from_usize(new);                    
+
+                    if let Some(ent) = scene_data.entities.get_mut_element(right_gadget_index) {
+                        unsafe { ent.update_single_transform(1, &glm::zero()); }
+                    }
+                    if let Some(ent) = gadget_model_map.get(&right_hand_gadget) {
+                        scene_data.entities.replace(right_gadget_index, ent.clone());
+                    }
+                }
+            }
+
+            //Handle gadget input
+            {
+                let trigger_states = [left_trigger_state, right_trigger_state];
+                let aim_spaces = [&left_hand_aim_space, &right_hand_aim_space];
+                let gadgets = [&left_hand_gadget, &right_hand_gadget];
+                let pillar_scales = [&mut left_water_pillar_scale, &mut right_water_pillar_scale];
+
+                for i in 0..trigger_states.len() {
+                    if let Some(state) = trigger_states[i] {
+                        match gadgets[i] {
+                            GadgetType::Shotgun => {
+                                if state.changed_since_last_sync && state.current_state == 1.0 {
+                                    if let Some(pose) = xrutil::locate_space(aim_spaces[i], &tracking_space, last_xr_render_time) {
+                                        let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
+                                        let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
+                                        let world_space_vec = hand_transform * hand_space_vec;
+                                        
+                                        player.tracking_velocity += 20.0 * -glm::vec4_to_vec3(&world_space_vec);
+                                    }                            
+                                }
+                            }
+                            GadgetType::StickyHand => {
+                                println!("Sticky hand gadget");
+                            }
+                            GadgetType::WaterCannon => {
+                                //Calculate the force of shooting the water gun for the left hand
+                                if let Some(pose) = xrutil::locate_space(aim_spaces[i], &tracking_space, last_xr_render_time) {
+                                    let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
+                                    let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
+                                    let world_space_vec = hand_transform * hand_space_vec;
                     
-                }
-            }
-
-            //Then match on what gadgets the player is holding
-            if let Some(state) = left_trigger_state {            
-                match left_hand_gadget {
-                    Gadget::Shotgun => {
-                        if state.changed_since_last_sync && state.current_state == 1.0 {
-                            if let Some(pose) = xrutil::locate_space(&left_hand_aim_space, &tracking_space, last_xr_render_time) {
-                                let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
-                                let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
-                                let world_space_vec = hand_transform * hand_space_vec;
-                                
-                                player.tracking_velocity += 20.0 * -glm::vec4_to_vec3(&world_space_vec);
-                            }                            
-                        }
-                    }
-                    Gadget::StickyHand => {
-
-                    }
-                    Gadget::WaterCannon => {
-                        //Calculate the force of shooting the water gun for the left hand
-                        if let Some(pose) = xrutil::locate_space(&left_hand_aim_space, &tracking_space, last_xr_render_time) {
-                            let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
-                            let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
-                            let world_space_vec = hand_transform * hand_space_vec;
-            
-                            //Calculate water gun force vector
-                            water_gun_force = glm::vec4_to_vec3(&(-state.current_state * world_space_vec));
-            
-                            if state.current_state > 0.0 {
-                                water_pillar_scale.y = 100.0;
-                                if player.movement_state != MoveState::Falling {
-                                    set_player_falling(&mut player);
+                                    //Calculate water gun force vector
+                                    water_gun_force = glm::vec4_to_vec3(&(-state.current_state * world_space_vec));
+                    
+                                    if state.current_state > 0.0 {
+                                        pillar_scales[i].y = 100.0;
+                                        if player.movement_state != MoveState::Falling {
+                                            set_player_falling(&mut player);
+                                        }
+                                    }
+                                }
+        
+                                //Apply watergun force to player
+                                if water_gun_force != glm::zero() && remaining_water > 0.0 {
+                                    let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
+                                    if !infinite_ammo {
+                                        remaining_water -= glm::length(&update_force);
+                                    }
+                                    let xz_scale = remaining_water / Gadget::MAX_ENERGY;
+                                    pillar_scales[i].x = xz_scale;
+                                    pillar_scales[i].z = xz_scale;
+                                    player.tracking_velocity += update_force;
+        
+                                    if let Some(entity) = scene_data.entities.get_mut_element(water_cylinder_entity_index) {
+                                        //Update the water gun's pillar of water
+                                        entity.uv_offset += glm::vec2(0.0, 5.0) * delta_time;
+                                        entity.uv_scale.y = pillar_scales[i].y;
+                                    }
+                                } else {
+                                    *pillar_scales[i] = glm::zero();
                                 }
                             }
                         }
-                    }
-                }
-            }
-
-            if let Some(state) = right_trigger_state {
-                match right_hand_gadget {
-                    Gadget::Shotgun => {
-                        if state.changed_since_last_sync && state.current_state == 1.0 {
-                            if let Some(pose) = xrutil::locate_space(&right_hand_aim_space, &tracking_space, last_xr_render_time) {
-                                let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
-                                let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
-                                let world_space_vec = hand_transform * hand_space_vec;
-                                
-                                player.tracking_velocity += 20.0 * -glm::vec4_to_vec3(&world_space_vec);
-                            }                            
-                        }    
-                    }
-                    Gadget::StickyHand => {
-    
-                    }
-                    Gadget::WaterCannon => {
-                        //Calculate the force of shooting the water gun for the right hand
-                        if let Some(pose) = xrutil::locate_space(&right_hand_aim_space, &tracking_space, last_xr_render_time) {
-                            let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
-                            let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
-                            let world_space_vec = hand_transform * hand_space_vec;
-            
-                            //Calculate water gun force vector
-                            water_gun_force = glm::vec4_to_vec3(&(-state.current_state * world_space_vec));
-            
-                            if state.current_state > 0.0 {
-                                water_pillar_scale.y = 100.0;
-                                if player.movement_state != MoveState::Falling {
-                                    set_player_falling(&mut player);
-                                }
-                            }
-                        }
-                        
                     }
                 }
             }
 
             if player.movement_state != MoveState::Falling {
-                remaining_water = MAX_WATER_REMAINING;
+                remaining_water = Gadget::MAX_ENERGY;
             }
         }
 
@@ -1281,26 +1126,6 @@ fn main() {
             if player.tracking_velocity.z > GRAVITY_VELOCITY_CAP {
                 player.tracking_velocity.z = GRAVITY_VELOCITY_CAP;
             }
-        }
-
-        //Apply watergun force to player
-        if water_gun_force != glm::zero() && remaining_water > 0.0 {
-            let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
-            if !infinite_ammo {
-                remaining_water -= glm::length(&update_force);
-            }
-            let xz_scale = remaining_water / MAX_WATER_REMAINING;
-            water_pillar_scale.x = xz_scale;
-            water_pillar_scale.z = xz_scale;
-            player.tracking_velocity += update_force;
-
-            if let Some(entity) = scene_data.entities.get_mut_element(water_cylinder_entity_index) {
-                //Update the water gun's pillar of water
-                entity.uv_offset += glm::vec2(0.0, 5.0) * delta_time;
-                entity.uv_scale.y = water_pillar_scale.y;
-            }
-        } else {
-            water_pillar_scale = glm::zero();
         }
 
         //If the user is controlling the camera, force the mouse cursor into the center of the screen
@@ -1435,9 +1260,8 @@ fn main() {
                         if dot_z_up >= MIN_NORMAL_LIKENESS {
                             let t = (glm::dot(&triangle.normal, &(triangle.a - capsule_ref)) + player.radius) / dot_z_up;
                             player.tracking_position += Z_UP * t;
-                            player.tracking_velocity = glm::zero();
-                            player.jumps_remaining = Player::MAX_JUMPS;
-                            remaining_water = MAX_WATER_REMAINING;
+                            
+                            ground_player(&mut player, &mut remaining_water);
                         } else {                        
                             player.tracking_position += triangle.normal * (player.radius - dist);
                         }
@@ -1448,9 +1272,7 @@ fn main() {
                             let push_dir = glm::normalize(&(capsule_ref - best_point));
                             player.tracking_position += push_dir * (player.radius - best_dist);
                             if glm::dot(&push_dir, &Z_UP) >= MIN_NORMAL_LIKENESS {
-                                player.tracking_velocity = glm::zero();
-                                player.jumps_remaining = Player::MAX_JUMPS;
-                                remaining_water = MAX_WATER_REMAINING;
+                                ground_player(&mut player, &mut remaining_water);
                             }
                         }
                     }
@@ -1645,6 +1467,7 @@ fn main() {
                             //Fetch the hand poses from the runtime
                             let left_grip_pose = xrutil::locate_space(&left_hand_grip_space, &tracking_space, wait_info.predicted_display_time);
                             let right_grip_pose = xrutil::locate_space(&right_hand_grip_space, &tracking_space, wait_info.predicted_display_time);
+                            let left_hand_aim_pose = xrutil::locate_space(&left_hand_aim_space, &tracking_space, wait_info.predicted_display_time);
                             let right_hand_aim_pose = xrutil::locate_space(&right_hand_aim_space, &tracking_space, wait_info.predicted_display_time);
 
                             //Right here is where we want to update the controller objects' transforms
@@ -1661,10 +1484,17 @@ fn main() {
                                 }
                             }
 
-                            if let Some(p) = right_hand_aim_pose {
-                                if let Some(entity) = scene_data.entities.get_mut_element(water_cylinder_entity_index) {
-                                    let mm = xrutil::pose_to_mat4(&p, &world_from_tracking) * glm::scaling(&water_pillar_scale);
-                                    entity.update_single_transform(0, &mm);
+                            //Apply the water pillar scales
+                            {
+                                let poses = [left_hand_aim_pose, right_hand_aim_pose];
+                                let scales = [&left_water_pillar_scale, &right_water_pillar_scale];
+                                for i in 0..poses.len() {
+                                    if let Some(p) = poses[i] {
+                                        if let Some(entity) = scene_data.entities.get_mut_element(water_cylinder_entity_index) {
+                                            let mm = xrutil::pose_to_mat4(&p, &world_from_tracking) * glm::scaling(scales[i]);
+                                            entity.update_single_transform(i, &mm);
+                                        }
+                                    }
                                 }
                             }
 
@@ -1674,7 +1504,51 @@ fn main() {
                                 let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);
                                 let projection = *screen_state.get_clipping_from_view();
                                 scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, &v_mat, &projection);
-                                render_cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.entities.as_slice());
+                                render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.entities.as_slice());
+
+                                for i in 0..views.len() {
+                                    let image_index = swapchains[i].acquire_image().unwrap();
+                                    swapchains[i].wait_image(xr::Duration::INFINITE).unwrap();
+    
+                                    //Compute view projection matrix
+                                    //We have to translate to right-handed z-up from right-handed y-up
+                                    let eye_pose = views[i].pose;
+                                    let fov = views[i].fov;
+                                    let view_matrix = xrutil::pose_to_viewmat(&eye_pose, &tracking_from_world);
+                                    let eye_world_matrix = xrutil::pose_to_mat4(&eye_pose, &world_from_tracking);
+    
+                                    //Use the fov to get the t, b, l, and r values of the perspective matrix
+                                    let near_value = NEAR_DISTANCE;
+                                    let far_value = FAR_DISTANCE;
+                                    let l = near_value * f32::tan(fov.angle_left);
+                                    let r = near_value * f32::tan(fov.angle_right);
+                                    let t = near_value * f32::tan(fov.angle_up);
+                                    let b = near_value * f32::tan(fov.angle_down);
+                                    let perspective = glm::mat4(
+                                        2.0 * near_value / (r - l), 0.0, (r + l) / (r - l), 0.0,
+                                        0.0, 2.0 * near_value / (t - b), (t + b) / (t - b), 0.0,
+                                        0.0, 0.0, -(far_value + near_value) / (far_value - near_value), -2.0 * far_value * near_value / (far_value - near_value),
+                                        0.0, 0.0, -1.0, 0.0
+                                    );
+    
+                                    //Actually rendering
+                                    sc_rendertarget.bind();   //Rendering into an MSAA rendertarget
+                                    let view_data = ViewData::new(
+                                        glm::vec3(eye_world_matrix[12], eye_world_matrix[13], eye_world_matrix[14]),
+                                        view_matrix,
+                                        perspective
+                                    );
+                                    render::main_scene(&scene_data, &view_data);
+    
+                                    //Blit the MSAA image into the swapchain image
+                                    let color_texture = sc_images[i][image_index as usize];
+                                    gl::BindFramebuffer(gl::FRAMEBUFFER, xr_swapchain_framebuffer);
+                                    gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, color_texture, 0);
+                                    gl::BindFramebuffer(gl::READ_FRAMEBUFFER, sc_rendertarget.framebuffer.name);
+                                    gl::BlitFramebuffer(0, 0, sc_size.x as GLint, sc_size.y as GLint, 0, 0, sc_size.x as GLint, sc_size.y as GLint, gl::COLOR_BUFFER_BIT, gl::NEAREST);
+    
+                                    swapchains[i].release_image().unwrap();
+                                }
 
                                 //Draw the companion view if we're showing HMD POV
                                 if hmd_pov {
@@ -1685,53 +1559,9 @@ fn main() {
                                         projection
                                     );
                                     default_framebuffer.bind();
-                                    render_main_scene(&scene_data, &view_state);
+                                    render::main_scene(&scene_data, &view_state);
                                 }
-                            }
-
-                            for i in 0..views.len() {
-                                let image_index = swapchains[i].acquire_image().unwrap();
-                                swapchains[i].wait_image(xr::Duration::INFINITE).unwrap();
-
-                                //Compute view projection matrix
-                                //We have to translate to right-handed z-up from right-handed y-up
-                                let eye_pose = views[i].pose;
-                                let fov = views[i].fov;
-                                let view_matrix = xrutil::pose_to_viewmat(&eye_pose, &tracking_from_world);
-                                let eye_world_matrix = xrutil::pose_to_mat4(&eye_pose, &world_from_tracking);
-
-                                //Use the fov to get the t, b, l, and r values of the perspective matrix
-                                let near_value = NEAR_DISTANCE;
-                                let far_value = FAR_DISTANCE;
-                                let l = near_value * f32::tan(fov.angle_left);
-                                let r = near_value * f32::tan(fov.angle_right);
-                                let t = near_value * f32::tan(fov.angle_up);
-                                let b = near_value * f32::tan(fov.angle_down);
-                                let perspective = glm::mat4(
-                                    2.0 * near_value / (r - l), 0.0, (r + l) / (r - l), 0.0,
-                                    0.0, 2.0 * near_value / (t - b), (t + b) / (t - b), 0.0,
-                                    0.0, 0.0, -(far_value + near_value) / (far_value - near_value), -2.0 * far_value * near_value / (far_value - near_value),
-                                    0.0, 0.0, -1.0, 0.0
-                                );
-
-                                //Actually rendering
-                                sc_rendertarget.bind();   //Rendering into an MSAA rendertarget
-                                let view_data = ViewData::new(
-                                    glm::vec3(eye_world_matrix[12], eye_world_matrix[13], eye_world_matrix[14]),
-                                    view_matrix,
-                                    perspective
-                                );
-                                render_main_scene(&scene_data, &view_data);
-
-                                //Blit the MSAA image into the swapchain image
-                                let color_texture = sc_images[i][image_index as usize];
-                                gl::BindFramebuffer(gl::FRAMEBUFFER, xr_swapchain_framebuffer);
-                                gl::FramebufferTexture2D(gl::FRAMEBUFFER, gl::COLOR_ATTACHMENT0, gl::TEXTURE_2D, color_texture, 0);
-                                gl::BindFramebuffer(gl::READ_FRAMEBUFFER, sc_rendertarget.framebuffer.name);
-                                gl::BlitFramebuffer(0, 0, sc_size.x as GLint, sc_size.y as GLint, 0, 0, sc_size.x as GLint, sc_size.y as GLint, gl::COLOR_BUFFER_BIT, gl::NEAREST);
-
-                                swapchains[i].release_image().unwrap();
-                            }
+                            }                           
 
                             //End the frame
                             //TODO: Figure out why image_array_index has to always be zero now
@@ -1780,12 +1610,13 @@ fn main() {
             }
 
             //Main window rendering
+            gl::BindFramebuffer(gl::FRAMEBUFFER, default_framebuffer.name);
             if !hmd_pov {
                 //Render shadows
                 shadow_rendertarget.bind();
                 let projection = *screen_state.get_clipping_from_view();
                 scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, screen_state.get_view_from_world(), &projection);
-                render_cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.entities.as_slice());
+                render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.entities.as_slice());
 
                 //Render main scene
                 let freecam_viewdata = ViewData::new(
@@ -1794,7 +1625,7 @@ fn main() {
                     *screen_state.get_clipping_from_view()
                 );
                 default_framebuffer.bind();
-                render_main_scene(&scene_data, &freecam_viewdata);
+                render::main_scene(&scene_data, &freecam_viewdata);
             }
 
             //Take a screenshot here as to not get the dev gui in it
