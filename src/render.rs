@@ -147,7 +147,7 @@ impl Default for SceneData {
             skybox_vao: ozy::prims::skybox_cube_vao(),
             skybox_program: 0,
             sun_direction: glm::normalize(&glm::vec3(1.0, 0.6, 1.0)),
-            sun_color: [1.0, 1.0, 1.0],
+            sun_color: [0.2274509, 0.1764705, 0.0745098],
             ambient_strength: 0.2,
             sun_shadow_map,
             entities: OptionVec::new()

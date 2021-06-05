@@ -4,11 +4,12 @@ use xr::Posef;
 pub struct Gadget {
     pub energy_remaining: f32,
     pub pose: Posef,
+    pub entity_index: usize,
     pub current_type: GadgetType
 }
 
 impl Gadget {
-    pub const MAX_ENERGY: f32 = 75.0;
+    pub const MAX_ENERGY: f32 = 100.0;
 }
 
 #[derive(Copy, Clone, Debug, Hash, EnumCount, PartialEq, Eq)]

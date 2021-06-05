@@ -25,6 +25,7 @@ use image::{ImageBuffer, DynamicImage};
 use imgui::{ColorEdit, DrawCmd, EditableColor, FontAtlasRefMut, Slider, TextureId, im_str};
 use core::ops::RangeInclusive;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::fs;
 use std::fs::File;
 use std::io::{ErrorKind, Seek, SeekFrom};
@@ -37,6 +38,7 @@ use std::sync::mpsc::Sender;
 use std::thread;
 use std::time::{Duration, Instant};
 use strum::EnumCount;
+use tfd::MessageBoxIcon;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use ozy::{glutil, io};
 use ozy::glutil::ColorSpace;
@@ -761,6 +763,11 @@ fn main() {
             None => { "testmap" }
         };
 
+        let level_load_error = |s: std::io::Error| {
+            tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", terrain_name, s), MessageBoxIcon::Error);
+            exit(-1);
+        };
+
         //Load the scene data from the level file
         match File::open(&format!("maps/{}.lvl", terrain_name)) {
             Ok(mut file) => {
@@ -773,7 +780,7 @@ fn main() {
                             if e.kind() == ErrorKind::UnexpectedEof {
                                 break;
                             }
-                            panic!("Error reading from level file: {}", e);
+                            level_load_error(e)
                         }
                     };
 
@@ -792,9 +799,7 @@ fn main() {
                     scene_data.entities.insert(entity);
                 }                
             }
-            Err(e) => {
-                panic!("Couldn't open level file: {}", e);
-            }
+            Err(e) => { level_load_error(e); }
         }
         let t = Terrain::from_ozt(&format!("models/{}.ozt", terrain_name));
         println!("Loaded {} collision triangles from {}.ozt", t.indices.len() / 3, terrain_name);
@@ -849,7 +854,7 @@ fn main() {
     let mut elapsed_time = 0.0;
 
     //Init audio system
-    let mut bgm_volume = 50.0;
+    let mut bgm_volume = 10.0;
     let (audio_sender, audio_receiver) = mpsc::channel();
     audio::audio_main(audio_receiver, bgm_volume);
 
@@ -1018,30 +1023,24 @@ fn main() {
                 }
             }
 
-            if let Some(state) = left_switch_state {
-                if state.changed_since_last_sync && state.current_state {
-                    let new = (left_hand_gadget as usize + 1) % GadgetType::COUNT;
-                    left_hand_gadget = GadgetType::from_usize(new);                    
-
-                    if let Some(ent) = scene_data.entities.get_mut_element(left_gadget_index) {
-                        unsafe { ent.update_single_transform(0, &glm::zero()); }
-                    }
-                    if let Some(ent) = gadget_model_map.get(&left_hand_gadget) {
-                        scene_data.entities.replace(left_gadget_index, ent.clone());
-                    }
-                }
-            }
-
-            if let Some(state) = right_switch_state {
-                if state.changed_since_last_sync && state.current_state {
-                    let new = (right_hand_gadget as usize + 1) % GadgetType::COUNT;
-                    right_hand_gadget = GadgetType::from_usize(new);                    
-
-                    if let Some(ent) = scene_data.entities.get_mut_element(right_gadget_index) {
-                        unsafe { ent.update_single_transform(1, &glm::zero()); }
-                    }
-                    if let Some(ent) = gadget_model_map.get(&right_hand_gadget) {
-                        scene_data.entities.replace(right_gadget_index, ent.clone());
+            //Gadget switching
+            {
+                let gadgets = [&mut left_hand_gadget, &mut right_hand_gadget];
+                let gadget_indices = [left_gadget_index, right_gadget_index];
+                let states = [left_switch_state, right_switch_state];
+                for i in 0..states.len() {
+                    if let Some(state) = states[i] {
+                        if state.changed_since_last_sync && state.current_state {
+                            let new = (*gadgets[i] as usize + 1) % GadgetType::COUNT;
+                            *gadgets[i] = GadgetType::from_usize(new);
+        
+                            if let Some(ent) = scene_data.entities.get_mut_element(gadget_indices[i]) { unsafe { 
+                                ent.update_single_transform(i, &glm::zero());
+                            }}
+                            if let Some(ent) = gadget_model_map.get(gadgets[i]) {
+                                scene_data.entities.replace(gadget_indices[i], ent.clone());
+                            }
+                        }
                     }
                 }
             }
@@ -1118,7 +1117,7 @@ fn main() {
             }
         }
 
-        //Gravity the player
+        //Apply gravity to the player's velocity
         const GRAVITY_VELOCITY_CAP: f32 = 10.0;
         const ACCELERATION_GRAVITY: f32 = 20.0;        //20.0 m/s^2
         if player.movement_state != MoveState::Grounded {

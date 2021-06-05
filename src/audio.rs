@@ -1,4 +1,5 @@
 use alto::{sys::ALint, Source, SourceState};
+use tfd::MessageBoxIcon;
 use std::fs::File;
 use std::io::{ErrorKind, Seek, SeekFrom};
 use std::sync::mpsc::Receiver;
@@ -6,7 +7,7 @@ use std::process::exit;
 use std::thread;
 use std::time::Duration;
 
-const DEFAULT_BGM_PATH: &str = "music/town_battle.mp3";
+const DEFAULT_BGM_PATH: &str = "music/recovery_spring.mp3";
 const IDEAL_FRAMES_QUEUED: ALint = 10;
 
 pub enum AudioCommand {
@@ -20,15 +21,16 @@ pub enum AudioCommand {
 }
 
 //Returns an mp3 decoder given a filepath
-fn load_decoder(path: &str) -> mp3::Decoder<File> {
-    let bgm_file = match File::open(path) {
-        Ok(f) => { f }
-        Err(e) => {
-            println!("Couldn't open bgm file: {}", e);
-            exit(-1);
+fn load_decoder(path: &str) -> Option<mp3::Decoder<File>> {
+    match File::open(path) {
+        Ok(f) => { 
+            Some(mp3::Decoder::new(f))
         }
-    };
-    mp3::Decoder::new(bgm_file)
+        Err(e) => {
+            tfd::message_box_ok("Error loading mp3", &format!("Unable to open \"{}\"\n{}", path, e), MessageBoxIcon::Error);
+            None
+        }
+    }    
 }
 
 fn set_linearized_gain(ctxt: &alto::Context, volume: f32) {            
@@ -78,7 +80,7 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32) {
         let mut decoder = load_decoder(DEFAULT_BGM_PATH);
 
         let mut kanye_source = alto_context.new_streaming_source().unwrap();
-        let mut kickstart_bgm = false;
+        let mut kickstart_bgm = true;
         loop {
             //Process all commands from the main thread
             while let Ok(command) = audio_receiver.try_recv() {
@@ -119,47 +121,49 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32) {
 
             //If there are fewer than the ideal frames queued, prepare and queue a frame
             if kanye_source.buffers_queued() < IDEAL_FRAMES_QUEUED {
-                match decoder.next_frame() {
-                    Ok(frame) => {
-                        if frame.channels == 1 {
-                            let mut mono_samples = Vec::with_capacity(frame.data.len());
-                            for sample in frame.data {
-                                mono_samples.push(
-                                    alto::Mono {
-                                        center: sample
-                                    }
-                                );
-                            }
+                if let Some(decoder) = &mut decoder {
+                    match decoder.next_frame() {
+                        Ok(frame) => {
+                            if frame.channels == 1 {
+                                let mut mono_samples = Vec::with_capacity(frame.data.len());
+                                for sample in frame.data {
+                                    mono_samples.push(
+                                        alto::Mono {
+                                            center: sample
+                                        }
+                                    );
+                                }
 
-                            if let Ok(sample_buffer) = alto_context.new_buffer(mono_samples, frame.sample_rate) {
-                                kanye_source.queue_buffer(sample_buffer).unwrap();
-                            }
-                        } else if frame.channels == 2 {
-                            let mut stereo_samples = Vec::with_capacity(frame.data.len());
-                            for i in (0..frame.data.len()).step_by(2) {
-                                stereo_samples.push(
-                                    alto::Stereo {
-                                        left: frame.data[i],
-                                        right: frame.data[i + 1]
-                                    }
-                                );
-                            }
+                                if let Ok(sample_buffer) = alto_context.new_buffer(mono_samples, frame.sample_rate) {
+                                    kanye_source.queue_buffer(sample_buffer).unwrap();
+                                }
+                            } else if frame.channels == 2 {
+                                let mut stereo_samples = Vec::with_capacity(frame.data.len());
+                                for i in (0..frame.data.len()).step_by(2) {
+                                    stereo_samples.push(
+                                        alto::Stereo {
+                                            left: frame.data[i],
+                                            right: frame.data[i + 1]
+                                        }
+                                    );
+                                }
 
-                            if let Ok(sample_buffer) = alto_context.new_buffer(stereo_samples, frame.sample_rate) {
-                                kanye_source.queue_buffer(sample_buffer).unwrap();
+                                if let Ok(sample_buffer) = alto_context.new_buffer(stereo_samples, frame.sample_rate) {
+                                    kanye_source.queue_buffer(sample_buffer).unwrap();
+                                }
+                            } else {
+                                println!("Audio file must have one or two channels.");
+                                return;
                             }
-                        } else {
-                            println!("Audio file must have one or two channels.");
-                            return;
                         }
-                    }
-                    Err(e) => {
-                        match e {
-                            mp3::Error::Eof => {
-                                println!("Looping the mp3");
-                                decoder.reader_mut().seek(SeekFrom::Start(0)).unwrap();
+                        Err(e) => {
+                            match e {
+                                mp3::Error::Eof => {
+                                    println!("Looping the mp3");
+                                    decoder.reader_mut().seek(SeekFrom::Start(0)).unwrap();
+                                }
+                                _ => { println!("Error decoding mp3 frame: {}", e); }
                             }
-                            _ => { println!("Error decoding mp3 frame: {}", e); }
                         }
                     }
                 }
