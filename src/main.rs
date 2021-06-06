@@ -420,11 +420,10 @@ fn main() {
 
     //OpenGL static configuration
 	unsafe {
-        gl::Enable(gl::CULL_FACE);										//Enable face culling
         gl::DepthFunc(gl::LEQUAL);										//Pass the fragment with the smallest z-value.
 		gl::Enable(gl::FRAMEBUFFER_SRGB); 								//Enable automatic linear->SRGB space conversion
-        gl::Enable(gl::BLEND);											//Enable alpha blending
         gl::Enable(gl::MULTISAMPLE);                                    //Enable MSAA
+        gl::Enable(gl::BLEND);											//Enable alpha blending
 		gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);			//Set blend func to (Cs * alpha + Cd * (1.0 - alpha))
         gl::ClearColor(0.26, 0.4, 0.46, 1.0);							//Set the clear color
 
