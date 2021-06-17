@@ -180,8 +180,8 @@ pub fn segment_hit_plane(plane: &Plane, segment: &LineSegment) -> Option<glm::TV
 }
 
 //Precondition: point is in plane of triangle
+//Returns true if the point is in the triangle
 pub fn robust_point_in_triangle(test_point: &glm::TVec3<f32>, tri: &Triangle) -> bool {
-    const EPSILON: f32 = 0.0001;
 
     //First get normal of (a, b, intersection)
     let n1 = {
@@ -201,6 +201,7 @@ pub fn robust_point_in_triangle(test_point: &glm::TVec3<f32>, tri: &Triangle) ->
         glm::normalize(&n)
     };
 
+    const EPSILON: f32 = 0.0001;
     let upper = 1.0 + EPSILON;
     let lower = 1.0 - EPSILON;
     let dot1 = glm::dot(&n1, &n2);

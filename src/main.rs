@@ -1678,15 +1678,15 @@ fn main() {
                         let mut current_vertex = 0;
                         let vtx_buffer = list.vtx_buffer();
                         for vtx in vtx_buffer.iter() {
-                            verts[current_vertex * vert_size] = vtx.pos[0];
-                            verts[current_vertex * vert_size + 1] = vtx.pos[1];
-                            verts[current_vertex * vert_size + 2] = vtx.uv[0];
-                            verts[current_vertex * vert_size + 3] = vtx.uv[1];
-    
-                            verts[current_vertex * vert_size + 4] = vtx.col[0] as f32 / 255.0;
-                            verts[current_vertex * vert_size + 5] = vtx.col[1] as f32 / 255.0;
-                            verts[current_vertex * vert_size + 6] = vtx.col[2] as f32 / 255.0;
-                            verts[current_vertex * vert_size + 7] = vtx.col[3] as f32 / 255.0;
+                            let idx = current_vertex * vert_size;
+                            verts[idx] = vtx.pos[0];
+                            verts[idx + 1] = vtx.pos[1];
+                            verts[idx + 2] = vtx.uv[0];
+                            verts[idx + 3] = vtx.uv[1];    
+                            verts[idx + 4] = vtx.col[0] as f32 / 255.0;
+                            verts[idx + 5] = vtx.col[1] as f32 / 255.0;
+                            verts[idx + 6] = vtx.col[2] as f32 / 255.0;
+                            verts[idx + 7] = vtx.col[3] as f32 / 255.0;
     
                             current_vertex += 1;
                         }
