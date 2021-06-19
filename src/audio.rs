@@ -18,6 +18,7 @@ pub enum AudioCommand {
     SetSourcePosition([f32; 3], usize),
     SetListenerGain(f32),
     SelectNewBGM,
+    RestartBGM,
     PlayPause
 }
 
@@ -106,6 +107,14 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32) {
                             None => { kanye_source.play(); }
                         }
                     }
+                    AudioCommand::RestartBGM => {
+                        println!("Looping the mp3");
+                        //kanye_source.pause();
+                        if let Some(decoder) = &mut decoder {
+                            kanye_source = alto_context.new_streaming_source().unwrap();
+                            decoder.reader_mut().seek(SeekFrom::Start(0)).unwrap();
+                        }
+                    }
                     AudioCommand::PlayPause => {
                         kickstart_bgm = !kickstart_bgm;
                         match kanye_source.state() {
@@ -178,6 +187,7 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32) {
 
             if kanye_source.state() != SourceState::Playing && kickstart_bgm && kanye_source.buffers_queued() == IDEAL_FRAMES_QUEUED {
                 kanye_source.play();
+                kickstart_bgm = false;
             }
 
             //Sleeping to avoid throttling a CPU core

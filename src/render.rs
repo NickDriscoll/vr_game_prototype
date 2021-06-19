@@ -36,9 +36,29 @@ impl RenderEntity {
         match OzyMesh::load(&path) {
             Some(meshdata) => unsafe {
                 let vao = glutil::create_vertex_array_object(&meshdata.vertex_array.vertices, &meshdata.vertex_array.indices, &meshdata.vertex_array.attribute_offsets);
-                let albedo = texture_keeper.fetch_texture(&meshdata.texture_name, "albedo", &tex_params, ColorSpace::Gamma);
-                let normal = texture_keeper.fetch_texture(&meshdata.texture_name, "normal", &tex_params, ColorSpace::Linear);
-                let roughness = texture_keeper.fetch_texture(&meshdata.texture_name, "roughness", &tex_params, ColorSpace::Linear);
+
+                let (mut albedo, normal, roughness);
+                albedo = texture_keeper.fetch_texture(&meshdata.texture_name, "albedo", &tex_params, ColorSpace::Gamma);
+                normal = texture_keeper.fetch_texture(&meshdata.texture_name, "normal", &tex_params, ColorSpace::Linear);
+                roughness = texture_keeper.fetch_texture(&meshdata.texture_name, "roughness", &tex_params, ColorSpace::Linear);
+                if meshdata.colors.len() == 0 {
+                } else {
+                    let tex_params = [
+                        (gl::TEXTURE_WRAP_S, gl::REPEAT),
+                        (gl::TEXTURE_WRAP_T, gl::REPEAT),
+                        (gl::TEXTURE_MIN_FILTER, gl::NEAREST),
+                        (gl::TEXTURE_MAG_FILTER, gl::NEAREST)
+                    ];
+
+                    //The albedo texture will simply be a one-dimensional array of solid colors
+                    //The UV data on the mesh will choose which color goes where
+                    albedo = 0;
+                    gl::GenTextures(1, &mut albedo);
+                    gl::BindTexture(gl::TEXTURE_2D, albedo);
+                    glutil::apply_texture_parameters(&tex_params);
+                    gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA32F as GLint, meshdata.colors.len() as GLint, 1, 0, gl::RGBA, gl::FLOAT, &meshdata.colors[0] as *const f32 as *const c_void);
+
+                }
 
                 let transform_buffer = glutil::create_instanced_transform_buffer(vao, instances, INSTANCED_ATTRIBUTE);
                 RenderEntity {
@@ -147,7 +167,8 @@ impl Default for SceneData {
             skybox_vao: ozy::prims::skybox_cube_vao(),
             skybox_program: 0,
             sun_direction: glm::normalize(&glm::vec3(1.0, 0.6, 1.0)),
-            sun_color: [0.2274509, 0.1764705, 0.0745098],
+            //sun_color: [0.2274509, 0.1764705, 0.0745098],
+            sun_color: [1.0, 1.0, 1.0],
             ambient_strength: 0.2,
             sun_shadow_map,
             entities: OptionVec::new()

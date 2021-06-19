@@ -807,7 +807,7 @@ fn main() {
 
     //Create dragon
     let mut dragon_position = glm::vec3(56.009315, 21.064762, 17.284132);
-    let dragon_entity_index = scene_data.entities.insert(RenderEntity::from_ozy("models/dragon.ozy", standard_program, 1, &mut texture_keeper, &default_tex_params));
+    let dragon_entity_index = scene_data.entities.insert(RenderEntity::from_ozy("models/totoro.ozy", standard_program, 1, &mut texture_keeper, &default_tex_params));
 
     //Load gadget models
     let gadget_model_map = {
@@ -822,11 +822,11 @@ fn main() {
     //Gadget state setup
     let mut left_hand_gadget = GadgetType::Shotgun;
     let mut right_hand_gadget = GadgetType::Shotgun;
-    let mut left_gadget_index = match gadget_model_map.get(&left_hand_gadget) {
+    let left_gadget_index = match gadget_model_map.get(&left_hand_gadget) {
         Some(entity) => { scene_data.entities.insert(entity.clone()) }
         None => { panic!("No model found for {:?}", left_hand_gadget); }
     };
-    let mut right_gadget_index = match gadget_model_map.get(&right_hand_gadget) {
+    let right_gadget_index = match gadget_model_map.get(&right_hand_gadget) {
         Some(entity) => { scene_data.entities.insert(entity.clone()) }
         None => { panic!("No model found for {:?}", right_hand_gadget); }
     };
@@ -853,7 +853,7 @@ fn main() {
     let mut elapsed_time = 0.0;
 
     //Init audio system
-    let mut bgm_volume = 10.0;
+    let mut bgm_volume = 20.0;
     let (audio_sender, audio_receiver) = mpsc::channel();
     audio::audio_main(audio_receiver, bgm_volume);
 
@@ -1373,7 +1373,10 @@ fn main() {
                 if imgui_ui.button(im_str!("Play/Pause"), [0.0, 32.0]) {
                     send_or_error(&audio_sender, AudioCommand::PlayPause);
                 }
-
+                imgui_ui.same_line(0.0);
+                if imgui_ui.button(im_str!("Restart"), [0.0, 32.0]) {
+                    send_or_error(&audio_sender, AudioCommand::RestartBGM);
+                }
                 imgui_ui.same_line(0.0);
                 if imgui_ui.button(im_str!("Choose mp3"), [0.0, 32.0]) {
                     send_or_error(&audio_sender, AudioCommand::SelectNewBGM);
