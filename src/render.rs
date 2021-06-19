@@ -37,11 +37,11 @@ impl RenderEntity {
             Some(meshdata) => unsafe {
                 let vao = glutil::create_vertex_array_object(&meshdata.vertex_array.vertices, &meshdata.vertex_array.indices, &meshdata.vertex_array.attribute_offsets);
 
-                let (mut albedo, normal, roughness);
-                albedo = texture_keeper.fetch_texture(&meshdata.texture_name, "albedo", &tex_params, ColorSpace::Gamma);
-                normal = texture_keeper.fetch_texture(&meshdata.texture_name, "normal", &tex_params, ColorSpace::Linear);
-                roughness = texture_keeper.fetch_texture(&meshdata.texture_name, "roughness", &tex_params, ColorSpace::Linear);
+                let (mut albedo, mut normal, mut roughness) = (0, 0, 0);
                 if meshdata.colors.len() == 0 {
+                    albedo = texture_keeper.fetch_texture(&meshdata.texture_name, "albedo", &tex_params, ColorSpace::Gamma);
+                    normal = texture_keeper.fetch_texture(&meshdata.texture_name, "normal", &tex_params, ColorSpace::Linear);
+                    roughness = texture_keeper.fetch_texture(&meshdata.texture_name, "roughness", &tex_params, ColorSpace::Linear);
                 } else {
                     let tex_params = [
                         (gl::TEXTURE_WRAP_S, gl::REPEAT),
@@ -52,12 +52,13 @@ impl RenderEntity {
 
                     //The albedo texture will simply be a one-dimensional array of solid colors
                     //The UV data on the mesh will choose which color goes where
-                    albedo = 0;
                     gl::GenTextures(1, &mut albedo);
                     gl::BindTexture(gl::TEXTURE_2D, albedo);
                     glutil::apply_texture_parameters(&tex_params);
-                    gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA32F as GLint, meshdata.colors.len() as GLint, 1, 0, gl::RGBA, gl::FLOAT, &meshdata.colors[0] as *const f32 as *const c_void);
+                    gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA32F as GLint, (meshdata.colors.len() / 4) as GLint, 1, 0, gl::RGBA, gl::FLOAT, &meshdata.colors[0] as *const f32 as *const c_void);
 
+                    normal = texture_keeper.fetch_texture("purple", "normal", &tex_params, ColorSpace::Linear);
+                    roughness = texture_keeper.fetch_texture("purple", "roughness", &tex_params, ColorSpace::Linear);
                 }
 
                 let transform_buffer = glutil::create_instanced_transform_buffer(vao, instances, INSTANCED_ATTRIBUTE);
