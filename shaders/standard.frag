@@ -1,6 +1,6 @@
 #version 430 core
 
-const float SHININESS_LOWER_BOUND = 16.0;
+const float SHININESS_LOWER_BOUND = 8.0;
 const float SHININESS_UPPER_BOUND = 128.0;
 const float LOD_DIST0 = 20.0;
 const float LOD_DIST1 = 40.0;
@@ -35,7 +35,6 @@ uniform bool complex_normals = false;               //Flag that controls whether
 
 //Debug visualization flags
 uniform bool visualize_normals = false;
-uniform bool visualize_lod = false;
 uniform bool visualize_shadowed = false;
 uniform bool visualize_cascade_zone = false;
 
@@ -50,8 +49,8 @@ vec4 simple_diffuse(vec3 color, float diffuse, float ambient) {
 }
 
 float determine_shadowed(vec3 f_shadow_pos, int cascade) {
-    //float bias = 0.000;
-    float bias = 0.0025 * (1.0 - max(0.0, dot(tangent_space_normal, tangent_sun_direction)));
+    float bias = 0.0025;
+    //float bias = 0.0025 * (1.0 - max(0.0, dot(tangent_space_normal, tangent_sun_direction)));
     vec2 sample_uv = f_shadow_pos.xy;
     sample_uv.x = sample_uv.x * SHADOW_CASCADES_RECIPROCAL;
     sample_uv.x += cascade * SHADOW_CASCADES_RECIPROCAL;
@@ -80,29 +79,10 @@ void main() {
     //Compute diffuse lighting
     float diffuse = max(0.0, dot(tangent_sun_direction, tangent_space_normal));
 
-    //Visualize LOD early exit
-    if (visualize_lod) {
-        vec3 c;
-        if (clip_space_z < LOD_DIST0) {
-            frag_color = simple_diffuse(LOD_COLOR0, diffuse, ambient_strength);
-        } else if (clip_space_z < LOD_DIST1) {
-            frag_color = simple_diffuse(LOD_COLOR1, diffuse, ambient_strength);
-        } else if (clip_space_z < LOD_DIST2) {
-            frag_color = simple_diffuse(LOD_COLOR2, diffuse, ambient_strength);
-        } else if (clip_space_z < LOD_DIST3) {
-            frag_color = simple_diffuse(LOD_COLOR3, diffuse, ambient_strength);
-        } else {
-            frag_color = simple_diffuse(LOD_COLOR4, diffuse, ambient_strength);
-        }
-        return;
-    }
-
     //Determine how shadowed the fragment is
-    float shadow = 0.0;
-
     vec4 adj_shadow_space_pos;
     int shadow_cascade = -1;
-    
+    float shadow = 0.0;    
     for (int i = 0; i < SHADOW_CASCADES; i++) {
         if (clip_space_z < cascade_distances[i]) {
             adj_shadow_space_pos = shadow_space_pos[i] * 0.5 + 0.5;
@@ -118,7 +98,6 @@ void main() {
             }
             break;
         }
-
     }
 
     //Compute how shadowed if we are potentially shadowed
@@ -138,8 +117,6 @@ void main() {
             shadow = determine_shadowed(adj_shadow_space_pos.xyz, shadow_cascade);
         }
     }
-
-    
 
     if (visualize_cascade_zone) {
         if (shadow_cascade == 0) {
@@ -161,13 +138,12 @@ void main() {
     }
 
     //Compute specular light w/ blinn-phong
-    float specular = 0.0;
     float roughness = texture(roughness_tex, scaled_uvs).x;
     vec3 view_direction = normalize(tangent_view_position - tangent_space_pos);
     vec3 halfway = normalize(view_direction + tangent_sun_direction);
     float specular_angle = max(0.0, dot(halfway, tangent_space_normal));
     float shininess = (1.0 - roughness) * (SHININESS_UPPER_BOUND - SHININESS_LOWER_BOUND) + SHININESS_LOWER_BOUND;
-    specular = pow(specular_angle, shininess);
+    float specular = pow(specular_angle, shininess);
 
     vec3 final_color = sun_color * ((specular + diffuse) * (1.0 - shadow) + ambient_strength) * albedo;
     frag_color = vec4(final_color, 1.0);

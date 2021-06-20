@@ -7,7 +7,7 @@ use std::process::exit;
 use std::thread;
 use std::time::Duration;
 
-const DEFAULT_BGM_PATH: &str = "music/recovery_spring.mp3";
+const DEFAULT_BGM_PATH: &str = "music/ikebukuro.mp3";
 const IDEAL_FRAMES_QUEUED: ALint = 10;
 
 //Represents the kinds of messages the audio system can receive from the 

@@ -57,8 +57,18 @@ impl RenderEntity {
                     glutil::apply_texture_parameters(&tex_params);
                     gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA32F as GLint, (meshdata.colors.len() / 4) as GLint, 1, 0, gl::RGBA, gl::FLOAT, &meshdata.colors[0] as *const f32 as *const c_void);
 
-                    normal = texture_keeper.fetch_texture("purple", "normal", &tex_params, ColorSpace::Linear);
-                    roughness = texture_keeper.fetch_texture("purple", "roughness", &tex_params, ColorSpace::Linear);
+                    gl::GenTextures(1, &mut normal);
+                    gl::BindTexture(gl::TEXTURE_2D, normal);
+                    glutil::apply_texture_parameters(&tex_params);
+                    gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA32F as GLint, 1, 1, 0, gl::RGBA, gl::FLOAT, &[0.5f32, 0.5, 1.0, 0.0] as *const f32 as *const c_void);
+
+                    gl::GenTextures(1, &mut roughness);
+                    gl::BindTexture(gl::TEXTURE_2D, roughness);
+                    glutil::apply_texture_parameters(&tex_params);
+                    gl::TexImage2D(gl::TEXTURE_2D, 0, gl::R32F as GLint, 1, 1, 0, gl::RED, gl::FLOAT, &[0.5f32] as *const f32 as *const c_void);
+
+                    //normal = texture_keeper.fetch_texture("purple", "normal", &tex_params, ColorSpace::Linear);
+                    //roughness = texture_keeper.fetch_texture("purple", "roughness", &tex_params, ColorSpace::Linear);
                 }
 
                 let transform_buffer = glutil::create_instanced_transform_buffer(vao, instances, INSTANCED_ATTRIBUTE);
@@ -181,7 +191,6 @@ impl Default for SceneData {
 pub enum FragmentFlag {
     Default,
     Normals,
-    LodZones,
     CascadeZones,
     Shadowed
 }
@@ -249,7 +258,6 @@ pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
             match scene_data.fragment_flag {
                 FragmentFlag::Shadowed => { glutil::bind_int(p, "visualize_shadowed", 1); }
                 FragmentFlag::Normals => { glutil::bind_int(p, "visualize_normals", 1); }
-                FragmentFlag::LodZones => { glutil::bind_int(p, "visualize_lod", 1); }
                 FragmentFlag::CascadeZones => { glutil::bind_int(p, "visualize_cascade_zone", 1); }
                 FragmentFlag::Default => {}
             }

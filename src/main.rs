@@ -1163,7 +1163,10 @@ fn main() {
 
         //Construct the dragon's model matrix
         if let Some(entity) = scene_data.entities.get_mut_element(dragon_entity_index) {
-            let mm = glm::translation(&dragon_position) * glm::rotation(elapsed_time, &Z_UP) * ozy::routines::uniform_scale(0.5);
+            //let mm = glm::translation(&dragon_position) * glm::rotation(elapsed_time, &Z_UP) * ozy::routines::uniform_scale(0.5);
+            let hover_height = 0.5;
+            let excitement = 10.0;
+            let mm = glm::translation(&dragon_position) * glm::translation(&glm::vec3(0.0, 0.0, hover_height * f32::sin(elapsed_time*excitement) + hover_height)) * glm::rotation(elapsed_time*excitement/4.0, &Z_UP) ;
             unsafe { entity.update_single_transform(0, &mm); }
             let pos = [mm[12], mm[13], mm[14]];
             send_or_error(&audio_sender, AudioCommand::SetSourcePosition(pos, 0));
@@ -1323,6 +1326,10 @@ fn main() {
 
         //Draw ImGui
         if do_imgui {
+            fn do_radio_option<T: Eq + Default>(imgui_ui: &imgui::Ui, label: &imgui::ImStr, flag: &mut T, new_flag: T) {
+                if imgui_ui.radio_button_bool(label, *flag == new_flag) { handle_radio_flag(flag, new_flag); }
+            }
+
             let win = imgui::Window::new(im_str!("Hacking window"));
             if let Some(win_token) = win.begin(&imgui_ui) {
                 imgui_ui.text(im_str!("Frametime: {:.2}ms\tFPS: {:.2}\tFrame: {}", delta_time * 1000.0, framerate, frame_count));
@@ -1335,25 +1342,21 @@ fn main() {
                     imgui_ui.checkbox(im_str!("Infinite ammo"), &mut infinite_ammo);
                 } else {
                     if imgui_ui.checkbox(im_str!("Lock FPS (v-sync)"), &mut do_vsync) {
-                        if do_vsync {
-                            glfw.set_swap_interval(SwapInterval::Sync(1));
-                        } else {
-                            glfw.set_swap_interval(SwapInterval::None);
-                        }
+                        if do_vsync { glfw.set_swap_interval(SwapInterval::Sync(1)); }
+                        else { glfw.set_swap_interval(SwapInterval::None); }
                     }
                 }
                 imgui_ui.separator();
 
                 //Do visualization radio selection
                 imgui_ui.text(im_str!("Debug visualization options:"));
-                if imgui_ui.radio_button_bool(im_str!("Visualize normals"), scene_data.fragment_flag == FragmentFlag::Normals) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::Normals); }
-                if imgui_ui.radio_button_bool(im_str!("Visualize LOD zones"), scene_data.fragment_flag == FragmentFlag::LodZones) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::LodZones); }
-                if imgui_ui.radio_button_bool(im_str!("Visualize how shadowed"), scene_data.fragment_flag == FragmentFlag::Shadowed) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::Shadowed); }
-                if imgui_ui.radio_button_bool(im_str!("Visualize shadow cascades"), scene_data.fragment_flag == FragmentFlag::CascadeZones) { handle_radio_flag(&mut scene_data.fragment_flag, FragmentFlag::CascadeZones); }
+                do_radio_option(&imgui_ui, im_str!("Visualize normals"), &mut scene_data.fragment_flag, FragmentFlag::Normals);
+                do_radio_option(&imgui_ui, im_str!("Visualize how shadowed"), &mut scene_data.fragment_flag, FragmentFlag::Shadowed);
+                do_radio_option(&imgui_ui, im_str!("Visualize shadow cascades"), &mut scene_data.fragment_flag, FragmentFlag::CascadeZones);
                 imgui_ui.separator();
 
                 imgui_ui.text(im_str!("What does a mouse click do?"));
-                if imgui_ui.radio_button_bool(im_str!("Places the dragon"), click_action == ClickAction::PlacingDragon) { handle_radio_flag(&mut click_action, ClickAction::PlacingDragon); }
+                do_radio_option(&imgui_ui, im_str!("Places the dragon"), &mut click_action, ClickAction::PlacingDragon);
                 imgui_ui.separator();
 
                 imgui_ui.text(im_str!("Lighting controls:"));
