@@ -14,7 +14,8 @@ pub enum MoveState {
 #[derive(PartialEq, Eq)]
 pub enum ClickAction {
     None,
-    PlacingDragon
+    PlacingDragon,
+    SpawningTotoro
 }
 
 impl Default for ClickAction {
@@ -45,6 +46,12 @@ pub fn ground_player(player: &mut Player, max_energy: &mut f32) {
 pub fn set_player_falling(player: &mut Player) {
     player.jumps_remaining -= 1;
     player.movement_state = MoveState::Falling;
+}
+
+//But what _is_ a Totoro?
+pub struct Totoro {
+    pub position: glm::TVec3<f32>,
+    pub creation_time: f32
 }
 
 #[derive(PartialEq, Eq)]

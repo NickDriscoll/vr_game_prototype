@@ -605,6 +605,7 @@ fn main() {
     //Camera state
     let mut mouselook_enabled = false;
     let mut mouse_clicked = false;
+    let mut was_mouse_clicked = false;
     let mut camera_position = glm::vec3(0.0, -8.0, 5.5);
     let mut last_camera_position = camera_position;
     let mut camera_input: glm::TVec3<f32> = glm::zero();             //This is a unit vector in view space that represents the input camera movement vector
@@ -805,9 +806,9 @@ fn main() {
         t
     };
 
-    //Create dragon
-    let mut dragon_position = glm::vec3(56.009315, 21.064762, 17.284132);
-    let dragon_entity_index = scene_data.entities.insert(RenderEntity::from_ozy("models/totoro.ozy", standard_program, 1, &mut texture_keeper, &default_tex_params));
+    //Create Totoros    
+    let mut totoros: OptionVec<Totoro> = OptionVec::with_capacity(64);
+    let totoro_entity_index = scene_data.entities.insert(RenderEntity::from_ozy("models/totoro.ozy", standard_program, 64, &mut texture_keeper, &default_tex_params));
 
     //Load gadget models
     let gadget_model_map = {
@@ -1134,8 +1135,8 @@ fn main() {
         let camera_velocity = camera_speed * glm::vec4_to_vec3(&(glm::affine_inverse(*screen_state.get_view_from_world()) * glm::vec3_to_vec4(&camera_input)));
         camera_position += camera_velocity * delta_time;
 
-        //Place dragon at clicking position
-        if click_action == ClickAction::PlacingDragon && mouse_clicked {
+        //Place totoro at clicking position
+        if click_action == ClickAction::SpawningTotoro && mouse_clicked && !was_mouse_clicked {
             let fovx_radians = 2.0 * f32::atan(f32::tan(screen_state.get_fov_radians() / 2.0) * screen_state.get_aspect_ratio());
             let max_coords = glm::vec4(
                 NEAR_DISTANCE * f32::tan(fovx_radians / 2.0),
@@ -1155,21 +1156,35 @@ fn main() {
             let ray_origin = glm::vec3(camera_position.x, camera_position.y, camera_position.z);
             let mouse_ray_dir = glm::normalize(&(glm::vec4_to_vec3(&world_space_mouse) - ray_origin));
 
-            //Update dragon's position if the ray hit
+            //Create Totoro if the ray hit
             if let Some((_, point)) = ray_hit_terrain(&terrain, &ray_origin, &mouse_ray_dir) {
-                dragon_position = point;
+                let tot = Totoro {
+                    position: point,
+                    creation_time: elapsed_time
+                };
+                totoros.insert(tot);
             }
         }
 
-        //Construct the dragon's model matrix
-        if let Some(entity) = scene_data.entities.get_mut_element(dragon_entity_index) {
-            //let mm = glm::translation(&dragon_position) * glm::rotation(elapsed_time, &Z_UP) * ozy::routines::uniform_scale(0.5);
+        //Update the GPU transform buffer for the Totoros
+        if let Some(entity) = scene_data.entities.get_mut_element(totoro_entity_index) {
             let hover_height = 0.5;
             let excitement = 10.0;
-            let mm = glm::translation(&dragon_position) * glm::translation(&glm::vec3(0.0, 0.0, hover_height * f32::sin(elapsed_time*excitement) + hover_height)) * glm::rotation(elapsed_time*excitement/4.0, &Z_UP) ;
-            unsafe { entity.update_single_transform(0, &mm); }
-            let pos = [mm[12], mm[13], mm[14]];
-            send_or_error(&audio_sender, AudioCommand::SetSourcePosition(pos, 0));
+
+            let mut transform_buffer = vec![0.0; totoros.len() * 16];
+            for i in 0..totoros.len() {
+                if let Some(totoro) = &totoros[i] {
+                    let t = elapsed_time - totoro.creation_time;
+                    let mm = glm::translation(&totoro.position) * glm::translation(&glm::vec3(0.0, 0.0, hover_height * f32::sin(t*excitement) + hover_height)) * glm::rotation(t*excitement/4.0, &Z_UP);                    
+                    if i == 0 {
+                        let pos = [mm[12], mm[13], mm[14]];
+                        send_or_error(&audio_sender, AudioCommand::SetSourcePosition(pos, 0));
+                    }
+                    write_matrix_to_buffer(&mut transform_buffer, i, mm);
+                }
+            }
+
+            entity.update_buffer(&transform_buffer);
         }
 
         //Update tracking space location
@@ -1321,6 +1336,7 @@ fn main() {
         }
 
         last_camera_position = camera_position;
+        was_mouse_clicked = mouse_clicked;
 
         //Pre-render phase
 
@@ -1357,6 +1373,7 @@ fn main() {
 
                 imgui_ui.text(im_str!("What does a mouse click do?"));
                 do_radio_option(&imgui_ui, im_str!("Places the dragon"), &mut click_action, ClickAction::PlacingDragon);
+                do_radio_option(&imgui_ui, im_str!("Give life to a new Totoro"), &mut click_action, ClickAction::SpawningTotoro);
                 imgui_ui.separator();
 
                 imgui_ui.text(im_str!("Lighting controls:"));

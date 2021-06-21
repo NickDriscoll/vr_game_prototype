@@ -66,9 +66,6 @@ impl RenderEntity {
                     gl::BindTexture(gl::TEXTURE_2D, roughness);
                     glutil::apply_texture_parameters(&tex_params);
                     gl::TexImage2D(gl::TEXTURE_2D, 0, gl::R32F as GLint, 1, 1, 0, gl::RED, gl::FLOAT, &[0.5f32] as *const f32 as *const c_void);
-
-                    //normal = texture_keeper.fetch_texture("purple", "normal", &tex_params, ColorSpace::Linear);
-                    //roughness = texture_keeper.fetch_texture("purple", "roughness", &tex_params, ColorSpace::Linear);
                 }
 
                 let transform_buffer = glutil::create_instanced_transform_buffer(vao, instances, INSTANCED_ATTRIBUTE);
@@ -101,18 +98,26 @@ impl RenderEntity {
         //Record the current active instance count
         self.active_instances = transforms.len() as GLint / 16;
 
-        //Update GPU buffer storing hit volume transforms
-		if transforms.len() > 0 {
-			unsafe {
-				gl::BindBuffer(gl::ARRAY_BUFFER, self.transform_buffer);
-				gl::BufferSubData(
+        //Update GPU buffer storing transforms
+		unsafe {
+            if self.max_instances < self.active_instances as usize {
+                gl::BindBuffer(gl::ARRAY_BUFFER, self.transform_buffer);
+                gl::BufferData(
                     gl::ARRAY_BUFFER,
-					0 as GLsizeiptr,
-					(transforms.len() * size_of::<GLfloat>()) as GLsizeiptr,
-					&transforms[0] as *const GLfloat as *const c_void
-				);
-			}
-		}
+                    (self.active_instances as usize * 16 * size_of::<GLfloat>()) as GLsizeiptr,
+                    &transforms[0] as *const GLfloat as *const c_void,
+                    gl::DYNAMIC_DRAW
+                );
+            } else if transforms.len() > 0 {
+                gl::BindBuffer(gl::ARRAY_BUFFER, self.transform_buffer);
+                gl::BufferSubData(
+                    gl::ARRAY_BUFFER,
+                    0 as GLsizeiptr,
+                    (transforms.len() * size_of::<GLfloat>()) as GLsizeiptr,
+                    &transforms[0] as *const GLfloat as *const c_void
+                );
+            }
+        }
     }
 
     pub fn update_sub_buffer(&mut self, transforms: &[f32], idx: usize) {
@@ -156,8 +161,8 @@ pub struct SceneData {
     pub skybox_program: GLuint,
     pub sun_direction: glm::TVec3<f32>,
     pub sun_color: [f32; 3],
-    pub ambient_strength: f32,
     pub sun_shadow_map: CascadedShadowMap,
+    pub ambient_strength: f32,
     pub entities: OptionVec<RenderEntity>
 }
 
@@ -219,7 +224,7 @@ impl ViewData {
     }
 }
 
-//This is the function that renders the image you would actually see on screen/in HMD
+//This is the function that renders the 3D objects in the scene
 pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
     let texture_map_names = ["albedo_tex", "normal_tex", "roughness_tex", "shadow_map"];
     let sun_shadow_map = &scene_data.sun_shadow_map;
