@@ -707,7 +707,7 @@ fn main() {
 
     //Water gun state
     const MAX_WATER_PRESSURE: f32 = 30.0;
-    let mut water_gun_force = glm::zero();
+    let mut water_gun_force: glm::TVec3<f32> = glm::zero();
     let mut infinite_ammo = false;
     let mut remaining_water = Gadget::MAX_ENERGY;
 
