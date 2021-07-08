@@ -749,7 +749,7 @@ fn main() {
             gl::BindTexture(gl::TEXTURE_2D, tex);            
             glutil::apply_texture_parameters(&font_atlas_params);
             gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RED as GLsizei, font_atlas.width as GLsizei, font_atlas.height as GLsizei, 0, gl::RED, gl::UNSIGNED_BYTE, font_atlas.data.as_ptr() as _);
-            atlas.tex_id = TextureId::new(tex as usize);
+            atlas.tex_id = TextureId::new(tex as usize);  //Giving Dear Imgui a reference to the font atlas GPU texture
         }
         FontAtlasRefMut::Shared(_) => {
             panic!("Not dealing with this case.");
@@ -945,14 +945,13 @@ fn main() {
                     match action {
                         Action::Press => {
                             imgui_io.mouse_down[0] = true;
-                            mouse_clicked = true;
                         }
                         Action::Release => {
                             imgui_io.mouse_down[0] = false;
-                            mouse_clicked = false;
                         }
                         Action::Repeat => {}
                     }
+                    mouse_clicked = imgui_io.mouse_down[0];
                 }
                 WindowEvent::MouseButton(glfw::MouseButtonRight, glfw::Action::Press, ..) => {
                     imgui_io.mouse_down[1] = true;
@@ -991,6 +990,7 @@ fn main() {
                 _ => {  }
             }
         }
+        let imgui_wants_mouse = imgui_io.want_capture_mouse;
         drop(imgui_io);
         
         //Begin drawing imgui frame
@@ -1136,7 +1136,7 @@ fn main() {
         camera_position += camera_velocity * delta_time;
 
         //Place totoro at clicking position
-        if click_action == ClickAction::SpawningTotoro && mouse_clicked && !was_mouse_clicked {
+        if !imgui_wants_mouse && click_action == ClickAction::SpawningTotoro && mouse_clicked && !was_mouse_clicked {
             let fovx_radians = 2.0 * f32::atan(f32::tan(screen_state.get_fov_radians() / 2.0) * screen_state.get_aspect_ratio());
             let max_coords = glm::vec4(
                 NEAR_DISTANCE * f32::tan(fovx_radians / 2.0),

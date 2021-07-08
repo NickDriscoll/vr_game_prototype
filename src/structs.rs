@@ -22,6 +22,34 @@ impl Default for ClickAction {
     fn default() -> Self { ClickAction::None }
 }
 
+pub struct MouseState {
+    
+    /*
+    let mut mouselook_enabled = false;
+    let mut mouse_clicked = false;
+    */
+}
+
+pub struct Camera {
+    pub position: glm::TVec3<f32>,
+    pub last_position: glm::TVec3<f32>,
+    pub collision_radius: f32
+
+    //Camera state
+    /*
+    let mut mouselook_enabled = false;
+    let mut mouse_clicked = false;
+    let mut was_mouse_clicked = false;
+    let mut camera_position = glm::vec3(0.0, -8.0, 5.5);
+    let mut last_camera_position = camera_position;
+    let mut camera_input: glm::TVec3<f32> = glm::zero();             //This is a unit vector in view space that represents the input camera movement vector
+    let mut camera_orientation = glm::vec2(0.0, -glm::half_pi::<f32>() * 0.6);
+    let mut camera_speed = 5.0;
+    let camera_hit_sphere_radius = 0.5;
+    let mut camera_collision = true;
+    */
+}
+
 pub struct Player {
     pub tracking_position: glm::TVec3<f32>,
     pub tracking_velocity: glm::TVec3<f32>,
