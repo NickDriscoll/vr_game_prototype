@@ -1,6 +1,6 @@
 //#![allow(dead_code)]
 use crate::render::SceneData;
-use crate::collision::LineSegment;
+use ozy::collision::LineSegment;
 
 pub const VALVE_INDEX_INTERACTION_PROFILE: &str =           "/interaction_profiles/valve/index_controller";
 pub const HTC_VIVE_INTERACTION_PROFILE: &str =              "/interaction_profiles/htc/vive_controller";

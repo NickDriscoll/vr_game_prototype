@@ -8,7 +8,6 @@ extern crate tinyfiledialogs as tfd;
 extern crate ozy_engine as ozy;
 
 mod audio;
-mod collision;
 mod gadget;
 mod structs;
 mod render;
@@ -44,9 +43,9 @@ use ozy::{glutil, io};
 use ozy::glutil::ColorSpace;
 use ozy::render::{Framebuffer, RenderTarget, ScreenState, TextureKeeper};
 use ozy::structs::OptionVec;
+use ozy::collision::*;
 
 use crate::audio::{AudioCommand};
-use crate::collision::*;
 use crate::gadget::*;
 use crate::structs::*;
 
@@ -182,7 +181,7 @@ fn main() {
         instance
     };
 
-    //Get the system id
+    //Get the xr system id
     let xr_systemid = match &xr_instance {
         Some(inst) => {
             match inst.system(xr::FormFactor::HEAD_MOUNTED_DISPLAY) {
@@ -990,7 +989,7 @@ fn main() {
                 _ => {  }
             }
         }
-        let imgui_wants_mouse = imgui_io.want_capture_mouse;
+        let imgui_wants_mouse = imgui_io.want_capture_mouse;    //Save whether or not Dear Imgui is using the mouse input as of last frame
         drop(imgui_io);
         
         //Begin drawing imgui frame
