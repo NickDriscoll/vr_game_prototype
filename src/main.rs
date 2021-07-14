@@ -94,15 +94,35 @@ fn resize_main_window(window: &mut Window, framebuffer: &mut Framebuffer, screen
     window.set_monitor(window_mode, pos.0, pos.1, size.x, size.y, Some(144));
 }
 
-fn clamp<T: PartialOrd>(x: T, min: T, max: T) -> T {
-    if x < min { min }
-    else if x > max { max }
-    else { x }
-}
-
 fn write_matrix_to_buffer(buffer: &mut [f32], index: usize, matrix: glm::TMat4<f32>) {    
     for k in 0..16 {
         buffer[16 * index + k] = matrix[k];
+    }
+}
+
+//Given the mouse's position on the near clipping plane (A) and the camera's origin position (B),
+//computes the normalized ray (A - B), expressed in world-space coords
+fn compute_click_ray(screen_state: &ScreenState, screen_space_mouse: &glm::TVec2<f32>, camera_position: &glm::TVec3<f32>) -> Ray {
+    let fovx_radians = 2.0 * f32::atan(f32::tan(screen_state.get_fov_radians() / 2.0) * screen_state.get_aspect_ratio());
+    let max_coords = glm::vec4(
+        NEAR_DISTANCE * f32::tan(fovx_radians / 2.0),
+        NEAR_DISTANCE * f32::tan(screen_state.get_fov_radians() / 2.0),
+        -NEAR_DISTANCE,
+        1.0
+    );
+    let normalized_coords = glm::vec4(
+        screen_space_mouse.x * 2.0 / screen_state.get_window_size().x as f32 - 1.0,
+        -screen_space_mouse.y * 2.0 / screen_state.get_window_size().y as f32 + 1.0,
+        1.0,
+        1.0
+    );
+    let view_space_mouse = glm::matrix_comp_mult(&normalized_coords, &max_coords);
+    let world_space_mouse = screen_state.get_world_from_view() * view_space_mouse;
+
+    let ray_origin = glm::vec3(camera_position.x, camera_position.y, camera_position.z);
+    Ray {
+        origin: ray_origin,
+        direction: glm::normalize(&(glm::vec4_to_vec3(&world_space_mouse) - ray_origin))
     }
 }
 
@@ -1135,34 +1155,26 @@ fn main() {
         camera_position += camera_velocity * delta_time;
 
         //Place totoro at clicking position
-        if !imgui_wants_mouse && click_action == ClickAction::SpawningTotoro && mouse_clicked && !was_mouse_clicked {
-            let fovx_radians = 2.0 * f32::atan(f32::tan(screen_state.get_fov_radians() / 2.0) * screen_state.get_aspect_ratio());
-            let max_coords = glm::vec4(
-                NEAR_DISTANCE * f32::tan(fovx_radians / 2.0),
-                NEAR_DISTANCE * f32::tan(screen_state.get_fov_radians() / 2.0),
-                -NEAR_DISTANCE,
-                1.0
-            );
-            let normalized_coords = glm::vec4(
-                screen_space_mouse.x * 2.0 / screen_state.get_window_size().x as f32 - 1.0,
-                -screen_space_mouse.y * 2.0 / screen_state.get_window_size().y as f32 + 1.0,
-                1.0,
-                1.0
-            );
-            let view_space_mouse = glm::matrix_comp_mult(&normalized_coords, &max_coords);
-            let world_space_mouse = screen_state.get_world_from_view() * view_space_mouse;
+        if !imgui_wants_mouse && mouse_clicked && !was_mouse_clicked {
+            match click_action {
+                ClickAction::SpawningTotoro => {
+                    let mouse_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
 
-            let ray_origin = glm::vec3(camera_position.x, camera_position.y, camera_position.z);
-            let mouse_ray_dir = glm::normalize(&(glm::vec4_to_vec3(&world_space_mouse) - ray_origin));
-
-            //Create Totoro if the ray hit
-            if let Some((_, point)) = ray_hit_terrain(&terrain, &ray_origin, &mouse_ray_dir) {
-                let tot = Totoro {
-                    position: point,
-                    creation_time: elapsed_time
-                };
-                totoros.insert(tot);
-            }
+                    //Create Totoro if the ray hit
+                    if let Some((_, point)) = ray_hit_terrain(&terrain, &mouse_ray) {
+                        let tot = Totoro {
+                            position: point,
+                            creation_time: elapsed_time
+                        };
+                        totoros.insert(tot);
+                    }
+                }
+                ClickAction::SelectingTotoro => {
+                    let mouse_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
+                    
+                }
+                ClickAction::None => {}
+            }            
         }
 
         //Update the GPU transform buffer for the Totoros
@@ -1174,7 +1186,8 @@ fn main() {
             for i in 0..totoros.len() {
                 if let Some(totoro) = &totoros[i] {
                     let t = elapsed_time - totoro.creation_time;
-                    let mm = glm::translation(&totoro.position) * glm::translation(&glm::vec3(0.0, 0.0, hover_height * f32::sin(t*excitement) + hover_height)) * glm::rotation(t*excitement/4.0, &Z_UP);                    
+                    //let mm = glm::translation(&totoro.position) * glm::translation(&glm::vec3(0.0, 0.0, hover_height * f32::sin(t*excitement) + hover_height)) * glm::rotation(t*excitement/4.0, &Z_UP);                    
+                    let mm = glm::translation(&totoro.position);
                     if i == 0 {
                         let pos = [mm[12], mm[13], mm[14]];
                         send_or_error(&audio_sender, AudioCommand::SetSourcePosition(pos, 0));
@@ -1252,10 +1265,13 @@ fn main() {
                         },
                         radius: player.radius
                     };
-                    let capsule_ray = player_capsule.segment.p1 - player_capsule.segment.p0;
+                    let capsule_ray = Ray {
+                        origin: player_capsule.segment.p0,
+                        direction: player_capsule.segment.p1 - player_capsule.segment.p0
+                    };
     
                     //Finding the closest point on the triangle to the line segment of the capsule
-                    let ref_point = match ray_hit_plane(&player_capsule.segment.p0, &capsule_ray, &triangle_plane) {
+                    let ref_point = match ray_hit_plane(&capsule_ray, &triangle_plane) {
                         Some((_, intersection)) => {
                             if robust_point_in_triangle(&intersection, &triangle) { intersection }
                             else { closest_point_on_triangle(&intersection, &triangle).1 }
@@ -1371,7 +1387,7 @@ fn main() {
                 imgui_ui.separator();
 
                 imgui_ui.text(im_str!("What does a mouse click do?"));
-                do_radio_option(&imgui_ui, im_str!("Places the dragon"), &mut click_action, ClickAction::PlacingDragon);
+                do_radio_option(&imgui_ui, im_str!("Selects a totoro"), &mut click_action, ClickAction::SelectingTotoro);
                 do_radio_option(&imgui_ui, im_str!("Give life to a new Totoro"), &mut click_action, ClickAction::SpawningTotoro);
                 imgui_ui.separator();
 

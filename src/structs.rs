@@ -14,7 +14,7 @@ pub enum MoveState {
 #[derive(PartialEq, Eq)]
 pub enum ClickAction {
     None,
-    PlacingDragon,
+    SelectingTotoro,
     SpawningTotoro
 }
 
