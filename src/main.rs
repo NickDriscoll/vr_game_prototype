@@ -42,6 +42,7 @@ use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use ozy::{glutil, io};
 use ozy::glutil::ColorSpace;
 use ozy::render::{Framebuffer, RenderTarget, ScreenState, TextureKeeper};
+use ozy::routines::uniform_scale;
 use ozy::structs::OptionVec;
 use ozy::collision::*;
 
@@ -94,7 +95,7 @@ fn resize_main_window(window: &mut Window, framebuffer: &mut Framebuffer, screen
     window.set_monitor(window_mode, pos.0, pos.1, size.x, size.y, Some(144));
 }
 
-fn write_matrix_to_buffer(buffer: &mut [f32], index: usize, matrix: glm::TMat4<f32>) {    
+fn write_matrix_to_buffer(buffer: &mut [f32], index: usize, matrix: glm::TMat4<f32>) {
     for k in 0..16 {
         buffer[16 * index + k] = matrix[k];
     }
@@ -124,6 +125,10 @@ fn compute_click_ray(screen_state: &ScreenState, screen_space_mouse: &glm::TVec2
         origin: ray_origin,
         direction: glm::normalize(&(glm::vec4_to_vec3(&world_space_mouse) - ray_origin))
     }
+}
+
+fn rand_binomial() -> f32 {
+    rand::random::<f32>() - rand::random::<f32>()
 }
 
 fn main() {
@@ -827,6 +832,7 @@ fn main() {
 
     //Create Totoros    
     let mut totoros: OptionVec<Totoro> = OptionVec::with_capacity(64);
+    let mut selected_totoro: Option<Totoro> = None;
     let totoro_entity_index = scene_data.entities.insert(RenderEntity::from_ozy("models/totoro.ozy", standard_program, 64, &mut texture_keeper, &default_tex_params));
 
     //Load gadget models
@@ -1131,6 +1137,13 @@ fn main() {
                 }
             }
 
+            //Emergency respawn button
+            if let Some(state) = right_trackpad_force_state {
+                if state.changed_since_last_sync && state.current_state {
+                    reset_player_position(&mut player);
+                }
+            }
+
             if player.movement_state != MoveState::Falling {
                 remaining_water = Gadget::MAX_ENERGY;
             }
@@ -1146,6 +1159,39 @@ fn main() {
             }
         }
 
+        //Totoro update
+        for i in 0..totoros.len() {
+            if let Some(totoro) = totoros.get_mut_element(i) {
+                match totoro.state {
+                    TotoroState::Relaxed => {
+                        if elapsed_time - totoro.state_timer >= 2.0 {
+                            totoro.state_timer = elapsed_time;
+                            totoro.state = TotoroState::Meandering;
+                            totoro.desired_rotation += glm::pi::<f32>();
+                        }
+                    }
+                    TotoroState::Meandering => {
+                        if elapsed_time - totoro.state_timer >= 3.0 {
+                            totoro.state_timer = elapsed_time;
+                            totoro.state = TotoroState::Relaxed;
+                        } else {
+                            let turn_speed = 1.5;
+                            if totoro.rotation > totoro.desired_rotation {
+                                totoro.rotation -= turn_speed * delta_time;
+                            } else {
+                                totoro.rotation += turn_speed * delta_time;
+                            }
+
+                            totoro.desired_rotation += glm::half_pi::<f32>() * rand_binomial();
+                            totoro.position += glm::vec4_to_vec3(&(glm::rotation(totoro.rotation, &Z_UP) * glm::vec4(0.0, 1.0, 0.0, 0.0) * delta_time));
+                        }
+                    }
+                }
+                totoro.desired_rotation %= glm::two_pi::<f32>();
+                totoro.rotation %= glm::two_pi::<f32>();
+            }
+        }
+
         //If the user is controlling the camera, force the mouse cursor into the center of the screen
         if mouselook_enabled {
             window.set_cursor_pos(screen_state.get_window_size().x as f64 / 2.0, screen_state.get_window_size().y as f64 / 2.0);
@@ -1154,7 +1200,7 @@ fn main() {
         let camera_velocity = camera_speed * glm::vec4_to_vec3(&(glm::affine_inverse(*screen_state.get_view_from_world()) * glm::vec3_to_vec4(&camera_input)));
         camera_position += camera_velocity * delta_time;
 
-        //Place totoro at clicking position
+        //Do click action
         if !imgui_wants_mouse && mouse_clicked && !was_mouse_clicked {
             match click_action {
                 ClickAction::SpawningTotoro => {
@@ -1162,15 +1208,25 @@ fn main() {
 
                     //Create Totoro if the ray hit
                     if let Some((_, point)) = ray_hit_terrain(&terrain, &mouse_ray) {
-                        let tot = Totoro {
-                            position: point,
-                            creation_time: elapsed_time
-                        };
+                        let tot = Totoro::new(point, elapsed_time);
                         totoros.insert(tot);
                     }
                 }
                 ClickAction::SelectingTotoro => {
                     let mouse_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
+                    
+                    for i in 0..totoros.len() {
+                        if let Some(tot) = &totoros[i] {
+                            let focus = tot.position + glm::vec3(0.0, 0.0, 0.5);
+                            let radius = 1.0;
+                            let sph = Sphere {
+                                focus,
+                                radius
+                            };
+
+
+                        }
+                    }
                     
                 }
                 ClickAction::None => {}
@@ -1179,15 +1235,12 @@ fn main() {
 
         //Update the GPU transform buffer for the Totoros
         if let Some(entity) = scene_data.entities.get_mut_element(totoro_entity_index) {
-            let hover_height = 0.5;
-            let excitement = 10.0;
-
             let mut transform_buffer = vec![0.0; totoros.len() * 16];
             for i in 0..totoros.len() {
                 if let Some(totoro) = &totoros[i] {
-                    let t = elapsed_time - totoro.creation_time;
+                    //let t = elapsed_time - totoro.creation_time;
                     //let mm = glm::translation(&totoro.position) * glm::translation(&glm::vec3(0.0, 0.0, hover_height * f32::sin(t*excitement) + hover_height)) * glm::rotation(t*excitement/4.0, &Z_UP);                    
-                    let mm = glm::translation(&totoro.position);
+                    let mm = glm::translation(&totoro.position) * glm::rotation(totoro.rotation, &glm::vec3(0.0, 0.0, 1.0));
                     if i == 0 {
                         let pos = [mm[12], mm[13], mm[14]];
                         send_or_error(&audio_sender, AudioCommand::SetSourcePosition(pos, 0));
@@ -1217,7 +1270,7 @@ fn main() {
                 triangle.normal
             );
 
-            //We create a bounding sphere for each triangle in order to do a coarse collision step with other objects
+            //We create a bounding sphere for the triangle in order to do a coarse collision step with other objects
             let triangle_sphere = {
                 let focus = midpoint(&triangle.c, &midpoint(&triangle.a, &triangle.b));
                 let radius = glm::max3_scalar(

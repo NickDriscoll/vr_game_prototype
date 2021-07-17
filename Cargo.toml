@@ -15,13 +15,14 @@ glfw = "*"
 gl = "*"
 nalgebra-glm = "*"
 raw-window-handle = "*"
-rand = "0.7.3"
+rand = "0.8.4"
 image = "*"
 imgui = "0.7.0"
 alto = "3.0.4"
 minimp3 = "0.5.1"
 chrono = "*"
 tinyfiledialogs = "3.3.10"
+
 strum = { version = "0.20", features = ["derive"] }
 
 [dependencies.openxr]

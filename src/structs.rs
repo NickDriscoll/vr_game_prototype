@@ -79,7 +79,30 @@ pub fn set_player_falling(player: &mut Player) {
 //But what _is_ a Totoro?
 pub struct Totoro {
     pub position: glm::TVec3<f32>,
-    pub creation_time: f32
+    pub home: glm::TVec3<f32>,
+    pub rotation: f32,              //This is a rotation about the world-space z-axis, where 0 is positive y and rotation is counterclockwise. In radians
+    pub desired_rotation: f32,
+    pub state: TotoroState,
+    pub state_timer: f32
+}
+
+impl Totoro {
+    pub fn new(position: glm::TVec3<f32>, creation_time: f32) -> Self {
+        let rotation = rand::random::<f32>() * glm::two_pi::<f32>();
+        Totoro {
+            position,
+            home: position,
+            rotation,
+            desired_rotation: rotation,
+            state_timer: creation_time,
+            state: TotoroState::Relaxed
+        }
+    }
+}
+
+pub enum TotoroState {
+    Relaxed,
+    Meandering
 }
 
 #[derive(PartialEq, Eq)]
