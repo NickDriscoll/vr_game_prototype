@@ -80,20 +80,20 @@ pub fn set_player_falling(player: &mut Player) {
 pub struct Totoro {
     pub position: glm::TVec3<f32>,
     pub home: glm::TVec3<f32>,
-    pub rotation: f32,              //This is a rotation about the world-space z-axis, where 0 is positive y and rotation is counterclockwise. In radians
-    pub desired_rotation: f32,
+    pub forward: glm::TVec3<f32>,
+    pub desired_forward: glm::TVec3<f32>,
     pub state: TotoroState,
     pub state_timer: f32
 }
 
 impl Totoro {
     pub fn new(position: glm::TVec3<f32>, creation_time: f32) -> Self {
-        let rotation = rand::random::<f32>() * glm::two_pi::<f32>();
+        let forward = glm::vec3(1.0, 0.0, 0.0);
         Totoro {
             position,
             home: position,
-            rotation,
-            desired_rotation: rotation,
+            forward,
+            desired_forward: forward,
             state_timer: creation_time,
             state: TotoroState::Relaxed
         }

@@ -101,6 +101,10 @@ fn write_matrix_to_buffer(buffer: &mut [f32], index: usize, matrix: glm::TMat4<f
     }
 }
 
+fn lerp(start: &glm::TVec3<f32>, end: &glm::TVec3<f32>, t: f32) -> glm::TVec3<f32> {
+    start * (1.0 - t) + end * t
+}
+
 //Given the mouse's position on the near clipping plane (A) and the camera's origin position (B),
 //computes the normalized ray (A - B), expressed in world-space coords
 fn compute_click_ray(screen_state: &ScreenState, screen_space_mouse: &glm::TVec2<f32>, camera_position: &glm::TVec3<f32>) -> Ray {
@@ -1164,10 +1168,13 @@ fn main() {
             if let Some(totoro) = totoros.get_mut_element(i) {
                 match totoro.state {
                     TotoroState::Relaxed => {
+                        const EPSILON: f32 = 0.00001;
                         if elapsed_time - totoro.state_timer >= 2.0 {
                             totoro.state_timer = elapsed_time;
                             totoro.state = TotoroState::Meandering;
-                            totoro.desired_rotation += glm::pi::<f32>();
+                            if totoro.home != totoro.position {
+                                totoro.desired_forward = glm::normalize(&(totoro.home - totoro.position));
+                            }
                         }
                     }
                     TotoroState::Meandering => {
@@ -1175,20 +1182,17 @@ fn main() {
                             totoro.state_timer = elapsed_time;
                             totoro.state = TotoroState::Relaxed;
                         } else {
-                            let turn_speed = 1.5;
-                            if totoro.rotation > totoro.desired_rotation {
-                                totoro.rotation -= turn_speed * delta_time;
-                            } else {
-                                totoro.rotation += turn_speed * delta_time;
+                            let turn_speed = 0.1;
+                            totoro.forward = glm::normalize(&lerp(&totoro.forward, &totoro.desired_forward, turn_speed));
+                            
+                            if elapsed_time - totoro.state_timer >= 1.0 {
+                                totoro.desired_forward = glm::mat4_to_mat3(&glm::rotation(0.25 * glm::quarter_pi::<f32>() * rand_binomial(), &Z_UP)) * totoro.desired_forward;
                             }
 
-                            totoro.desired_rotation += glm::half_pi::<f32>() * rand_binomial();
-                            totoro.position += glm::vec4_to_vec3(&(glm::rotation(totoro.rotation, &Z_UP) * glm::vec4(0.0, 1.0, 0.0, 0.0) * delta_time));
+                            totoro.position += totoro.forward * delta_time;
                         }
                     }
                 }
-                totoro.desired_rotation %= glm::two_pi::<f32>();
-                totoro.rotation %= glm::two_pi::<f32>();
             }
         }
 
@@ -1240,7 +1244,14 @@ fn main() {
                 if let Some(totoro) = &totoros[i] {
                     //let t = elapsed_time - totoro.creation_time;
                     //let mm = glm::translation(&totoro.position) * glm::translation(&glm::vec3(0.0, 0.0, hover_height * f32::sin(t*excitement) + hover_height)) * glm::rotation(t*excitement/4.0, &Z_UP);                    
-                    let mm = glm::translation(&totoro.position) * glm::rotation(totoro.rotation, &glm::vec3(0.0, 0.0, 1.0));
+                    let cr = glm::cross(&Z_UP, &totoro.forward);
+                    let rotation_mat = glm::mat4(
+                        totoro.forward.x, cr.x, 0.0, 0.0,
+                        totoro.forward.y, cr.y, 0.0, 0.0,
+                        totoro.forward.z, cr.z, 1.0, 0.0,
+                        0.0, 0.0, 0.0, 1.0
+                    );
+                    let mm = glm::translation(&totoro.position) * rotation_mat;
                     if i == 0 {
                         let pos = [mm[12], mm[13], mm[14]];
                         send_or_error(&audio_sender, AudioCommand::SetSourcePosition(pos, 0));
