@@ -136,6 +136,7 @@ fn rand_binomial() -> f32 {
 }
 
 fn main() {
+    const EPSILON: f32 = 0.00001;
     let Z_UP = glm::vec3(0.0, 0.0, 1.0);
 
     //Do a bunch of OpenXR initialization
@@ -537,13 +538,13 @@ fn main() {
             }
         }
     };
-    let tracking_space = xrutil::make_reference_space(&xr_session, xr::ReferenceSpaceType::STAGE, space_pose);           //Create tracking space
-    let view_space = xrutil::make_reference_space(&xr_session, xr::ReferenceSpaceType::VIEW, xr::Posef::IDENTITY);       //Create view space
+    let tracking_space = xrutil::make_reference_space(&xr_session, xr::ReferenceSpaceType::STAGE, space_pose);                          //Create tracking space
+    let view_space = xrutil::make_reference_space(&xr_session, xr::ReferenceSpaceType::VIEW, xr::Posef::IDENTITY);                      //Create view space
     
-    let left_hand_grip_space = xrutil::make_actionspace(&xr_session, left_hand_subaction_path, &left_hand_pose_action, space_pose); //Create left hand grip space
-    let left_hand_aim_space = xrutil::make_actionspace(&xr_session, left_hand_subaction_path, &left_hand_aim_action, space_pose); //Create left hand aim space
-    let right_hand_grip_space = xrutil::make_actionspace(&xr_session, right_hand_subaction_path, &right_hand_grip_action, space_pose); //Create right hand grip space
-    let right_hand_aim_space = xrutil::make_actionspace(&xr_session, right_hand_subaction_path, &right_hand_aim_action, space_pose); //Create right hand aim space
+    let left_hand_grip_space = xrutil::make_actionspace(&xr_session, left_hand_subaction_path, &left_hand_pose_action, space_pose);     //Create left hand grip space
+    let left_hand_aim_space = xrutil::make_actionspace(&xr_session, left_hand_subaction_path, &left_hand_aim_action, space_pose);       //Create left hand aim space
+    let right_hand_grip_space = xrutil::make_actionspace(&xr_session, right_hand_subaction_path, &right_hand_grip_action, space_pose);  //Create right hand grip space
+    let right_hand_aim_space = xrutil::make_actionspace(&xr_session, right_hand_subaction_path, &right_hand_aim_action, space_pose);    //Create right hand aim space
 
     //Create swapchains
     let mut xr_swapchains = match (&xr_session, &xr_viewconfiguration_views) {
@@ -834,7 +835,7 @@ fn main() {
         t
     };
 
-    //Create Totoros    
+    //Create Totoros
     let mut totoros: OptionVec<Totoro> = OptionVec::with_capacity(64);
     let mut selected_totoro: Option<Totoro> = None;
     let totoro_entity_index = scene_data.entities.insert(RenderEntity::from_ozy("models/totoro.ozy", standard_program, 64, &mut texture_keeper, &default_tex_params));
@@ -1172,8 +1173,9 @@ fn main() {
                         if elapsed_time - totoro.state_timer >= 2.0 {
                             totoro.state_timer = elapsed_time;
                             totoro.state = TotoroState::Meandering;
-                            if totoro.home != totoro.position {
+                            if glm::distance(&totoro.home, &totoro.position) > EPSILON {
                                 totoro.desired_forward = glm::normalize(&(totoro.home - totoro.position));
+                                totoro.desired_forward.z = 0.0;
                             }
                         }
                     }
@@ -1293,36 +1295,6 @@ fn main() {
                     radius
                 }
             };
-
-            fn spheres_collide(s1: &Sphere, s2: &Sphere) -> bool {
-                glm::distance(&s1.focus, &s2.focus) < s1.radius + s2.radius
-            }
-
-            //Returns the vector to add to the position of the actor to resolve the collision
-            fn triangle_collide_sphere(actor_sphere: &Sphere, triangle: &Triangle, triangle_sphere: &Sphere) -> glm::TVec3<f32> {
-                let triangle_plane = Plane::new(
-                    triangle.a,
-                    triangle.normal
-                );
-
-                if spheres_collide(&actor_sphere, &triangle_sphere) {
-                    let (dist, point_on_plane) = projected_point_on_plane(&actor_sphere.focus, &triangle_plane);
-                    if f32::abs(dist) < actor_sphere.radius && robust_point_in_triangle(&point_on_plane, &triangle) {
-                        triangle.normal * (actor_sphere.radius - dist)
-                    } else {                            
-                        //Check if the sphere is hitting an edge
-                        let (best_dist, best_point) = closest_point_on_triangle(&actor_sphere.focus, &triangle);
-
-                        if best_dist < actor_sphere.radius {
-                            glm::normalize(&(actor_sphere.focus - best_point)) * (actor_sphere.radius - best_dist)
-                        } else {
-                            glm::zero()
-                        }
-                    }
-                } else {
-                    glm::zero()
-                }
-            }
 
             //Check if this triangle is hitting the camera
             if camera_collision {

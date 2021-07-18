@@ -91,6 +91,7 @@ pub struct Totoro {
 
 impl Totoro {
     pub fn new(position: glm::TVec3<f32>, creation_time: f32) -> Self {
+        //Generate random orientation and scale
         let forward = glm::normalize(&glm::vec3(rand::random::<f32>() * 2.0 - 1.0, rand::random::<f32>() * 2.0 - 1.0, 0.0));
         let scale_factor = rand::random::<f32>() * 3.0 + 1.0;
         let scale = glm::vec3(
