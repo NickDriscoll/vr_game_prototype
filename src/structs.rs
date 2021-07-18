@@ -3,7 +3,9 @@ use std::fs::File;
 use std::io::BufReader;
 use std::io::prelude::*;
 use ozy::collision::*;
+use ozy::routines::uniform_scale;
 use crate::gadget::Gadget;
+use crate::*;
 
 #[derive(PartialEq, Eq)]
 pub enum MoveState {
@@ -79,6 +81,7 @@ pub fn set_player_falling(player: &mut Player) {
 //But what _is_ a Totoro?
 pub struct Totoro {
     pub position: glm::TVec3<f32>,
+    pub scale: glm::TVec3<f32>,
     pub home: glm::TVec3<f32>,
     pub forward: glm::TVec3<f32>,
     pub desired_forward: glm::TVec3<f32>,
@@ -88,9 +91,17 @@ pub struct Totoro {
 
 impl Totoro {
     pub fn new(position: glm::TVec3<f32>, creation_time: f32) -> Self {
-        let forward = glm::vec3(1.0, 0.0, 0.0);
+        let forward = glm::normalize(&glm::vec3(rand::random::<f32>() * 2.0 - 1.0, rand::random::<f32>() * 2.0 - 1.0, 0.0));
+        let scale_factor = rand::random::<f32>() * 3.0 + 1.0;
+        let scale = glm::vec3(
+            scale_factor,
+            scale_factor,
+            scale_factor
+        );
+        
         Totoro {
             position,
+            scale,
             home: position,
             forward,
             desired_forward: forward,
@@ -220,7 +231,8 @@ impl Configuration {
                 }
     
                 //Write string options
-                for label in &Self::STRS {
+                for label in &
+                Self::STRS {
                     let string = format!("{} = {}\n", label, self.string_options.get(*label).unwrap());
                     if let Err(e) = file.write(string.as_bytes()) {
                         println!("Error writing configuration file: {}", e);

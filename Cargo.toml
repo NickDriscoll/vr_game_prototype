@@ -1,5 +1,5 @@
 [package]
-name = "hot_chickens"
+name = "xr_prototype"
 version = "0.1.0"
 authors = ["Nick Driscoll <nick.a.mavros@gmail.com>"]
 edition = "2018"
@@ -11,6 +11,7 @@ edition = "2018"
 
 [dependencies]
 ozy_engine = { path = "../ozy_engine" }
+#ozy_engine = { git = "https://github.com/NickDriscoll/ozy_engine" }
 glfw = "*"
 gl = "*"
 nalgebra-glm = "*"

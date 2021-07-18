@@ -1096,7 +1096,7 @@ fn main() {
                                 }
                             }
                             GadgetType::StickyHand => {
-                                println!("Sticky hand gadget");
+                                
                             }
                             GadgetType::WaterCannon => {
                                 //Calculate the force of shooting the water gun for the left hand
@@ -1164,6 +1164,7 @@ fn main() {
         }
 
         //Totoro update
+        let totoro_speed = 3.0;
         for i in 0..totoros.len() {
             if let Some(totoro) = totoros.get_mut_element(i) {
                 match totoro.state {
@@ -1189,7 +1190,7 @@ fn main() {
                                 totoro.desired_forward = glm::mat4_to_mat3(&glm::rotation(0.25 * glm::quarter_pi::<f32>() * rand_binomial(), &Z_UP)) * totoro.desired_forward;
                             }
 
-                            totoro.position += totoro.forward * delta_time;
+                            totoro.position += totoro.forward * totoro_speed * delta_time;
                         }
                     }
                 }
@@ -1243,7 +1244,8 @@ fn main() {
             for i in 0..totoros.len() {
                 if let Some(totoro) = &totoros[i] {
                     //let t = elapsed_time - totoro.creation_time;
-                    //let mm = glm::translation(&totoro.position) * glm::translation(&glm::vec3(0.0, 0.0, hover_height * f32::sin(t*excitement) + hover_height)) * glm::rotation(t*excitement/4.0, &Z_UP);                    
+                    //let mm = glm::translation(&totoro.position) * glm::translation(&glm::vec3(0.0, 0.0, hover_height * f32::sin(t*excitement) + hover_height)) * glm::rotation(t*excitement/4.0, &Z_UP);
+                    let mm = glm::translation(&totoro.position);
                     let cr = glm::cross(&Z_UP, &totoro.forward);
                     let rotation_mat = glm::mat4(
                         totoro.forward.x, cr.x, 0.0, 0.0,
@@ -1251,7 +1253,8 @@ fn main() {
                         totoro.forward.z, cr.z, 1.0, 0.0,
                         0.0, 0.0, 0.0, 1.0
                     );
-                    let mm = glm::translation(&totoro.position) * rotation_mat;
+                    
+                    let mm = glm::translation(&totoro.position) * rotation_mat * glm::scaling(&totoro.scale);
                     if i == 0 {
                         let pos = [mm[12], mm[13], mm[14]];
                         send_or_error(&audio_sender, AudioCommand::SetSourcePosition(pos, 0));
@@ -1295,22 +1298,44 @@ fn main() {
                 }
             };
 
-            //Check if this triangle is hitting the camera
-            if camera_collision {
-                if glm::distance(&camera_position, &triangle_sphere.focus) < camera_hit_sphere_radius + triangle_sphere.radius {
-                    let (dist, point_on_plane) = projected_point_on_plane(&camera_position, &triangle_plane);                
-                    if robust_point_in_triangle(&point_on_plane, &triangle) && f32::abs(dist) < camera_hit_sphere_radius {
-                        camera_position += triangle.normal * (camera_hit_sphere_radius - dist);
-                    } else {
-                        //Check if the camera is hitting an edge
-                        let (best_dist, best_point) = closest_point_on_triangle(&camera_position, &triangle);
+            fn spheres_collide(s1: &Sphere, s2: &Sphere) -> bool {
+                glm::distance(&s1.focus, &s2.focus) < s1.radius + s2.radius
+            }
 
-                        if best_dist < camera_hit_sphere_radius {
-                            let new_pos = camera_position + glm::normalize(&(camera_position - best_point)) * (camera_hit_sphere_radius - best_dist);
-                            camera_position = new_pos;
+            //Returns the vector to add to the position of the actor to resolve the collision
+            fn triangle_collide_sphere(actor_sphere: &Sphere, triangle: &Triangle, triangle_sphere: &Sphere) -> glm::TVec3<f32> {
+                let triangle_plane = Plane::new(
+                    triangle.a,
+                    triangle.normal
+                );
+
+                if spheres_collide(&actor_sphere, &triangle_sphere) {
+                    let (dist, point_on_plane) = projected_point_on_plane(&actor_sphere.focus, &triangle_plane);
+                    if f32::abs(dist) < actor_sphere.radius && robust_point_in_triangle(&point_on_plane, &triangle) {
+                        triangle.normal * (actor_sphere.radius - dist)
+                    } else {                            
+                        //Check if the sphere is hitting an edge
+                        let (best_dist, best_point) = closest_point_on_triangle(&actor_sphere.focus, &triangle);
+
+                        if best_dist < actor_sphere.radius {
+                            glm::normalize(&(actor_sphere.focus - best_point)) * (actor_sphere.radius - best_dist)
+                        } else {
+                            glm::zero()
                         }
                     }
+                } else {
+                    glm::zero()
                 }
+            }
+
+            //Check if this triangle is hitting the camera
+            if camera_collision {
+                let s = Sphere {
+                    focus: camera_position,
+                    radius: camera_hit_sphere_radius
+                };
+
+                camera_position += triangle_collide_sphere(&s, &triangle, &triangle_sphere);
             }
 
             //Check player capsule against triangle
@@ -1373,6 +1398,20 @@ fn main() {
                     }
                 }
             }
+
+            //Check totoros against triangle
+            /*
+            for i in 0..totoros.len() {
+                if let Some(totoro) = totoros.get_mut_element(i) {
+                    let totoro_sphere = Sphere {
+                        focus: totoro.position + glm::vec3(0.0, 0.0, 1.0),
+                        radius: 1.0
+                    };
+
+                    totoro.position += triangle_collide_sphere(&totoro_sphere, &triangle, &triangle_sphere);
+                }
+            }
+            */
         }
 
         //After all collision processing has been completed, update the tracking space matrices once more
