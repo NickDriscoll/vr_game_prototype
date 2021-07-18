@@ -1117,7 +1117,7 @@ fn main() {
                                 }
         
                                 //Apply watergun force to player
-                                if water_gun_force != glm::zero() && remaining_water > 0.0 {
+                                if water_gun_force != glm::zero::<glm::TVec3<f32>>() && remaining_water > 0.0 {
                                     let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
                                     if !infinite_ammo {
                                         remaining_water -= glm::length(&update_force);
@@ -1169,7 +1169,6 @@ fn main() {
             if let Some(totoro) = totoros.get_mut_element(i) {
                 match totoro.state {
                     TotoroState::Relaxed => {
-                        const EPSILON: f32 = 0.00001;
                         if elapsed_time - totoro.state_timer >= 2.0 {
                             totoro.state_timer = elapsed_time;
                             totoro.state = TotoroState::Meandering;
@@ -1183,8 +1182,8 @@ fn main() {
                             totoro.state_timer = elapsed_time;
                             totoro.state = TotoroState::Relaxed;
                         } else {
-                            let turn_speed = 0.1;
-                            totoro.forward = glm::normalize(&lerp(&totoro.forward, &totoro.desired_forward, turn_speed));
+                            let turn_speed = totoro_speed * 2.0;
+                            totoro.forward = glm::normalize(&lerp(&totoro.forward, &totoro.desired_forward, turn_speed * delta_time));
                             
                             if elapsed_time - totoro.state_timer >= 1.0 {
                                 totoro.desired_forward = glm::mat4_to_mat3(&glm::rotation(0.25 * glm::quarter_pi::<f32>() * rand_binomial(), &Z_UP)) * totoro.desired_forward;
@@ -1243,9 +1242,6 @@ fn main() {
             let mut transform_buffer = vec![0.0; totoros.len() * 16];
             for i in 0..totoros.len() {
                 if let Some(totoro) = &totoros[i] {
-                    //let t = elapsed_time - totoro.creation_time;
-                    //let mm = glm::translation(&totoro.position) * glm::translation(&glm::vec3(0.0, 0.0, hover_height * f32::sin(t*excitement) + hover_height)) * glm::rotation(t*excitement/4.0, &Z_UP);
-                    let mm = glm::translation(&totoro.position);
                     let cr = glm::cross(&Z_UP, &totoro.forward);
                     let rotation_mat = glm::mat4(
                         totoro.forward.x, cr.x, 0.0, 0.0,
@@ -1253,7 +1249,7 @@ fn main() {
                         totoro.forward.z, cr.z, 1.0, 0.0,
                         0.0, 0.0, 0.0, 1.0
                     );
-                    
+
                     let mm = glm::translation(&totoro.position) * rotation_mat * glm::scaling(&totoro.scale);
                     if i == 0 {
                         let pos = [mm[12], mm[13], mm[14]];
@@ -1400,18 +1396,17 @@ fn main() {
             }
 
             //Check totoros against triangle
-            /*
             for i in 0..totoros.len() {
                 if let Some(totoro) = totoros.get_mut_element(i) {
+                    let radius = totoro.scale.x * 0.5;
                     let totoro_sphere = Sphere {
-                        focus: totoro.position + glm::vec3(0.0, 0.0, 1.0),
-                        radius: 1.0
+                        focus: totoro.position + glm::vec3(0.0, 0.0, radius),
+                        radius
                     };
 
                     totoro.position += triangle_collide_sphere(&totoro_sphere, &triangle, &triangle_sphere);
                 }
             }
-            */
         }
 
         //After all collision processing has been completed, update the tracking space matrices once more
