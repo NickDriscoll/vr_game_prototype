@@ -53,6 +53,13 @@ use crate::structs::*;
 #[cfg(windows)]
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
 
+const EPSILON: f32 = 0.00001;
+
+fn floats_equal(a: f32, b: f32) -> bool {
+    let d = a - b;
+    d < EPSILON && d > -EPSILON
+}
+
 fn compile_shader_or_crash(vert: &str, frag: &str) -> GLuint {
     match glutil::compile_program_from_files(vert, frag)  { 
         Ok(program) => { program }
@@ -136,7 +143,6 @@ fn rand_binomial() -> f32 {
 }
 
 fn main() {
-    const EPSILON: f32 = 0.00001;
     let Z_UP = glm::vec3(0.0, 0.0, 1.0);
 
     //Do a bunch of OpenXR initialization
@@ -1154,9 +1160,10 @@ fn main() {
             }
         }
 
-        //Apply gravity to the player's velocity
         const GRAVITY_VELOCITY_CAP: f32 = 10.0;
         const ACCELERATION_GRAVITY: f32 = 20.0;        //20.0 m/s^2
+
+        //Apply gravity to the player's velocity
         if player.movement_state != MoveState::Grounded {
             player.tracking_velocity.z -= ACCELERATION_GRAVITY * delta_time;
             if player.tracking_velocity.z > GRAVITY_VELOCITY_CAP {
@@ -1168,6 +1175,7 @@ fn main() {
         let totoro_speed = 3.0;
         for i in 0..totoros.len() {
             if let Some(totoro) = totoros.get_mut_element(i) {
+                //Do behavior based on AI state
                 match totoro.state {
                     TotoroState::Relaxed => {
                         if elapsed_time - totoro.state_timer >= 2.0 {
@@ -1182,6 +1190,7 @@ fn main() {
                     TotoroState::Meandering => {
                         if elapsed_time - totoro.state_timer >= 3.0 {
                             totoro.state_timer = elapsed_time;
+                            totoro.velocity = glm::vec3(0.0, 0.0, totoro.velocity.z);
                             totoro.state = TotoroState::Relaxed;
                         } else {
                             let turn_speed = totoro_speed * 2.0;
@@ -1191,10 +1200,20 @@ fn main() {
                                 totoro.desired_forward = glm::mat4_to_mat3(&glm::rotation(0.25 * glm::quarter_pi::<f32>() * rand_binomial(), &Z_UP)) * totoro.desired_forward;
                             }
 
-                            totoro.position += totoro.forward * totoro_speed * delta_time;
+                            let v = totoro.forward * totoro_speed;
+                            totoro.velocity = glm::vec3(v.x, v.y, totoro.velocity.z);
                         }
                     }
                 }
+
+                //Apply gravity
+                totoro.velocity.z -= ACCELERATION_GRAVITY * delta_time;
+                if totoro.velocity.z > GRAVITY_VELOCITY_CAP {
+                    totoro.velocity.z = GRAVITY_VELOCITY_CAP;
+                }
+
+                //Apply totoro velocity to position
+                totoro.position += totoro.velocity * delta_time;
             }
         }
 
@@ -1303,7 +1322,9 @@ fn main() {
                     radius: camera_hit_sphere_radius
                 };
 
-                camera_position += triangle_collide_sphere(&s, &triangle, &triangle_sphere);
+                if let Some(vec) = triangle_collide_sphere(&s, &triangle, &triangle_sphere) {
+                    camera_position += vec;
+                }
             }
 
             //Check player capsule against triangle
@@ -1340,27 +1361,29 @@ fn main() {
                     let capsule_ref = closest_point_on_line_segment(&ref_point, &player_capsule.segment.p0, &player_capsule.segment.p1);
                     
                     //Now do a triangle-sphere test with a sphere at this reference point
-                    let (dist, point_on_plane) = projected_point_on_plane(&capsule_ref, &triangle_plane);
-                    
-                    //Branch on if the sphere is colliding with the face of the triangle or one of the edges
-                    if robust_point_in_triangle(&point_on_plane, &triangle) && f32::abs(dist) < player.radius {
-                        let dot_z_up = glm::dot(&triangle.normal, &Z_UP);
-                        if dot_z_up >= MIN_NORMAL_LIKENESS {
-                            let t = (glm::dot(&triangle.normal, &(triangle.a - capsule_ref)) + player.radius) / dot_z_up;
-                            player.tracking_position += Z_UP * t;
-                            
-                            ground_player(&mut player, &mut remaining_water);
-                        } else {                        
-                            player.tracking_position += triangle.normal * (player.radius - dist);
-                        }
-                    } else {
-                        let (best_dist, best_point) = closest_point_on_triangle(&capsule_ref, &triangle);
-    
-                        if best_dist < player.radius {
-                            let push_dir = glm::normalize(&(capsule_ref - best_point));
-                            player.tracking_position += push_dir * (player.radius - best_dist);
-                            if glm::dot(&push_dir, &Z_UP) >= MIN_NORMAL_LIKENESS {
+                    let collision_resolution_vector = {
+                        let s = Sphere {
+                            focus: capsule_ref,
+                            radius: player.radius
+                        };
+                        triangle_collide_sphere(&s, &triangle, &triangle_sphere)
+                    };
+                    if let Some(vec) = collision_resolution_vector {
+                        if floats_equal(glm::dot(&glm::normalize(&vec), &triangle.normal), 1.0) {
+                            let dot_z_up = glm::dot(&triangle.normal, &Z_UP);                        
+                            if dot_z_up >= MIN_NORMAL_LIKENESS {
+                                let t = (glm::dot(&triangle.normal, &(triangle.a - capsule_ref)) + player.radius) / dot_z_up;
+                                player.tracking_position += Z_UP * t;
                                 ground_player(&mut player, &mut remaining_water);
+                            } else {
+                                player.tracking_position += vec;
+                            }
+                        } else {
+                            let (best_dist, best_point) = closest_point_on_triangle(&capsule_ref, &triangle);
+    
+                            if best_dist < player.radius {
+                                let push_dir = glm::normalize(&(capsule_ref - best_point));
+                                player.tracking_position += push_dir;
                             }
                         }
                     }
@@ -1376,7 +1399,20 @@ fn main() {
                         radius
                     };
 
-                    totoro.position += triangle_collide_sphere(&totoro_sphere, &triangle, &triangle_sphere);
+                    if let Some(vec) = triangle_collide_sphere(&totoro_sphere, &triangle, &triangle_sphere) {
+                        if floats_equal(glm::dot(&glm::normalize(&vec), &triangle.normal), 1.0) {
+                            let dot_z_up = glm::dot(&triangle.normal, &Z_UP);                        
+                            if dot_z_up >= MIN_NORMAL_LIKENESS {
+                                let t = (glm::dot(&triangle.normal, &(triangle.a - totoro_sphere.focus)) + totoro_sphere.radius) / dot_z_up;
+                                totoro.position += Z_UP * t;
+                                totoro.velocity.z = 0.0;
+                            } else {
+                                totoro.position += vec;
+                            }
+                        } else {
+                            totoro.position += vec;
+                        }
+                    }
                 }
             }
         }

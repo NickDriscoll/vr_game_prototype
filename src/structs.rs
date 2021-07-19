@@ -81,6 +81,7 @@ pub fn set_player_falling(player: &mut Player) {
 //But what _is_ a Totoro?
 pub struct Totoro {
     pub position: glm::TVec3<f32>,
+    pub velocity: glm::TVec3<f32>,
     pub scale: glm::TVec3<f32>,
     pub home: glm::TVec3<f32>,
     pub forward: glm::TVec3<f32>,
@@ -102,6 +103,7 @@ impl Totoro {
         
         Totoro {
             position,
+            velocity: glm::zero(),
             scale,
             home: position,
             forward,

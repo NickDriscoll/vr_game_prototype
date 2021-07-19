@@ -8,7 +8,7 @@
             "name": "(Windows) Launch",
             "type": "cppvsdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/target/debug/hot_chickens.exe",
+            "program": "${workspaceFolder}/target/debug/xr_prototype.exe",
             "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
