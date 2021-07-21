@@ -55,6 +55,7 @@ use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
 
 const EPSILON: f32 = 0.00001;
 
+//Returns true if the difference between a and b is close enough to zero
 fn floats_equal(a: f32, b: f32) -> bool {
     let d = a - b;
     d < EPSILON && d > -EPSILON
@@ -172,7 +173,7 @@ fn main() {
     let xr_instance = {
         let openxr_entry = xr::Entry::linked();
         let app_info = xr::ApplicationInfo {
-            application_name: "hot_chickens",
+            application_name: "xr_prototype",
             application_version: 1,
             engine_name: "ozy_engine",
             engine_version: 1
@@ -182,15 +183,15 @@ fn main() {
         let extension_set = match openxr_entry.enumerate_extensions() {
             Ok(set) => { Some(set) }
             Err(e) => {
-                println!("Extention enumerations error: {}", e);
-                None
+                tfd::message_box_ok("XR initialization error", &format!("Extention enumerations error: {}", e), MessageBoxIcon::Error);
+                exit(-1);
             }
         };
 
         //Make sure the local OpenXR implementation supports OpenGL
         if let Some(set) = &extension_set {
             if !set.khr_opengl_enable {
-                println!("OpenXR implementation does not support OpenGL!");
+                tfd::message_box_ok("XR initialization error", "OpenXR implementation does not support OpenGL!", MessageBoxIcon::Error);
                 exit(-1);
             }
         } 
@@ -1379,12 +1380,7 @@ fn main() {
                                 player.tracking_position += vec;
                             }
                         } else {
-                            let (best_dist, best_point) = closest_point_on_triangle(&capsule_ref, &triangle);
-    
-                            if best_dist < player.radius {
-                                let push_dir = glm::normalize(&(capsule_ref - best_point));
-                                player.tracking_position += push_dir;
-                            }
+                            player.tracking_position += vec;
                         }
                     }
                 }
