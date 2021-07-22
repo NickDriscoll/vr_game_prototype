@@ -37,7 +37,10 @@ impl RenderEntity {
             Some(meshdata) => unsafe {
                 let vao = glutil::create_vertex_array_object(&meshdata.vertex_array.vertices, &meshdata.vertex_array.indices, &meshdata.vertex_array.attribute_offsets);
 
+                //GL texture names
                 let (mut albedo, mut normal, mut roughness) = (0, 0, 0);
+
+                //We have to load or create a texture based on whether or not this mesh uses solid colors
                 if meshdata.colors.len() == 0 {
                     albedo = texture_keeper.fetch_texture(&meshdata.texture_name, "albedo", &tex_params, ColorSpace::Gamma);
                     normal = texture_keeper.fetch_texture(&meshdata.texture_name, "normal", &tex_params, ColorSpace::Linear);
@@ -183,7 +186,6 @@ impl Default for SceneData {
             skybox_vao: ozy::prims::skybox_cube_vao(),
             skybox_program: 0,
             sun_direction: glm::normalize(&glm::vec3(1.0, 0.6, 1.0)),
-            //sun_color: [0.2274509, 0.1764705, 0.0745098],
             sun_color: [1.0, 1.0, 1.0],
             ambient_strength: 0.2,
             sun_shadow_map,

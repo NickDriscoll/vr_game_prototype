@@ -740,18 +740,6 @@ fn main() {
         jumps_remaining: Player::MAX_JUMPS,
         was_holding_jump: false
     };
-
-    //Water gun state
-    const MAX_WATER_PRESSURE: f32 = 30.0;
-    let mut water_gun_force: glm::TVec3<f32> = glm::zero();
-    let mut infinite_ammo = false;
-    let mut remaining_water = Gadget::MAX_ENERGY;
-
-    //Water gun graphics data
-    let mut left_water_pillar_scale: glm::TVec3<f32> = glm::zero();
-    let mut right_water_pillar_scale: glm::TVec3<f32> = glm::zero();
-    let water_cylinder_path = "models/water_cylinder.ozy";
-    let water_cylinder_entity_index = scene_data.entities.insert(RenderEntity::from_ozy(water_cylinder_path, standard_program, 2, &mut texture_keeper, &default_tex_params));
     
     //Matrices for relating tracking space and world space
     let mut world_from_tracking = glm::identity();
@@ -844,7 +832,7 @@ fn main() {
 
     //Create Totoros
     let mut totoros: OptionVec<Totoro> = OptionVec::with_capacity(64);
-    let mut selected_totoro: Option<Totoro> = None;
+    let mut selected_totoro_idx: Option<usize> = None;
     let totoro_entity_index = scene_data.entities.insert(RenderEntity::from_ozy("models/totoro.ozy", standard_program, 64, &mut texture_keeper, &default_tex_params));
 
     //Load gadget models
@@ -868,6 +856,18 @@ fn main() {
         Some(entity) => { scene_data.entities.insert(entity.clone()) }
         None => { panic!("No model found for {:?}", right_hand_gadget); }
     };
+
+    //Water gun state
+    const MAX_WATER_PRESSURE: f32 = 30.0;
+    let mut water_gun_force: glm::TVec3<f32> = glm::zero();
+    let mut infinite_ammo = false;
+    let mut remaining_water = Gadget::MAX_ENERGY;
+
+    //Water gun graphics data
+    let mut left_water_pillar_scale: glm::TVec3<f32> = glm::zero();
+    let mut right_water_pillar_scale: glm::TVec3<f32> = glm::zero();
+    let water_cylinder_path = "models/water_cylinder.ozy";
+    let water_cylinder_entity_index = scene_data.entities.insert(RenderEntity::from_ozy(water_cylinder_path, standard_program, 2, &mut texture_keeper, &default_tex_params));
 
     //Set up global flags lol
     let mut is_fullscreen = false;
@@ -929,7 +929,7 @@ fn main() {
         }
 
         //Get action states
-        let left_stick_state = xrutil::get_actionstate(&xr_session, &player_move_action);
+        let move_stick_state = xrutil::get_actionstate(&xr_session, &player_move_action);
         let left_trigger_state = xrutil::get_actionstate(&xr_session, &left_gadget_action);
         let left_switch_state = xrutil::get_actionstate(&xr_session, &left_switch_gadget);
         let right_switch_state = xrutil::get_actionstate(&xr_session, &right_switch_gadget);
@@ -1038,11 +1038,11 @@ fn main() {
             const MOVEMENT_SPEED: f32 = 5.0;
             const DEADZONE_MAGNITUDE: f32 = 0.1;
 
-            //Responding to the player's input movement vector 
-            if let Some(stick_state) = &left_stick_state {
-                if stick_state.changed_since_last_sync {                            
-                    if let Some(pose) = xrutil::locate_space(&left_hand_aim_space, &tracking_space, stick_state.last_change_time) {
-                        let hand_space_vec = glm::vec4(stick_state.current_state.x, stick_state.current_state.y, 0.0, 0.0);
+            //Responding to the player's input movement vector
+            if let Some(state) = &move_stick_state {
+                if state.changed_since_last_sync {                            
+                    if let Some(pose) = xrutil::locate_space(&left_hand_aim_space, &tracking_space, state.last_change_time) {
+                        let hand_space_vec = glm::vec4(state.current_state.x, state.current_state.y, 0.0, 0.0);
                         let magnitude = glm::length(&hand_space_vec);
                         if magnitude < DEADZONE_MAGNITUDE {
                             if player.movement_state == MoveState::Grounded {                                
@@ -1125,7 +1125,7 @@ fn main() {
                                 }
         
                                 //Apply watergun force to player
-                                if water_gun_force != glm::zero::<glm::TVec3<f32>>() && remaining_water > 0.0 {
+                                if floats_equal(glm::length(&water_gun_force), 0.0) && remaining_water > 0.0 {
                                     let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
                                     if !infinite_ammo {
                                         remaining_water -= glm::length(&update_force);
@@ -1241,16 +1241,40 @@ fn main() {
                 ClickAction::SelectingTotoro => {
                     let mouse_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
                     
+                    let mut smallest_t = f32::INFINITY;
+                    let mut hit_one = false;
                     for i in 0..totoros.len() {
                         if let Some(tot) = &totoros[i] {
                             let focus = tot.position + glm::vec3(0.0, 0.0, 0.5);
-                            let radius = 1.0;
+                            let radius = tot.scale.x;
                             let sph = Sphere {
                                 focus,
                                 radius
                             };
 
+                            //Translate the ray, such that the test can be performed on a sphere centered at the origin
+                            //This just simplifies the math
+                            let test_ray = Ray {
+                                origin: mouse_ray.origin - sph.focus,
+                                direction: mouse_ray.direction
+                            };
 
+                            //Compute t
+                            //Technically this equation is "plus-or-minus" but we want the closest intersection so it's always minus
+                            let d_dot_p = glm::dot(&test_ray.direction, &test_ray.origin);
+                            let sqrt_body = d_dot_p * d_dot_p - glm::dot(&test_ray.origin, &test_ray.origin) + sph.radius * sph.radius;
+                            if sqrt_body >= 0.0 {
+                                let t = glm::dot(&(-test_ray.direction), &test_ray.origin) - f32::sqrt(sqrt_body);
+                                if t < smallest_t {
+                                    hit_one = true;
+                                    smallest_t = t;
+                                    selected_totoro_idx = Some(i);
+                                }
+                            } 
+                            
+                            if !hit_one {
+                                selected_totoro_idx = None;
+                            }
                         }
                     }
                     
@@ -1575,6 +1599,25 @@ fn main() {
             */
         }
 
+        //Do selected Totoro window
+        if let Some(idx) = selected_totoro_idx {
+            let tot = totoros[idx].as_ref().unwrap();
+            if let Some(token) = imgui::Window::new(&im_str!("Totoro #{} control panel###totoro_panel", idx)).begin(&imgui_ui) {
+                imgui_ui.text(im_str!("Position ({}, {}, {})", tot.position.x, tot.position.y, tot.position.z));
+                imgui_ui.text(im_str!("Velocity ({}, {}, {})", tot.velocity.x, tot.velocity.y, tot.velocity.z));
+                imgui_ui.text(im_str!("AI state: {:?}", tot.state));
+                imgui_ui.text(im_str!("AI timer state: {}", elapsed_time - tot.state_timer));
+                        
+                imgui_ui.separator();
+                if imgui_ui.button(im_str!("Kill"), [0.0, 32.0]) {
+                    totoros.delete(idx);
+                    selected_totoro_idx = None;
+                }
+
+                token.end(&imgui_ui);
+            }
+        }
+
         //Create a view matrix from the camera state
         {
             let new_view_matrix = glm::rotation(camera_orientation.y, &glm::vec3(1.0, 0.0, 0.0)) *
@@ -1863,6 +1906,6 @@ fn main() {
             }
         }
 
-        window.swap_buffers();
+        window.swap_buffers();  //Display the rendered frame to the window
     }
 }
