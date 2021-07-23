@@ -16,7 +16,6 @@ mod xrutil;
 use render::{compute_shadow_cascade_matrices, CascadedShadowMap, FragmentFlag, RenderEntity, SceneData, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
-use alto::{sys::ALint, Source, SourceState};
 use chrono::offset::Local;
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
 use gl::types::*;
@@ -24,10 +23,9 @@ use image::{ImageBuffer, DynamicImage};
 use imgui::{ColorEdit, DrawCmd, EditableColor, FontAtlasRefMut, Slider, TextureId, im_str};
 use core::ops::RangeInclusive;
 use std::collections::HashMap;
-use std::fmt::Display;
 use std::fs;
 use std::fs::File;
-use std::io::{ErrorKind, Seek, SeekFrom};
+use std::io::{ErrorKind};
 use std::path::Path;
 use std::process::exit;
 use std::mem::size_of;
@@ -484,7 +482,7 @@ fn main() {
             use std::ptr;
 			gl::Enable(gl::DEBUG_OUTPUT);									                                    //Enable verbose debug output
 			gl::Enable(gl::DEBUG_OUTPUT_SYNCHRONOUS);						                                    //Synchronously call the debug callback function
-			gl::DebugMessageCallback(ozy::glutil::gl_debug_callback, ptr::null());		                        //Register the debug callback
+			gl::DebugMessageCallback(Some(ozy::glutil::gl_debug_callback), ptr::null());		                        //Register the debug callback
 			gl::DebugMessageControl(gl::DONT_CARE, gl::DONT_CARE, gl::DONT_CARE, 0, ptr::null(), gl::TRUE);
 		}
     }
@@ -933,6 +931,7 @@ fn main() {
 			dur.as_secs_f32()
         };
         elapsed_time += delta_time;
+        scene_data.current_time = elapsed_time;
         frame_count += 1;
         imgui_io.delta_time = delta_time;
         let framerate = imgui_io.framerate;
@@ -1746,7 +1745,7 @@ fn main() {
                                         view_matrix,
                                         perspective
                                     );
-                                    render::main_scene(&scene_data, &view_data, elapsed_time);
+                                    render::main_scene(&scene_data, &view_data);
     
                                     //Blit the MSAA image into the swapchain image
                                     let color_texture = sc_images[i][image_index as usize];
@@ -1767,7 +1766,7 @@ fn main() {
                                         projection
                                     );
                                     default_framebuffer.bind();
-                                    render::main_scene(&scene_data, &view_state, elapsed_time);
+                                    render::main_scene(&scene_data, &view_state);
                                 }
                             }                           
 
@@ -1833,7 +1832,7 @@ fn main() {
                     *screen_state.get_clipping_from_view()
                 );
                 default_framebuffer.bind();
-                render::main_scene(&scene_data, &freecam_viewdata, elapsed_time);
+                render::main_scene(&scene_data, &freecam_viewdata);
             }
 
             //Take a screenshot here as to not get the dev gui in it

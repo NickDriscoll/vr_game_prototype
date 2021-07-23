@@ -168,6 +168,7 @@ pub struct SceneData {
     pub sun_color: [f32; 3],
     pub sun_shadow_map: CascadedShadowMap,
     pub ambient_strength: f32,
+    pub current_time: f32,
     pub entities: OptionVec<RenderEntity>
 }
 
@@ -191,6 +192,7 @@ impl Default for SceneData {
             sun_color: [1.0, 1.0, 1.0],
             ambient_strength: 0.2,
             sun_shadow_map,
+            current_time: 0.0,
             entities: OptionVec::new()
         }
     }
@@ -229,7 +231,7 @@ impl ViewData {
 }
 
 //This is the function that renders the 3D objects in the scene
-pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData, current_time: f32) {
+pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
     let texture_map_names = ["albedo_tex", "normal_tex", "roughness_tex", "shadow_map"];
     let sun_shadow_map = &scene_data.sun_shadow_map;
 
@@ -252,7 +254,7 @@ pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData, current_t
             glutil::bind_vector3(p, "sun_direction", &scene_data.sun_direction);
             glutil::bind_vector3(p, "sun_color", &sun_c);
             glutil::bind_float(p, "ambient_strength", scene_data.ambient_strength);
-            glutil::bind_float(p, "current_time", current_time);
+            glutil::bind_float(p, "current_time", scene_data.current_time);
             glutil::bind_int(p, "shadow_map", TEXTURE_MAP_COUNT as GLint);
             glutil::bind_int(p, "complex_normals", scene_data.complex_normals as GLint);
             glutil::bind_float_array(p, "cascade_distances", &sun_shadow_map.clip_space_distances[1..]);
