@@ -197,8 +197,8 @@ fn main() {
         let extension_set = match openxr_entry.enumerate_extensions() {
             Ok(set) => { Some(set) }
             Err(e) => {
-                tfd::message_box_ok("XR initialization error", &format!("Extention enumerations error: {}", e), MessageBoxIcon::Error);
-                exit(-1);
+                println!("Extention enumerations error: {}", e);
+                None
             }
         };
 
@@ -1220,6 +1220,7 @@ fn main() {
                             totoro.velocity = glm::vec3(v.x, v.y, totoro.velocity.z);
                         }
                     }
+                    TotoroState::Stunned => {}
                 }
 
                 //Apply gravity
@@ -1249,17 +1250,17 @@ fn main() {
         //Do click action
         if !imgui_wants_mouse && mouse_clicked && !was_mouse_clicked {
             match click_action {
-                ClickAction::SpawningTotoro => {
-                    let mouse_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
+                ClickAction::SpawnTotoro => {
+                    let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
 
                     //Create Totoro if the ray hit
-                    if let Some((_, point)) = ray_hit_terrain(&terrain, &mouse_ray) {
+                    if let Some((_, point)) = ray_hit_terrain(&terrain, &click_ray) {
                         let tot = Totoro::new(point, elapsed_time);
                         totoros.insert(tot);
                     }
                 }
-                ClickAction::SelectingTotoro => {
-                    let mouse_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
+                ClickAction::SelectTotoro => {
+                    let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
                     
                     let mut smallest_t = f32::INFINITY;
                     let mut hit_one = false;
@@ -1275,8 +1276,8 @@ fn main() {
                             //Translate the ray, such that the test can be performed on a sphere centered at the origin
                             //This just simplifies the math
                             let test_ray = Ray {
-                                origin: mouse_ray.origin - sph.focus,
-                                direction: mouse_ray.direction
+                                origin: click_ray.origin - sph.focus,
+                                direction: click_ray.direction
                             };
 
                             //Compute t
@@ -1304,7 +1305,55 @@ fn main() {
                         if let Some(ent) = scene_data.entities.get_mut_element(totoro_entity_index) {
                             ent.highlighted_item = None;
                         }
-                    }                    
+                    }
+                }
+                ClickAction::FlickTotoro => {
+                    let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
+                    
+                    let mut smallest_t = f32::INFINITY;
+                    let mut hit_idx = None;
+                    for i in 0..totoros.len() {
+                        if let Some(tot) = &totoros[i] {
+                            let focus = tot.position + glm::vec3(0.0, 0.0, 0.5);
+                            let radius = tot.scale.x;
+                            let sph = Sphere {
+                                focus,
+                                radius
+                            };
+
+                            //Translate the ray, such that the test can be performed on a sphere centered at the origin
+                            //This just simplifies the math
+                            let test_ray = Ray {
+                                origin: click_ray.origin - sph.focus,
+                                direction: click_ray.direction
+                            };
+
+                            //Compute t
+                            //Technically this equation is "plus-or-minus" but we want the closest intersection so it's always minus
+                            let d_dot_p = glm::dot(&test_ray.direction, &test_ray.origin);
+                            let sqrt_body = d_dot_p * d_dot_p - glm::dot(&test_ray.origin, &test_ray.origin) + sph.radius * sph.radius;
+
+                            //The sqrt body being negative indicates a miss so we branch here
+                            if sqrt_body >= 0.0 {
+                                let t = glm::dot(&(-test_ray.direction), &test_ray.origin) - f32::sqrt(sqrt_body);
+                                if t < smallest_t {
+                                    hit_idx = Some(i);
+                                    smallest_t = t;
+                                }
+                            }
+                        }
+                    }
+                            
+                    if let Some(idx) = hit_idx {
+                        if let Some(tot) = totoros.get_mut_element(idx) {
+                            let hit_point = click_ray.origin + smallest_t * click_ray.direction;
+                            let focus = tot.position + glm::vec3(0.0, 0.0, 0.5);
+                            let mut v = 20.0 * (focus - hit_point);
+                            v.z += 100.0;
+                            tot.velocity += v;
+                            tot.state = TotoroState::Stunned;
+                        }
+                    }
                 }
                 ClickAction::None => {}
             }            
@@ -1540,8 +1589,9 @@ fn main() {
                 imgui_ui.separator();
 
                 imgui_ui.text(im_str!("What does a mouse click do?"));
-                do_radio_option(&imgui_ui, im_str!("Selects a totoro"), &mut click_action, ClickAction::SelectingTotoro);
-                do_radio_option(&imgui_ui, im_str!("Give life to a new Totoro"), &mut click_action, ClickAction::SpawningTotoro);
+                do_radio_option(&imgui_ui, im_str!("Selects a totoro"), &mut click_action, ClickAction::SelectTotoro);
+                do_radio_option(&imgui_ui, im_str!("Give life to a new Totoro"), &mut click_action, ClickAction::SpawnTotoro);
+                do_radio_option(&imgui_ui, im_str!("Flick totoro"), &mut click_action, ClickAction::FlickTotoro);
                 imgui_ui.separator();
 
                 imgui_ui.text(im_str!("Lighting controls:"));

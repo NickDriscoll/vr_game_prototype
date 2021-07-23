@@ -16,8 +16,9 @@ pub enum MoveState {
 #[derive(PartialEq, Eq)]
 pub enum ClickAction {
     None,
-    SelectingTotoro,
-    SpawningTotoro
+    SelectTotoro,
+    SpawnTotoro,
+    FlickTotoro
 }
 
 impl Default for ClickAction {
@@ -117,7 +118,8 @@ impl Totoro {
 #[derive(Debug)]
 pub enum TotoroState {
     Relaxed,
-    Meandering
+    Meandering,
+    Stunned
 }
 
 #[derive(PartialEq, Eq)]
