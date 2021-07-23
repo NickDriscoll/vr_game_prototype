@@ -19,6 +19,7 @@ out vec4 shadow_space_pos[SHADOW_CASCADES];
 out vec3 f_world_pos;
 out vec2 scaled_uvs;
 out float clip_space_z;
+flat out int instance_id;
 
 uniform mat4 view_projection;
 uniform mat4 shadow_matrices[SHADOW_CASCADES];
@@ -46,6 +47,8 @@ void main() {
     
     scaled_uvs = uv * uv_scale + uv_offset;
     
+    instance_id = gl_InstanceID;
+
     gl_Position = view_projection * world_space_pos;
 
     clip_space_z = gl_Position.z;

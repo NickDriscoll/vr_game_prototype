@@ -21,8 +21,11 @@ in vec4 shadow_space_pos[SHADOW_CASCADES];
 in vec3 f_world_pos;
 in vec2 scaled_uvs;
 in float clip_space_z;
+flat in int instance_id;
 
 out vec4 frag_color;
+
+uniform float current_time;
 
 //Material textures
 uniform sampler2D albedo_tex;
@@ -42,7 +45,8 @@ uniform vec3 sun_color = vec3(1.0, 1.0, 1.0);
 uniform float ambient_strength = 0.0;
 uniform float cascade_distances[SHADOW_CASCADES];
 
-vec3 tangent_space_normal;
+//For a given RenderEntity, this will be non-negative if one of the instances is to be highlighted
+uniform int highlighted_idx = -1;
 
 vec4 simple_diffuse(vec3 color, float diffuse, float ambient) {
     return vec4((diffuse + ambient) * color, 1.0);
@@ -63,6 +67,7 @@ void main() {
     vec3 albedo = texture(albedo_tex, scaled_uvs).xyz;
 
     //Compute this frag's tangent space normal
+    vec3 tangent_space_normal;
     if (complex_normals) {
         vec3 sampled_normal = texture(normal_tex, scaled_uvs).xyz;
         tangent_space_normal = normalize(sampled_normal * 2.0 - 1.0);
@@ -145,6 +150,14 @@ void main() {
     float shininess = (1.0 - roughness) * (SHININESS_UPPER_BOUND - SHININESS_LOWER_BOUND) + SHININESS_LOWER_BOUND;
     float specular = pow(specular_angle, shininess);
 
-    vec3 final_color = sun_color * ((specular + diffuse) * (1.0 - shadow) + ambient_strength) * albedo;
+    //Optionally add rim-lighting
+    vec3 rim_lighting = vec3(0.0);
+    if (highlighted_idx == instance_id) {
+        float likeness = 1.0 - max(0.0, dot(view_direction, tangent_space_normal));
+        float factor = smoothstep(0.5, 1.0, likeness);
+        rim_lighting = factor * vec3(cos(5.0 * current_time) * 0.5 + 0.5, sin(6.0 * current_time) * 0.5 + 0.5, sin(8.0 * current_time) * 0.5 + 0.5);
+    }
+
+    vec3 final_color = sun_color * ((specular + diffuse) * (1.0 - shadow) + ambient_strength) * albedo + rim_lighting;
     frag_color = vec4(final_color, 1.0);
 }

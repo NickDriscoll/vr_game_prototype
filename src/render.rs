@@ -24,6 +24,7 @@ pub struct RenderEntity {
     pub index_count: GLint,
     pub active_instances: GLint,
 	pub max_instances: usize,
+    pub highlighted_item: Option<usize>,
     pub shader: GLuint,
     pub uv_offset: glm::TVec2<f32>,
     pub uv_scale: glm::TVec2<f32>,
@@ -79,6 +80,7 @@ impl RenderEntity {
                     index_count: meshdata.vertex_array.indices.len() as GLint,
                     active_instances: instances as GLint,
                     max_instances: instances,
+                    highlighted_item: None,
                     shader: program,                    
                     textures: [albedo, normal, roughness],
                     uv_scale: glm::vec2(1.0, 1.0),
@@ -227,7 +229,7 @@ impl ViewData {
 }
 
 //This is the function that renders the 3D objects in the scene
-pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
+pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData, current_time: f32) {
     let texture_map_names = ["albedo_tex", "normal_tex", "roughness_tex", "shadow_map"];
     let sun_shadow_map = &scene_data.sun_shadow_map;
 
@@ -250,12 +252,19 @@ pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
             glutil::bind_vector3(p, "sun_direction", &scene_data.sun_direction);
             glutil::bind_vector3(p, "sun_color", &sun_c);
             glutil::bind_float(p, "ambient_strength", scene_data.ambient_strength);
+            glutil::bind_float(p, "current_time", current_time);
             glutil::bind_int(p, "shadow_map", TEXTURE_MAP_COUNT as GLint);
             glutil::bind_int(p, "complex_normals", scene_data.complex_normals as GLint);
             glutil::bind_float_array(p, "cascade_distances", &sun_shadow_map.clip_space_distances[1..]);
             glutil::bind_vector3(p, "view_position", &view_data.view_position);
             glutil::bind_vector2(p, "uv_scale", &entity.uv_scale);
             glutil::bind_vector2(p, "uv_offset", &entity.uv_offset);
+
+            let highlight_idx = match entity.highlighted_item {
+                Some(idx) => { idx as GLint }
+                None => { -1 }
+            };
+            glutil::bind_int(p, "highlighted_idx", highlight_idx);
 
             //fragment flag stuff
             let flag_names = ["visualize_normals", "visualize_lod", "visualize_shadowed", "visualize_cascade_zone"];

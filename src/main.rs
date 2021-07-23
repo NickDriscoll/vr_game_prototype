@@ -55,9 +55,20 @@ use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
 
 const EPSILON: f32 = 0.00001;
 
-fn kill_totoro(totoros: &mut OptionVec<Totoro>, selected: &mut Option<usize>, idx: usize) {
+fn kill_totoro(scene_data: &mut SceneData, totoros: &mut OptionVec<Totoro>, totoro_entity_index: usize, selected: &mut Option<usize>, idx: usize) {
     totoros.delete(idx);
-    *selected = None;
+    if let Some(i) = selected {
+        if *i == idx {
+            *selected = None;
+        }
+    }
+    if let Some(ent) = scene_data.entities.get_mut_element(totoro_entity_index) {
+        if let Some(i) = ent.highlighted_item {
+            if i == idx {
+                ent.highlighted_item = None;
+            }
+        }
+    }
 }
 
 //Returns true if the difference between a and b is close enough to zero
@@ -1223,7 +1234,7 @@ fn main() {
 
                 //Kill if below a certain point
                 if totoro.position.z < -1000.0 {
-                    kill_totoro(&mut totoros, &mut selected_totoro_idx, i);
+                    kill_totoro(&mut scene_data, &mut totoros, totoro_entity_index, &mut selected_totoro_idx, i);
                 }
             }
         }
@@ -1281,6 +1292,9 @@ fn main() {
                                     hit_one = true;
                                     smallest_t = t;
                                     selected_totoro_idx = Some(i);
+                                    if let Some(ent) = scene_data.entities.get_mut_element(totoro_entity_index) {
+                                        ent.highlighted_item = Some(i);
+                                    }
                                 }
                             }
                         }
@@ -1288,6 +1302,9 @@ fn main() {
                             
                     if !hit_one {
                         selected_totoro_idx = None;
+                        if let Some(ent) = scene_data.entities.get_mut_element(totoro_entity_index) {
+                            ent.highlighted_item = None;
+                        }
                     }                    
                 }
                 ClickAction::None => {}
@@ -1609,7 +1626,7 @@ fn main() {
                             
                     imgui_ui.separator();
                     if imgui_ui.button(im_str!("Kill"), [0.0, 32.0]) {
-                        kill_totoro(&mut totoros, &mut selected_totoro_idx, idx);
+                        kill_totoro(&mut scene_data, &mut totoros, totoro_entity_index, &mut selected_totoro_idx, idx);
                     }
 
                     token.end(&imgui_ui);
@@ -1729,7 +1746,7 @@ fn main() {
                                         view_matrix,
                                         perspective
                                     );
-                                    render::main_scene(&scene_data, &view_data);
+                                    render::main_scene(&scene_data, &view_data, elapsed_time);
     
                                     //Blit the MSAA image into the swapchain image
                                     let color_texture = sc_images[i][image_index as usize];
@@ -1750,7 +1767,7 @@ fn main() {
                                         projection
                                     );
                                     default_framebuffer.bind();
-                                    render::main_scene(&scene_data, &view_state);
+                                    render::main_scene(&scene_data, &view_state, elapsed_time);
                                 }
                             }                           
 
@@ -1816,7 +1833,7 @@ fn main() {
                     *screen_state.get_clipping_from_view()
                 );
                 default_framebuffer.bind();
-                render::main_scene(&scene_data, &freecam_viewdata);
+                render::main_scene(&scene_data, &freecam_viewdata, elapsed_time);
             }
 
             //Take a screenshot here as to not get the dev gui in it
