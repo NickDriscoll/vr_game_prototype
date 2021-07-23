@@ -55,6 +55,11 @@ use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
 
 const EPSILON: f32 = 0.00001;
 
+fn kill_totoro(totoros: &mut OptionVec<Totoro>, selected: &mut Option<usize>, idx: usize) {
+    totoros.delete(idx);
+    *selected = None;
+}
+
 //Returns true if the difference between a and b is close enough to zero
 fn floats_equal(a: f32, b: f32) -> bool {
     let d = a - b;
@@ -1215,6 +1220,11 @@ fn main() {
 
                 //Apply totoro velocity to position
                 totoro.position += totoro.velocity * delta_time;
+
+                //Kill if below a certain point
+                if totoro.position.z < -1000.0 {
+                    kill_totoro(&mut totoros, &mut selected_totoro_idx, i);
+                }
             }
         }
 
@@ -1263,6 +1273,8 @@ fn main() {
                             //Technically this equation is "plus-or-minus" but we want the closest intersection so it's always minus
                             let d_dot_p = glm::dot(&test_ray.direction, &test_ray.origin);
                             let sqrt_body = d_dot_p * d_dot_p - glm::dot(&test_ray.origin, &test_ray.origin) + sph.radius * sph.radius;
+
+                            //The sqrt body being negative indicates a miss so we branch here
                             if sqrt_body >= 0.0 {
                                 let t = glm::dot(&(-test_ray.direction), &test_ray.origin) - f32::sqrt(sqrt_body);
                                 if t < smallest_t {
@@ -1270,14 +1282,13 @@ fn main() {
                                     smallest_t = t;
                                     selected_totoro_idx = Some(i);
                                 }
-                            } 
-                            
-                            if !hit_one {
-                                selected_totoro_idx = None;
                             }
                         }
                     }
-                    
+                            
+                    if !hit_one {
+                        selected_totoro_idx = None;
+                    }                    
                 }
                 ClickAction::None => {}
             }            
@@ -1587,6 +1598,24 @@ fn main() {
                 win_token.end(&imgui_ui);
             }
 
+            //Do selected Totoro window
+            if let Some(idx) = selected_totoro_idx {
+                let tot = totoros[idx].as_ref().unwrap();
+                if let Some(token) = imgui::Window::new(&im_str!("Totoro #{} control panel###totoro_panel", idx)).begin(&imgui_ui) {
+                    imgui_ui.text(im_str!("Position ({:.3}, {:.3}, {:.3})", tot.position.x, tot.position.y, tot.position.z));
+                    imgui_ui.text(im_str!("Velocity ({:.3}, {:.3}, {:.3})", tot.velocity.x, tot.velocity.y, tot.velocity.z));
+                    imgui_ui.text(im_str!("AI state: {:?}", tot.state));
+                    imgui_ui.text(im_str!("AI timer state: {}", elapsed_time - tot.state_timer));
+                            
+                    imgui_ui.separator();
+                    if imgui_ui.button(im_str!("Kill"), [0.0, 32.0]) {
+                        kill_totoro(&mut totoros, &mut selected_totoro_idx, idx);
+                    }
+
+                    token.end(&imgui_ui);
+                }
+            }
+
             //Shadow cascade viewer
             /*
             let win = imgui::Window::new(im_str!("Shadow map"));
@@ -1597,25 +1626,6 @@ fn main() {
                 win_token.end(&imgui_ui);
             }
             */
-        }
-
-        //Do selected Totoro window
-        if let Some(idx) = selected_totoro_idx {
-            let tot = totoros[idx].as_ref().unwrap();
-            if let Some(token) = imgui::Window::new(&im_str!("Totoro #{} control panel###totoro_panel", idx)).begin(&imgui_ui) {
-                imgui_ui.text(im_str!("Position ({}, {}, {})", tot.position.x, tot.position.y, tot.position.z));
-                imgui_ui.text(im_str!("Velocity ({}, {}, {})", tot.velocity.x, tot.velocity.y, tot.velocity.z));
-                imgui_ui.text(im_str!("AI state: {:?}", tot.state));
-                imgui_ui.text(im_str!("AI timer state: {}", elapsed_time - tot.state_timer));
-                        
-                imgui_ui.separator();
-                if imgui_ui.button(im_str!("Kill"), [0.0, 32.0]) {
-                    totoros.delete(idx);
-                    selected_totoro_idx = None;
-                }
-
-                token.end(&imgui_ui);
-            }
         }
 
         //Create a view matrix from the camera state
