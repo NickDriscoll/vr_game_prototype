@@ -52,6 +52,43 @@ use crate::structs::*;
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
 
 const EPSILON: f32 = 0.00001;
+                
+fn get_clicked_totoro(totoros: &mut OptionVec<Totoro>, click_ray: &Ray) -> Option<(f32, usize)> {
+    let mut smallest_t = f32::INFINITY;
+    let mut hit_index = None;
+    for i in 0..totoros.len() {
+        if let Some(tot) = &totoros[i] {
+            let focus = tot.position + glm::vec3(0.0, 0.0, 0.5);
+            let radius = tot.scale.x;
+            let sph = Sphere {
+                focus,
+                radius
+            };
+
+            //Translate the ray, such that the test can be performed on a sphere centered at the origin
+            //This just simplifies the math
+            let test_ray = Ray {
+                origin: click_ray.origin - sph.focus,
+                direction: click_ray.direction
+            };
+
+            //Compute t
+            //Technically this equation is "plus-or-minus" but we want the closest intersection so it's always minus
+            let d_dot_p = glm::dot(&test_ray.direction, &test_ray.origin);
+            let sqrt_body = d_dot_p * d_dot_p - glm::dot(&test_ray.origin, &test_ray.origin) + sph.radius * sph.radius;
+
+            //The sqrt body being negative indicates a miss so we branch here
+            if sqrt_body >= 0.0 {
+                let t = glm::dot(&(-test_ray.direction), &test_ray.origin) - f32::sqrt(sqrt_body);
+                if t < smallest_t {
+                    hit_index = Some((smallest_t, i));
+                    smallest_t = t;
+                }
+            }
+        }
+    }
+    hit_index
+}
 
 fn kill_totoro(scene_data: &mut SceneData, totoros: &mut OptionVec<Totoro>, totoro_entity_index: usize, selected: &mut Option<usize>, idx: usize) {
     totoros.delete(idx);
@@ -718,7 +755,7 @@ fn main() {
 		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
 
 		//Place each piece of the skybox on the correct face
-        //gl::TEXTURE_CUBEMAP_POSITIVE_X + i gets you the right cube face
+        //gl::TEXTURE_CUBEMAP_POSITIVE_X + i gets you the correct cube face
 		for i in 0..6 {
 			let image_data = glutil::image_data_from_path(paths[i], ColorSpace::Gamma);
 			gl::TexImage2D(gl::TEXTURE_CUBE_MAP_POSITIVE_X + i as u32,
@@ -907,7 +944,7 @@ fn main() {
     //Init audio system
     let mut bgm_volume = 20.0;
     let (audio_sender, audio_receiver) = mpsc::channel();
-    audio::audio_main(audio_receiver, bgm_volume);
+    audio::audio_main(audio_receiver, bgm_volume);          //This spawns a thread to run the audio system
 
     let key_directions = {
         let mut hm = HashMap::new();
@@ -1261,90 +1298,28 @@ fn main() {
                 }
                 ClickAction::SelectTotoro => {
                     let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
+                    let hit_idx = get_clicked_totoro(&mut totoros, &click_ray);
                     
-                    let mut smallest_t = f32::INFINITY;
-                    let mut hit_one = false;
-                    for i in 0..totoros.len() {
-                        if let Some(tot) = &totoros[i] {
-                            let focus = tot.position + glm::vec3(0.0, 0.0, 0.5);
-                            let radius = tot.scale.x;
-                            let sph = Sphere {
-                                focus,
-                                radius
-                            };
-
-                            //Translate the ray, such that the test can be performed on a sphere centered at the origin
-                            //This just simplifies the math
-                            let test_ray = Ray {
-                                origin: click_ray.origin - sph.focus,
-                                direction: click_ray.direction
-                            };
-
-                            //Compute t
-                            //Technically this equation is "plus-or-minus" but we want the closest intersection so it's always minus
-                            let d_dot_p = glm::dot(&test_ray.direction, &test_ray.origin);
-                            let sqrt_body = d_dot_p * d_dot_p - glm::dot(&test_ray.origin, &test_ray.origin) + sph.radius * sph.radius;
-
-                            //The sqrt body being negative indicates a miss so we branch here
-                            if sqrt_body >= 0.0 {
-                                let t = glm::dot(&(-test_ray.direction), &test_ray.origin) - f32::sqrt(sqrt_body);
-                                if t < smallest_t {
-                                    hit_one = true;
-                                    smallest_t = t;
-                                    selected_totoro_idx = Some(i);
-                                    if let Some(ent) = scene_data.entities.get_mut_element(totoro_entity_index) {
-                                        ent.highlighted_item = Some(i);
-                                    }
-                                }
-                            }
+                    match hit_idx {
+                        Some((_, idx)) => {
+                            selected_totoro_idx = Some(idx);
+                            if let Some(ent) = scene_data.entities.get_mut_element(totoro_entity_index) {
+                                ent.highlighted_item = Some(idx);
+                            }    
                         }
-                    }
-                            
-                    if !hit_one {
-                        selected_totoro_idx = None;
-                        if let Some(ent) = scene_data.entities.get_mut_element(totoro_entity_index) {
-                            ent.highlighted_item = None;
+                        _ => {
+                            selected_totoro_idx = None;
+                            if let Some(ent) = scene_data.entities.get_mut_element(totoro_entity_index) {
+                                ent.highlighted_item = None;
+                            }    
                         }
                     }
                 }
                 ClickAction::FlickTotoro => {
                     let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
-                    
-                    let mut smallest_t = f32::INFINITY;
-                    let mut hit_idx = None;
-                    for i in 0..totoros.len() {
-                        if let Some(tot) = &totoros[i] {
-                            let focus = tot.position + glm::vec3(0.0, 0.0, 0.5);
-                            let radius = tot.scale.x;
-                            let sph = Sphere {
-                                focus,
-                                radius
-                            };
-
-                            //Translate the ray, such that the test can be performed on a sphere centered at the origin
-                            //This just simplifies the math
-                            let test_ray = Ray {
-                                origin: click_ray.origin - sph.focus,
-                                direction: click_ray.direction
-                            };
-
-                            //Compute t
-                            //Technically this equation is "plus-or-minus" but we want the closest intersection so it's always minus
-                            let d_dot_p = glm::dot(&test_ray.direction, &test_ray.origin);
-                            let sqrt_body = d_dot_p * d_dot_p - glm::dot(&test_ray.origin, &test_ray.origin) + sph.radius * sph.radius;
-
-                            //The sqrt body being negative indicates a miss so we branch here
-                            if sqrt_body >= 0.0 {
-                                let t = glm::dot(&(-test_ray.direction), &test_ray.origin) - f32::sqrt(sqrt_body);
-                                if t < smallest_t {
-                                    hit_idx = Some(i);
-                                    smallest_t = t;
-                                }
-                            }
-                        }
-                    }
+                    let hit_idx = get_clicked_totoro(&mut totoros, &click_ray);
                             
-                    if let Some(idx) = hit_idx {
+                    if let Some((smallest_t, idx)) = hit_idx {
                         if let Some(tot) = totoros.get_mut_element(idx) {
                             let hit_point = click_ray.origin + smallest_t * click_ray.direction;
                             let focus = tot.position + glm::vec3(0.0, 0.0, 0.5);
