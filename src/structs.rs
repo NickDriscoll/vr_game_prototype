@@ -119,7 +119,7 @@ impl Totoro {
 pub enum TotoroState {
     Relaxed,
     Meandering,
-    Stunned
+    BrainDead
 }
 
 #[derive(PartialEq, Eq)]

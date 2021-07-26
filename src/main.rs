@@ -73,12 +73,12 @@ fn get_clicked_totoro(totoros: &mut OptionVec<Totoro>, click_ray: &Ray) -> Optio
             };
 
             //Compute t
-            //Technically this equation is "plus-or-minus" but we want the closest intersection so it's always minus
             let d_dot_p = glm::dot(&test_ray.direction, &test_ray.origin);
             let sqrt_body = d_dot_p * d_dot_p - glm::dot(&test_ray.origin, &test_ray.origin) + sph.radius * sph.radius;
 
             //The sqrt body being negative indicates a miss so we branch here
             if sqrt_body >= 0.0 {
+                //Technically this equation is "plus-or-minus" the square root but we want the closest intersection so it's always minus
                 let t = glm::dot(&(-test_ray.direction), &test_ray.origin) - f32::sqrt(sqrt_body);
                 if t < smallest_t {
                     hit_index = Some((smallest_t, i));
@@ -705,7 +705,7 @@ fn main() {
     let mut shadow_view;
     let cascade_size = 2048;
     let shadow_rendertarget = unsafe { RenderTarget::new_shadow((cascade_size * render::SHADOW_CASCADES as GLint, cascade_size)) };
-    let sun_shadow_map = CascadedShadowMap::new(shadow_rendertarget.texture, shadow_program, cascade_size);
+    let sun_shadow_map = CascadedShadowMap::new(shadow_rendertarget, shadow_program, cascade_size);
 
     //Initialize scene data struct
     let mut scene_data = SceneData::default();
@@ -1257,7 +1257,7 @@ fn main() {
                             totoro.velocity = glm::vec3(v.x, v.y, totoro.velocity.z);
                         }
                     }
-                    TotoroState::Stunned => {}
+                    TotoroState::BrainDead => {}
                 }
 
                 //Apply gravity
@@ -1298,9 +1298,9 @@ fn main() {
                 }
                 ClickAction::SelectTotoro => {
                     let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
-                    let hit_idx = get_clicked_totoro(&mut totoros, &click_ray);
+                    let hit_info = get_clicked_totoro(&mut totoros, &click_ray);
                     
-                    match hit_idx {
+                    match hit_info {
                         Some((_, idx)) => {
                             selected_totoro_idx = Some(idx);
                             if let Some(ent) = scene_data.entities.get_mut_element(totoro_entity_index) {
@@ -1317,16 +1317,16 @@ fn main() {
                 }
                 ClickAction::FlickTotoro => {
                     let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
-                    let hit_idx = get_clicked_totoro(&mut totoros, &click_ray);
+                    let hit_info = get_clicked_totoro(&mut totoros, &click_ray);
                             
-                    if let Some((smallest_t, idx)) = hit_idx {
+                    if let Some((t_value, idx)) = hit_info {
                         if let Some(tot) = totoros.get_mut_element(idx) {
-                            let hit_point = click_ray.origin + smallest_t * click_ray.direction;
+                            let hit_point = click_ray.origin + t_value * click_ray.direction;
                             let focus = tot.position + glm::vec3(0.0, 0.0, 0.5);
-                            let mut v = 20.0 * (focus - hit_point);
-                            v.z += 100.0;
+                            let v = (focus - hit_point);
+                            //v.z += 100.0;
                             tot.velocity += v;
-                            tot.state = TotoroState::Stunned;
+                            tot.state = TotoroState::BrainDead;
                         }
                     }
                 }
@@ -1732,7 +1732,6 @@ fn main() {
 
                             if let Some(pose) = xrutil::locate_space(&view_space, &tracking_space, wait_info.predicted_display_time) {
                                 //Render shadow map
-                                shadow_rendertarget.bind();
                                 let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);
                                 let projection = *screen_state.get_clipping_from_view();
                                 scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, &v_mat, &projection);
@@ -1845,7 +1844,6 @@ fn main() {
             gl::BindFramebuffer(gl::FRAMEBUFFER, default_framebuffer.name);
             if !hmd_pov {
                 //Render shadows
-                shadow_rendertarget.bind();
                 let projection = *screen_state.get_clipping_from_view();
                 scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, screen_state.get_view_from_world(), &projection);
                 render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.entities.as_slice());

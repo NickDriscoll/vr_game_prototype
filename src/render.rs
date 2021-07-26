@@ -2,7 +2,7 @@ use std::ptr;
 use std::mem::size_of;
 use std::os::raw::c_void;
 use ozy::io::OzyMesh;
-use ozy::render::{TextureKeeper};
+use ozy::render::{RenderTarget, TextureKeeper};
 use ozy::structs::OptionVec;
 use ozy::glutil::ColorSpace;
 use ozy::glutil;
@@ -139,17 +139,17 @@ impl RenderEntity {
 }
 
 pub struct CascadedShadowMap {
-    pub texture: GLuint,
-    pub program: GLuint,
-    pub resolution: GLint,          //The assumption is that the individual cascades are always squares
+    pub rendertarget: RenderTarget,             //Render info for the shadow atlas
+    pub program: GLuint,                        //Associated program name
+    pub resolution: GLint,                      //The assumption is that the individual cascades are always squares
     pub matrices: [glm::TMat4<f32>; SHADOW_CASCADES],
     pub clip_space_distances: [f32; SHADOW_CASCADES + 1]
 }
 
 impl CascadedShadowMap {
-    pub fn new(texture: GLuint, program: GLuint, resolution: GLint) -> Self {
+    pub fn new(rendertarget: RenderTarget, program: GLuint, resolution: GLint) -> Self {
         CascadedShadowMap {
-            texture,
+            rendertarget,
             program,
             resolution,
             matrices: [glm::identity(); SHADOW_CASCADES],
@@ -174,8 +174,9 @@ pub struct SceneData {
 
 impl Default for SceneData {
     fn default() -> Self {
+        let rendertarget = unsafe { RenderTarget::new_shadow((0,0)) };
         let sun_shadow_map = CascadedShadowMap {
-            texture: 0,
+            rendertarget,
             program: 0,
             resolution: 0,
             matrices: [glm::identity(); SHADOW_CASCADES],
@@ -237,7 +238,7 @@ pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
 
     //Main scene rendering
     gl::ActiveTexture(gl::TEXTURE0 + ozy::render::TEXTURE_MAP_COUNT as GLenum);
-    gl::BindTexture(gl::TEXTURE_2D, scene_data.sun_shadow_map.texture);
+    gl::BindTexture(gl::TEXTURE_2D, scene_data.sun_shadow_map.rendertarget.texture);
 
     //Render 3D entities
     let sun_c = glm::vec3(scene_data.sun_color[0], scene_data.sun_color[1], scene_data.sun_color[2]);
@@ -294,7 +295,7 @@ pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
     //Skybox rendering
     
 	//Compute the view-projection matrix for the skybox (the conversion functions are just there to nullify the translation component of the view matrix)
-	//The skybox vertices should obviously be rotated along with the camera, but they shouldn't be translated in order to maintain the illusion
+	//The skybox vertices should be rotated along with the camera, but they shouldn't be translated in order to maintain the illusion
 	//that the sky is infinitely far away
     let skybox_view_projection = view_data.projection_matrix * glm::mat3_to_mat4(&glm::mat4_to_mat3(&view_data.view_matrix));
 
@@ -308,6 +309,7 @@ pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
 }
 
 pub unsafe fn cascaded_shadow_map(shadow_map: &CascadedShadowMap, entities: &[Option<RenderEntity>]) {
+    shadow_map.rendertarget.framebuffer.bind();
     gl::UseProgram(shadow_map.program);
     for i in 0..SHADOW_CASCADES {
         //Configure rendering for this cascade
