@@ -155,7 +155,8 @@ void main() {
     if (highlighted_idx == instance_id) {
         float likeness = 1.0 - max(0.0, dot(view_direction, tangent_space_normal));
         float factor = smoothstep(0.5, 1.0, likeness);
-        rim_lighting = factor * vec3(cos(5.0 * current_time) * 0.5 + 0.5, sin(6.0 * current_time) * 0.5 + 0.5, sin(8.0 * current_time) * 0.5 + 0.5);
+        vec3 color = vec3(cos(5.0 * current_time) * 0.5 + 0.5, sin(6.0 * current_time) * 0.5 + 0.5, sin(8.0 * current_time) * 0.5 + 0.5);
+        rim_lighting = factor * color;
     }
 
     vec3 final_color = sun_color * ((specular + diffuse) * (1.0 - shadow) + ambient_strength) * albedo + rim_lighting;

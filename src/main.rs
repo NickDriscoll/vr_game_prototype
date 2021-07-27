@@ -52,7 +52,39 @@ use crate::structs::*;
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
 
 const EPSILON: f32 = 0.00001;
-                
+
+unsafe fn screenshot(screen_state: &ScreenState, flag: &mut bool) {
+    //Take a screenshot here as to get the dev gui in it
+    if *flag {
+        let mut buffer = vec![0u8; (screen_state.get_window_size().x * screen_state.get_window_size().y) as usize * 4];
+        gl::ReadPixels(0, 0, screen_state.get_window_size().x as GLint, screen_state.get_window_size().y as GLint, gl::RGBA, gl::UNSIGNED_BYTE, buffer.as_mut_slice() as *mut [u8] as *mut c_void);
+
+        let dynamic_image = match ImageBuffer::from_raw(screen_state.get_window_size().x, screen_state.get_window_size().y, buffer) {
+            Some(im) => { Some(DynamicImage::ImageRgba8(im).flipv()) }
+            None => { 
+                println!("Unable to convert raw to image::DynamicImage");
+                None
+            }
+        };
+
+        if let Some(dyn_image) = dynamic_image {
+            //Create the screenshot directory if there isn't one
+            let screenshot_dir = "screenshots";
+            if !Path::new(screenshot_dir).is_dir() {
+                if let Err(e) = fs::create_dir(screenshot_dir) {
+                    println!("Unable to create screenshot directory: {}", e);
+                }
+            }
+
+            if let Err(e) = dyn_image.save(format!("{}/{}.png", screenshot_dir, Local::now().format("%F_%H%M%S"))) {
+                println!("Error taking screenshot: {}", e);
+            }
+        }
+
+        *flag = false;
+    }
+}
+
 fn get_clicked_totoro(totoros: &mut OptionVec<Totoro>, click_ray: &Ray) -> Option<(f32, usize)> {
     let mut smallest_t = f32::INFINITY;
     let mut hit_index = None;
@@ -81,8 +113,8 @@ fn get_clicked_totoro(totoros: &mut OptionVec<Totoro>, click_ray: &Ray) -> Optio
                 //Technically this equation is "plus-or-minus" the square root but we want the closest intersection so it's always minus
                 let t = glm::dot(&(-test_ray.direction), &test_ray.origin) - f32::sqrt(sqrt_body);
                 if t < smallest_t {
-                    hit_index = Some((smallest_t, i));
                     smallest_t = t;
+                    hit_index = Some((smallest_t, i));
                 }
             }
         }
@@ -929,6 +961,7 @@ fn main() {
     let mut do_vsync = true;
     let mut do_imgui = true;
     let mut screenshot_this_frame = false;
+    let mut full_screenshot_this_frame = false;
     if let Some(_) = &xr_instance {
         hmd_pov = true;
         do_vsync = false;
@@ -962,15 +995,21 @@ fn main() {
         let imgui_io = imgui_context.io_mut();
         //Compute the number of seconds since the start of the last frame (i.e at 60fps, delta_time ~= 0.016667)
         let delta_time = {
+            const MAX_DELTA_TIME: f32 = 1.0 / 30.0;
 			let frame_instant = Instant::now();
 			let dur = frame_instant.duration_since(last_frame_instant);
 			last_frame_instant = frame_instant;
-			dur.as_secs_f32()
+			let f_dur = dur.as_secs_f32();
+            imgui_io.delta_time = f_dur;
+            if f_dur > MAX_DELTA_TIME {
+                MAX_DELTA_TIME
+            } else { 
+                f_dur
+            }
         };
         elapsed_time += delta_time;
         scene_data.current_time = elapsed_time;
         frame_count += 1;
-        imgui_io.delta_time = delta_time;
         let framerate = imgui_io.framerate;
 
         //Sync OpenXR actions
@@ -1006,6 +1045,9 @@ fn main() {
                                 }
                                 Key::LeftControl => {
                                     camera_speed /= 5.0;
+                                }
+                                Key::F2 => {
+                                    full_screenshot_this_frame = true;
                                 }
                                 _ => {}
                             }
@@ -1323,9 +1365,10 @@ fn main() {
                         if let Some(tot) = totoros.get_mut_element(idx) {
                             let hit_point = click_ray.origin + t_value * click_ray.direction;
                             let focus = tot.position + glm::vec3(0.0, 0.0, 0.5);
-                            let v = (focus - hit_point);
-                            //v.z += 100.0;
+                            let mut v = 20.0 * (focus - hit_point);
+                            v.z += 100.0;
                             tot.velocity += v;
+                            tot.position += v * delta_time;
                             tot.state = TotoroState::BrainDead;
                         }
                     }
@@ -1859,34 +1902,7 @@ fn main() {
             }
 
             //Take a screenshot here as to not get the dev gui in it
-            if screenshot_this_frame {
-                let mut buffer = vec![0u8; (screen_state.get_window_size().x * screen_state.get_window_size().y) as usize * 4];
-                gl::ReadPixels(0, 0, screen_state.get_window_size().x as GLint, screen_state.get_window_size().y as GLint, gl::RGBA, gl::UNSIGNED_BYTE, buffer.as_mut_slice() as *mut [u8] as *mut c_void);
-
-                let dynamic_image = match ImageBuffer::from_raw(screen_state.get_window_size().x, screen_state.get_window_size().y, buffer) {
-                    Some(im) => { Some(DynamicImage::ImageRgba8(im).flipv()) }
-                    None => { 
-                        println!("Unable to convert raw to image::DynamicImage");
-                        None
-                    }
-                };
-
-                if let Some(dyn_image) = dynamic_image {
-                    //Create the screenshot directory if there isn't one
-                    let screenshot_dir = "screenshots";
-                    if !Path::new(screenshot_dir).is_dir() {
-                        if let Err(e) = fs::create_dir(screenshot_dir) {
-                            println!("Unable to create screenshot directory: {}", e);
-                        }
-                    }
-
-                    if let Err(e) = dyn_image.save(format!("{}/{}.png", screenshot_dir, Local::now().format("%F_%H%M%S"))) {
-                        println!("Error taking screenshot: {}", e);
-                    }
-                }
-
-                screenshot_this_frame = false;
-            }
+            screenshot(&screen_state, &mut screenshot_this_frame);
 
             //Render 2D elements
             gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);  //Make sure we're not doing wireframe rendering
@@ -1953,6 +1969,9 @@ fn main() {
                     }
                 }
             }
+
+            //Take a screenshot here as to get the dev gui in it
+            screenshot(&screen_state, &mut full_screenshot_this_frame);
         }
 
         window.swap_buffers();  //Display the rendered frame to the window

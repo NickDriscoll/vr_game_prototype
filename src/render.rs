@@ -14,6 +14,7 @@ pub const MSAA_SAMPLES: u32 = 8;
 pub const SHADOW_CASCADES: usize = 6;
 pub const INSTANCED_ATTRIBUTE: GLuint = 5;
 pub const TEXTURE_MAP_COUNT: usize = 3;
+const CUBE_INDICES_COUNT: GLsizei = 36;
 
 //Represents all of the data necessary to render an object (potentially instanced) that exists in the 3D scene
 #[derive(Clone, Debug)]
@@ -305,7 +306,7 @@ pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
     glutil::bind_vector3(scene_data.skybox_program, "sun_color", &sun_c);
     gl::BindTexture(gl::TEXTURE_CUBE_MAP, scene_data.skybox_cubemap);
     gl::BindVertexArray(scene_data.skybox_vao);
-    gl::DrawElements(gl::TRIANGLES, 36, gl::UNSIGNED_SHORT, ptr::null());
+    gl::DrawElements(gl::TRIANGLES, CUBE_INDICES_COUNT, gl::UNSIGNED_SHORT, ptr::null());
 }
 
 pub unsafe fn cascaded_shadow_map(shadow_map: &CascadedShadowMap, entities: &[Option<RenderEntity>]) {
