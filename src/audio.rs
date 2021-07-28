@@ -109,20 +109,29 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32) {
                     }
                     AudioCommand::RestartBGM => {
                         println!("Looping the mp3");
-                        //kanye_source.pause();
+                        
+                        //Dequeue any processed buffers
+                        while kanye_source.buffers_processed() > 0 {
+                            kanye_source.unqueue_buffer().unwrap();
+                        }
+
+                        kanye_source.pause();
                         if let Some(decoder) = &mut decoder {
                             kanye_source = alto_context.new_streaming_source().unwrap();
                             decoder.reader_mut().seek(SeekFrom::Start(0)).unwrap();
                         }
+                        kickstart_bgm = true;
                     }
                     AudioCommand::PlayPause => {
                         kickstart_bgm = !kickstart_bgm;
                         match kanye_source.state() {
                             SourceState::Playing | SourceState::Initial => {
-                                kanye_source.pause();
+                                kanye_source.pause();                                
+                                kickstart_bgm = false;
                             }
                             SourceState::Paused | SourceState::Stopped => {
                                 kanye_source.play();
+                                kickstart_bgm = true;
                             }
                             SourceState::Unknown(code) => { println!("Source is in an unknown state: {}", code); }
                         }
@@ -130,11 +139,11 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32) {
                 }
             }
 
-            //If there are fewer than the ideal frames queued, prepare and queue a frame
+            //If there are fewer than the ideal number of frames queued, prepare and queue a frame
             if kanye_source.buffers_queued() < IDEAL_FRAMES_QUEUED {
                 if let Some(decoder) = &mut decoder {
                     match decoder.next_frame() {
-                        Ok(frame) => {
+                        Ok(frame) => {                          //Mono
                             if frame.channels == 1 {
                                 let mut mono_samples = Vec::with_capacity(frame.data.len());
                                 for sample in frame.data {
@@ -148,7 +157,7 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32) {
                                 if let Ok(sample_buffer) = alto_context.new_buffer(mono_samples, frame.sample_rate) {
                                     kanye_source.queue_buffer(sample_buffer).unwrap();
                                 }
-                            } else if frame.channels == 2 {
+                            } else if frame.channels == 2 {     //Stereo
                                 let mut stereo_samples = Vec::with_capacity(frame.data.len());
                                 for i in (0..frame.data.len()).step_by(2) {
                                     stereo_samples.push(
@@ -185,7 +194,7 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32) {
                 kanye_source.unqueue_buffer().unwrap();
             }
 
-            if kanye_source.state() != SourceState::Playing && kickstart_bgm && kanye_source.buffers_queued() == IDEAL_FRAMES_QUEUED {
+            if kanye_source.state() != SourceState::Playing && kickstart_bgm && kanye_source.buffers_queued() > 0 {
                 kanye_source.play();
                 kickstart_bgm = false;
             }

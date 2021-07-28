@@ -390,10 +390,10 @@ fn main() {
     //Create the XrActions
     let left_hand_pose_action = xrutil::make_action(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_pose", "Left hand pose");
     let left_hand_aim_action = xrutil::make_action::<xr::Posef>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_aim", "Left hand aim");
-    let left_gadget_action = xrutil::make_action::<f32>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_gadget", "Left hand gadget");
-    let right_gadget_action = xrutil::make_action::<f32>(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_gadget", "Right hand gadget");
     let right_hand_grip_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_pose", "Right hand pose");
     let right_hand_aim_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_aim", "Right hand aim");
+    let left_gadget_action = xrutil::make_action::<f32>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_gadget", "Left hand gadget");
+    let right_gadget_action = xrutil::make_action::<f32>(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_gadget", "Right hand gadget");
     let go_home_action = xrutil::make_action::<bool>(&right_hand_subaction_path, &xr_controller_actionset, "item_menu", "Interact with item menu");
     let player_move_action = xrutil::make_action::<xr::Vector2f>(&left_hand_subaction_path, &xr_controller_actionset, "player_move", "Player movement");
     let left_switch_gadget = xrutil::make_action::<bool>(&left_hand_subaction_path, &xr_controller_actionset, "left_switch_gadget", "Left hand switch gadget");
@@ -923,14 +923,14 @@ fn main() {
         let wand_entity = RenderEntity::from_ozy("models/wand.ozy", standard_program, 2, &mut texture_keeper, &default_tex_params);
         let stick_entity = RenderEntity::from_ozy("models/stick.ozy", standard_program, 2, &mut texture_keeper, &default_tex_params);
         let mut h = HashMap::new();
-        h.insert(GadgetType::Shotgun, wand_entity);
+        h.insert(GadgetType::Net, wand_entity);
         h.insert(GadgetType::WaterCannon, stick_entity);
         h
     };
 
     //Gadget state setup
-    let mut left_hand_gadget = GadgetType::Shotgun;
-    let mut right_hand_gadget = GadgetType::Shotgun;
+    let mut left_hand_gadget = GadgetType::Net;
+    let mut right_hand_gadget = GadgetType::WaterCannon;
     let left_gadget_index = match gadget_model_map.get(&left_hand_gadget) {
         Some(entity) => { scene_data.entities.insert(entity.clone()) }
         None => { panic!("No model found for {:?}", left_hand_gadget); }
@@ -1001,6 +1001,8 @@ fn main() {
 			last_frame_instant = frame_instant;
 			let f_dur = dur.as_secs_f32();
             imgui_io.delta_time = f_dur;
+
+            //Don't allow game objects to have an update delta of more than a thirtieth of a second
             if f_dur > MAX_DELTA_TIME {
                 MAX_DELTA_TIME
             } else { 
@@ -1186,15 +1188,12 @@ fn main() {
                 for i in 0..trigger_states.len() {
                     if let Some(state) = trigger_states[i] {
                         match gadgets[i] {
-                            GadgetType::Shotgun => {
+                            GadgetType::Net => {
                                 if state.changed_since_last_sync && state.current_state == 1.0 {
-                                    if let Some(pose) = xrutil::locate_space(aim_spaces[i], &tracking_space, last_xr_render_time) {
-                                        let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
-                                        let hand_space_vec = glm::vec4(0.0, 1.0, 0.0, 0.0);
-                                        let world_space_vec = hand_transform * hand_space_vec;
-                                        
-                                        player.tracking_velocity += 20.0 * -glm::vec4_to_vec3(&world_space_vec);
-                                    }                            
+                                    if player.jumps_remaining > 0 {
+                                        player.tracking_velocity.z = 10.0;
+                                        player.jumps_remaining -= 1;
+                                    }
                                 }
                             }
                             GadgetType::StickyHand => {
@@ -1219,7 +1218,7 @@ fn main() {
                                 }
         
                                 //Apply watergun force to player
-                                if floats_equal(glm::length(&water_gun_force), 0.0) && remaining_water > 0.0 {
+                                if !floats_equal(glm::length(&water_gun_force), 0.0) && remaining_water > 0.0 {
                                     let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
                                     if !infinite_ammo {
                                         remaining_water -= glm::length(&update_force);
@@ -1420,7 +1419,7 @@ fn main() {
                 triangle.normal
             );
 
-            //We create a bounding sphere for the triangle in order to do a coarse collision step with other objects
+            //We create a bounding sphere for the triangle in order to do a coarse collision step
             let triangle_sphere = {
                 let focus = midpoint(&triangle.c, &midpoint(&triangle.a, &triangle.b));
                 let radius = glm::max3_scalar(

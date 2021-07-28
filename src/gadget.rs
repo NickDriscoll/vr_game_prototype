@@ -14,7 +14,7 @@ impl Gadget {
 
 #[derive(Copy, Clone, Debug, Hash, EnumCount, PartialEq, Eq)]
 pub enum GadgetType {
-    Shotgun,
+    Net,
     StickyHand,
     WaterCannon
 }
@@ -23,7 +23,7 @@ impl GadgetType {
     //I hate Rust
     pub fn from_usize(i: usize) -> Self {
         match i {
-            0 => { GadgetType::Shotgun }
+            0 => { GadgetType::Net }
             1 => { GadgetType::StickyHand }
             2 => { GadgetType::WaterCannon }
             _ => { panic!("{} is out of range", i); }
