@@ -1782,8 +1782,7 @@ fn main() {
                                 let projection = *screen_state.get_clipping_from_view();
 
                                 //Compute the view_projection matrices for the shadow maps
-                                let shadow_view_pos = glm::vec3(-v_mat[12], -v_mat[13], -v_mat[14]);
-                                let shadow_view = glm::look_at(&(scene_data.sun_direction * 20.0 + shadow_view_pos), &shadow_view_pos, &Z_UP);
+                                let shadow_view = glm::look_at(&(scene_data.sun_direction * 20.0), &glm::zero(), &Z_UP);
                                 scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, &v_mat, &projection);
                                 render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.entities.as_slice());
 
@@ -1896,7 +1895,6 @@ fn main() {
                 //Render shadows
                 let projection = *screen_state.get_clipping_from_view();
                 let v_mat = screen_state.get_view_from_world();
-                let shadow_view_pos = glm::vec3(-v_mat[12], -v_mat[13], -v_mat[14]);
                 let shadow_view = glm::look_at(&(scene_data.sun_direction * 20.0), &glm::zero(), &Z_UP);
                 scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, v_mat, &projection);
                 render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.entities.as_slice());
