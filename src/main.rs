@@ -721,6 +721,39 @@ fn main() {
         cull_face: gl::BACK
     };
 
+    //Creating Dear ImGui context
+    let mut imgui_context = imgui::Context::create();
+    imgui_context.style_mut().use_dark_colors();
+    {
+        let io = imgui_context.io_mut();
+        io.display_size[0] = screen_state.get_window_size().x as f32;
+        io.display_size[1] = screen_state.get_window_size().y as f32;
+    }
+
+    //Create and upload Dear IMGUI font atlas
+    match imgui_context.fonts() {
+        FontAtlasRefMut::Owned(atlas) => unsafe {
+            let mut tex = 0;
+            let font_atlas = atlas.build_alpha8_texture();
+            
+            let font_atlas_params = [                
+                (gl::TEXTURE_WRAP_S, gl::REPEAT),
+                (gl::TEXTURE_WRAP_T, gl::REPEAT),
+                (gl::TEXTURE_MIN_FILTER, gl::NEAREST),
+                (gl::TEXTURE_MAG_FILTER, gl::NEAREST)
+            ];
+
+            gl::GenTextures(1, &mut tex);
+            gl::BindTexture(gl::TEXTURE_2D, tex);            
+            glutil::apply_texture_parameters(&font_atlas_params);
+            gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RED as GLsizei, font_atlas.width as GLsizei, font_atlas.height as GLsizei, 0, gl::RED, gl::UNSIGNED_BYTE, font_atlas.data.as_ptr() as _);
+            atlas.tex_id = TextureId::new(tex as usize);  //Giving Dear Imgui a reference to the font atlas GPU texture
+        }
+        FontAtlasRefMut::Shared(_) => {
+            panic!("Not dealing with this case.");
+        }
+    };
+
     //Camera state
     let mut mouselook_enabled = false;
     let mut mouse_clicked = false;
@@ -734,7 +767,6 @@ fn main() {
     let mut camera_collision = true;
 
     //Initialize shadow data
-    let mut shadow_view;
     let cascade_size = 2048;
     let shadow_rendertarget = unsafe { RenderTarget::new_shadow((cascade_size * render::SHADOW_CASCADES as GLint, cascade_size)) };
     let sun_shadow_map = CascadedShadowMap::new(shadow_rendertarget, shadow_program, cascade_size);
@@ -829,39 +861,6 @@ fn main() {
     let mut tracking_from_world = glm::affine_inverse(world_from_tracking);
 
     let mut screen_space_mouse = glm::zero();
-
-    //Creating Dear ImGui context
-    let mut imgui_context = imgui::Context::create();
-    imgui_context.style_mut().use_dark_colors();
-    {
-        let io = imgui_context.io_mut();
-        io.display_size[0] = screen_state.get_window_size().x as f32;
-        io.display_size[1] = screen_state.get_window_size().y as f32;
-    }
-
-    //Create and upload Dear IMGUI font atlas
-    match imgui_context.fonts() {
-        FontAtlasRefMut::Owned(atlas) => unsafe {
-            let mut tex = 0;
-            let font_atlas = atlas.build_alpha8_texture();
-            
-            let font_atlas_params = [                
-                (gl::TEXTURE_WRAP_S, gl::REPEAT),
-                (gl::TEXTURE_WRAP_T, gl::REPEAT),
-                (gl::TEXTURE_MIN_FILTER, gl::NEAREST),
-                (gl::TEXTURE_MAG_FILTER, gl::NEAREST)
-            ];
-
-            gl::GenTextures(1, &mut tex);
-            gl::BindTexture(gl::TEXTURE_2D, tex);            
-            glutil::apply_texture_parameters(&font_atlas_params);
-            gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RED as GLsizei, font_atlas.width as GLsizei, font_atlas.height as GLsizei, 0, gl::RED, gl::UNSIGNED_BYTE, font_atlas.data.as_ptr() as _);
-            atlas.tex_id = TextureId::new(tex as usize);  //Giving Dear Imgui a reference to the font atlas GPU texture
-        }
-        FontAtlasRefMut::Shared(_) => {
-            panic!("Not dealing with this case.");
-        }
-    };
     
     //Load terrain data
     let terrain = {
@@ -894,11 +893,17 @@ fn main() {
                     //Read number of matrices
                     let matrices_count = match io::read_u32(&mut file) {
                         Ok(count) => { count as usize } 
-                        Err(e) => { panic!("Error reading from level file: {}", e); }
+                        Err(e) => {
+                            tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", terrain_name, e), MessageBoxIcon::Error);
+                            panic!("Error reading from level file: {}", e);
+                        }
                     };
                     let matrix_floats = match io::read_f32_data(&mut file, matrices_count as usize * 16) {
                         Ok(floats) => { floats }
-                        Err(e) => { panic!("Error reading from level file: {}", e); }
+                        Err(e) => {
+                            tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", terrain_name, e), MessageBoxIcon::Error);
+                            panic!("Error reading from level file: {}", e);
+                        }
                     };
 
                     let mut entity = RenderEntity::from_ozy(&format!("models/{}", ozy_name), standard_program, matrices_count, &mut texture_keeper, &default_tex_params);
@@ -1003,11 +1008,8 @@ fn main() {
             imgui_io.delta_time = f_dur;
 
             //Don't allow game objects to have an update delta of more than a thirtieth of a second
-            if f_dur > MAX_DELTA_TIME {
-                MAX_DELTA_TIME
-            } else { 
-                f_dur
-            }
+            if f_dur > MAX_DELTA_TIME { MAX_DELTA_TIME }
+            else { f_dur }
         };
         elapsed_time += delta_time;
         scene_data.current_time = elapsed_time;
@@ -1534,9 +1536,6 @@ fn main() {
         world_from_tracking = glm::translation(&player.tracking_position);
         tracking_from_world = glm::affine_inverse(world_from_tracking);
 
-        //Compute the view_projection matrices for the shadow maps
-        shadow_view = glm::look_at(&(scene_data.sun_direction * 20.0), &glm::zero(), &Z_UP);
-
         player.last_tracked_segment = player.tracked_segment.clone();
 
         //Tell the audio thread about the listener's current state
@@ -1605,14 +1604,13 @@ fn main() {
                 do_radio_option(&imgui_ui, im_str!("Visualize shadow cascades"), &mut scene_data.fragment_flag, FragmentFlag::CascadeZones);
                 imgui_ui.separator();
 
-                imgui_ui.text(im_str!("What does a mouse click do?"));
-                do_radio_option(&imgui_ui, im_str!("Selects a totoro"), &mut click_action, ClickAction::SelectTotoro);
-                do_radio_option(&imgui_ui, im_str!("Give life to a new Totoro"), &mut click_action, ClickAction::SpawnTotoro);
-                do_radio_option(&imgui_ui, im_str!("Flick totoro"), &mut click_action, ClickAction::FlickTotoro);
+                imgui_ui.text(im_str!("Actor management"));
+                do_radio_option(&imgui_ui, im_str!("Select an actor"), &mut click_action, ClickAction::SelectTotoro);
+                do_radio_option(&imgui_ui, im_str!("Spawn new"), &mut click_action, ClickAction::SpawnTotoro);
                 imgui_ui.separator();
 
                 imgui_ui.text(im_str!("Lighting controls:"));
-                Slider::new(im_str!("Ambient strength")).range(RangeInclusive::new(0.0, 0.5)).build(&imgui_ui, &mut scene_data.ambient_strength);
+                Slider::new(im_str!("Ambient light")).range(RangeInclusive::new(0.0, 0.5)).build(&imgui_ui, &mut scene_data.ambient_strength);
 
                 let sun_color_editor = ColorEdit::new(im_str!("Sun color"), EditableColor::Float3(&mut scene_data.sun_color));
                 if sun_color_editor.build(&imgui_ui) {}
@@ -1683,7 +1681,7 @@ fn main() {
 
             //Do selected Totoro window
             if let Some(idx) = selected_totoro_idx {
-                let tot = totoros[idx].as_ref().unwrap();
+                let tot = totoros.get_mut_element(idx).unwrap();
                 if let Some(token) = imgui::Window::new(&im_str!("Totoro #{} control panel###totoro_panel", idx)).begin(&imgui_ui) {
                     imgui_ui.text(im_str!("Position ({:.3}, {:.3}, {:.3})", tot.position.x, tot.position.y, tot.position.z));
                     imgui_ui.text(im_str!("Velocity ({:.3}, {:.3}, {:.3})", tot.velocity.x, tot.velocity.y, tot.velocity.z));
@@ -1691,6 +1689,14 @@ fn main() {
                     imgui_ui.text(im_str!("AI timer state: {}", elapsed_time - tot.state_timer));
                             
                     imgui_ui.separator();
+                    if imgui_ui.button(im_str!("Toggle AI"), [0.0, 32.0]) {
+                        tot.state = match tot.state {
+                            TotoroState::BrainDead => { TotoroState::Relaxed }
+                            _ => { TotoroState::BrainDead }
+                        };
+                    }
+                    imgui_ui.same_line(0.0);
+
                     if imgui_ui.button(im_str!("Kill"), [0.0, 32.0]) {
                         kill_totoro(&mut scene_data, &mut totoros, totoro_entity_index, &mut selected_totoro_idx, idx);
                     }
@@ -1700,15 +1706,13 @@ fn main() {
             }
 
             //Shadow cascade viewer
-            /*
             let win = imgui::Window::new(im_str!("Shadow map"));
             if let Some(win_token) = win.begin(&imgui_ui) {
-                let im = imgui::Image::new(TextureId::new(shadow_rendertarget.texture as usize), [(cascade_size * render::SHADOW_CASCADES as i32 / 6) as f32, (cascade_size / 6) as f32]).uv1([1.0, -1.0]);
+                let im = imgui::Image::new(TextureId::new(scene_data.sun_shadow_map.rendertarget.texture as usize), [(cascade_size * render::SHADOW_CASCADES as i32 / 6) as f32, (cascade_size / 6) as f32]).uv1([1.0, -1.0]);
                 im.build(&imgui_ui);
 
                 win_token.end(&imgui_ui);
             }
-            */
         }
 
         //Create a view matrix from the camera state
@@ -1776,6 +1780,10 @@ fn main() {
                                 //Render shadow map
                                 let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);
                                 let projection = *screen_state.get_clipping_from_view();
+
+                                //Compute the view_projection matrices for the shadow maps
+                                let shadow_view_pos = glm::vec3(-v_mat[12], -v_mat[13], -v_mat[14]);
+                                let shadow_view = glm::look_at(&(scene_data.sun_direction * 20.0 + shadow_view_pos), &shadow_view_pos, &Z_UP);
                                 scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, &v_mat, &projection);
                                 render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.entities.as_slice());
 
@@ -1787,7 +1795,7 @@ fn main() {
                                     //We have to translate to right-handed z-up from right-handed y-up
                                     let eye_pose = views[i].pose;
                                     let fov = views[i].fov;
-                                    let view_matrix = xrutil::pose_to_viewmat(&eye_pose, &tracking_from_world);
+                                    let eye_view_matrix = xrutil::pose_to_viewmat(&eye_pose, &tracking_from_world);
                                     let eye_world_matrix = xrutil::pose_to_mat4(&eye_pose, &world_from_tracking);
     
                                     //Use the fov to get the t, b, l, and r values of the perspective matrix
@@ -1808,7 +1816,7 @@ fn main() {
                                     sc_rendertarget.bind();   //Rendering into an MSAA rendertarget
                                     let view_data = ViewData::new(
                                         glm::vec3(eye_world_matrix[12], eye_world_matrix[13], eye_world_matrix[14]),
-                                        view_matrix,
+                                        eye_view_matrix,
                                         perspective
                                     );
                                     render::main_scene(&scene_data, &view_data);
@@ -1887,7 +1895,10 @@ fn main() {
             if !hmd_pov {
                 //Render shadows
                 let projection = *screen_state.get_clipping_from_view();
-                scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, screen_state.get_view_from_world(), &projection);
+                let v_mat = screen_state.get_view_from_world();
+                let shadow_view_pos = glm::vec3(-v_mat[12], -v_mat[13], -v_mat[14]);
+                let shadow_view = glm::look_at(&(scene_data.sun_direction * 20.0), &glm::zero(), &Z_UP);
+                scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, v_mat, &projection);
                 render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.entities.as_slice());
 
                 //Render main scene

@@ -6,6 +6,7 @@ use ozy::render::{RenderTarget, TextureKeeper};
 use ozy::structs::OptionVec;
 use ozy::glutil::ColorSpace;
 use ozy::glutil;
+use tfd::MessageBoxIcon;
 use gl::types::*;
 
 pub const NEAR_DISTANCE: f32 = 0.0625;
@@ -18,8 +19,8 @@ const CUBE_INDICES_COUNT: GLsizei = 36;
 
 //Represents all of the data necessary to render an object (potentially instanced) that exists in the 3D scene
 #[derive(Clone, Debug)]
-pub struct RenderEntity {
-    pub should_be_rendered: bool,
+pub struct RenderEntity {    
+    pub is_collision: bool,
     pub vao: GLuint,
     pub transform_buffer: GLuint,       //GPU buffer with one 4x4 homogenous transform per instance
     pub index_count: GLint,
@@ -75,7 +76,7 @@ impl RenderEntity {
 
                 let transform_buffer = glutil::create_instanced_transform_buffer(vao, instances, INSTANCED_ATTRIBUTE);
                 RenderEntity {
-                    should_be_rendered: true,
+                    is_collision: false,
                     vao,
                     transform_buffer,
                     index_count: meshdata.vertex_array.indices.len() as GLint,
@@ -90,6 +91,7 @@ impl RenderEntity {
                 }
             }
             None => {
+                tfd::message_box_ok("Error loading OzyMesh", &format!("Unable to load {}", path), MessageBoxIcon::Error);
                 panic!("Unable to load OzyMesh: {}", path);
             }
         }
@@ -140,9 +142,9 @@ impl RenderEntity {
 }
 
 pub struct CascadedShadowMap {
-    pub rendertarget: RenderTarget,             //Render info for the shadow atlas
+    pub rendertarget: RenderTarget,             //Rendertarget for the shadow atlas
     pub program: GLuint,                        //Associated program name
-    pub resolution: GLint,                      //The assumption is that the individual cascades are always squares
+    pub resolution: GLint,                      //The individual cascades are always squares
     pub matrices: [glm::TMat4<f32>; SHADOW_CASCADES],
     pub clip_space_distances: [f32; SHADOW_CASCADES + 1]
 }
@@ -245,10 +247,6 @@ pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
     let sun_c = glm::vec3(scene_data.sun_color[0], scene_data.sun_color[1], scene_data.sun_color[2]);
     for opt_entity in scene_data.entities.iter() {
         if let Some(entity) = opt_entity {
-            if !entity.should_be_rendered {
-                continue;
-            }
-
             let p = entity.shader;
             gl::UseProgram(p);
             glutil::bind_matrix4_array(p, "shadow_matrices", &sun_shadow_map.matrices);
@@ -263,6 +261,7 @@ pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
             glutil::bind_vector3(p, "view_position", &view_data.view_position);
             glutil::bind_vector2(p, "uv_scale", &entity.uv_scale);
             glutil::bind_vector2(p, "uv_offset", &entity.uv_offset);
+            glutil::bind_int(p, "is_collision", entity.is_collision as GLint);
 
             let highlight_idx = match entity.highlighted_item {
                 Some(idx) => { idx as GLint }
@@ -373,7 +372,7 @@ pub fn compute_shadow_cascade_matrices(shadow_cascade_distances: &[f32; SHADOW_C
             if min_y > point.y { min_y = point.y; }
         }
 
-        let projection_depth = 10.0;
+        let projection_depth = 20.0;
         let shadow_projection = glm::ortho(
             min_x, max_x, min_y, max_y, -8.0 * projection_depth, projection_depth * 6.0
         );

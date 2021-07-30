@@ -27,6 +27,9 @@ out vec4 frag_color;
 
 uniform float current_time;
 
+
+uniform bool is_collision = false;
+
 //Material textures
 uniform sampler2D albedo_tex;
 uniform sampler2D normal_tex;
@@ -63,6 +66,12 @@ float determine_shadowed(vec3 f_shadow_pos, int cascade) {
 }
 
 void main() {
+    //Early exit if this is a collision mesh
+    if (is_collision) {
+        frag_color = vec4(0.0, 0.0, 0.5, 0.5);
+        return;
+    }
+
     //Sample the albedo map for the fragment's base color
     vec3 albedo = texture(albedo_tex, scaled_uvs).xyz;
 
