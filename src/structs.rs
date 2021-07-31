@@ -18,7 +18,8 @@ pub enum ClickAction {
     None,
     SelectTotoro,
     SpawnTotoro,
-    FlickTotoro
+    FlickTotoro,
+    DeleteTotoro
 }
 
 impl Default for ClickAction {

@@ -1359,6 +1359,15 @@ fn main() {
                         }
                     }
                 }
+                ClickAction::DeleteTotoro => {
+                    let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
+                    let hit_info = get_clicked_totoro(&mut totoros, &click_ray);
+
+                    if let Some((_, idx)) = hit_info {
+                        kill_totoro(&mut scene_data, &mut totoros, totoro_entity_index, &mut selected_totoro_idx, idx);
+                    }
+
+                }
                 ClickAction::FlickTotoro => {
                     let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
                     let hit_info = get_clicked_totoro(&mut totoros, &click_ray);
@@ -1382,6 +1391,7 @@ fn main() {
         //Update the GPU transform buffer for the Totoros
         if let Some(entity) = scene_data.entities.get_mut_element(totoro_entity_index) {
             let mut transform_buffer = vec![0.0; totoros.count() * 16];
+            let mut current_totoro = 0;
             for i in 0..totoros.len() {
                 if let Some(totoro) = &totoros[i] {
                     let cr = glm::cross(&Z_UP, &totoro.forward);
@@ -1393,10 +1403,12 @@ fn main() {
                     );
 
                     let mm = glm::translation(&totoro.position) * rotation_mat * uniform_scale(totoro.scale);
-                    write_matrix_to_buffer(&mut transform_buffer, i, mm);
+                    write_matrix_to_buffer(&mut transform_buffer, current_totoro, mm);
                     
                     let pos = [mm[12], mm[13], mm[14]];
                     send_or_error(&audio_sender, AudioCommand::SetSourcePosition(pos, i));
+
+                    current_totoro += 1;
                 }
             }
 
@@ -1616,6 +1628,7 @@ fn main() {
                 imgui_ui.text(im_str!("Click action"));
                 do_radio_option(&imgui_ui, im_str!("Spawn totoro"), &mut click_action, ClickAction::SpawnTotoro);
                 do_radio_option(&imgui_ui, im_str!("Select totoro"), &mut click_action, ClickAction::SelectTotoro);
+                do_radio_option(&imgui_ui, im_str!("Delete totoro"), &mut click_action, ClickAction::DeleteTotoro);
                 imgui_ui.separator();
 
                 imgui_ui.text(im_str!("Lighting controls:"));
@@ -1684,7 +1697,7 @@ fn main() {
                     totoros.clear();
                 }
 
-                if imgui_ui.button(im_str!("Save entity data"), [0.0, 32.0]) {
+                if imgui_ui.button(im_str!("Save level data"), [0.0, 32.0]) {
                     
                 }
 

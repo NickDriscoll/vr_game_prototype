@@ -5,7 +5,7 @@ use ozy::io::OzyMesh;
 use ozy::render::{RenderTarget, TextureKeeper};
 use ozy::structs::OptionVec;
 use ozy::glutil::ColorSpace;
-use ozy::{glutil, render};
+use ozy::{glutil};
 use tfd::MessageBoxIcon;
 use gl::types::*;
 
@@ -134,6 +134,7 @@ impl RenderEntity {
 
                 gl::BindVertexArray(self.vao);
                 gl::BindBuffer(gl::ARRAY_BUFFER, self.transform_buffer);
+                glutil::bind_new_transform_buffer(INSTANCED_ATTRIBUTE);
 
                 gl::BufferData(
                     gl::ARRAY_BUFFER,
