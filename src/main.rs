@@ -1408,6 +1408,12 @@ fn main() {
                     let pos = [mm[12], mm[13], mm[14]];
                     send_or_error(&audio_sender, AudioCommand::SetSourcePosition(pos, i));
 
+                    if let Some(idx) = selected_totoro_idx {
+                        if idx == i {
+                            entity.highlighted_item = Some(current_totoro);
+                        }
+                    }
+
                     current_totoro += 1;
                 }
             }
