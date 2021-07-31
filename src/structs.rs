@@ -83,7 +83,7 @@ pub fn set_player_falling(player: &mut Player) {
 pub struct Totoro {
     pub position: glm::TVec3<f32>,
     pub velocity: glm::TVec3<f32>,
-    pub scale: glm::TVec3<f32>,
+    pub scale: f32,
     pub home: glm::TVec3<f32>,
     pub forward: glm::TVec3<f32>,
     pub desired_forward: glm::TVec3<f32>,
@@ -95,12 +95,7 @@ impl Totoro {
     pub fn new(position: glm::TVec3<f32>, creation_time: f32) -> Self {
         //Generate random orientation and scale
         let forward = glm::normalize(&glm::vec3(rand::random::<f32>() * 2.0 - 1.0, rand::random::<f32>() * 2.0 - 1.0, 0.0));
-        let scale_factor = rand::random::<f32>() * 0.5 + 1.0;
-        let scale = glm::vec3(
-            scale_factor,
-            scale_factor,
-            scale_factor
-        );
+        let scale = rand::random::<f32>() * 0.5 + 1.0;
         
         Totoro {
             position,

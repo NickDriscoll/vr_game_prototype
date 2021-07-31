@@ -5,7 +5,7 @@ use ozy::io::OzyMesh;
 use ozy::render::{RenderTarget, TextureKeeper};
 use ozy::structs::OptionVec;
 use ozy::glutil::ColorSpace;
-use ozy::glutil;
+use ozy::{glutil, render};
 use tfd::MessageBoxIcon;
 use gl::types::*;
 
@@ -104,12 +104,37 @@ impl RenderEntity {
 
     pub fn update_buffer(&mut self, transforms: &[f32]) {
         //Record the current active instance count
-        self.active_instances = transforms.len() as GLint / 16;
+        let new_instances = transforms.len() as GLint / 16;
+        let fewer_instances = new_instances < self.active_instances;
+        self.active_instances = new_instances;
 
         //Update GPU buffer storing transforms
 		unsafe {
             if self.max_instances < self.active_instances as usize {
+                let mut b = 0;
+                gl::DeleteBuffers(1, &self.transform_buffer as *const u32);
+                gl::GenBuffers(1, &mut b);
+                self.transform_buffer = b;
+                
+                gl::BindVertexArray(self.vao);
                 gl::BindBuffer(gl::ARRAY_BUFFER, self.transform_buffer);
+                glutil::bind_new_transform_buffer(INSTANCED_ATTRIBUTE);
+
+                gl::BufferData(
+                    gl::ARRAY_BUFFER,
+                    (self.active_instances as usize * 16 * size_of::<GLfloat>()) as GLsizeiptr,
+                    &transforms[0] as *const GLfloat as *const c_void,
+                    gl::DYNAMIC_DRAW
+                );
+            } else if fewer_instances && transforms.len() > 0 {
+                let mut b = 0;
+                gl::DeleteBuffers(1, &self.transform_buffer as *const u32);
+                gl::GenBuffers(1, &mut b);
+                self.transform_buffer = b;
+
+                gl::BindVertexArray(self.vao);
+                gl::BindBuffer(gl::ARRAY_BUFFER, self.transform_buffer);
+
                 gl::BufferData(
                     gl::ARRAY_BUFFER,
                     (self.active_instances as usize * 16 * size_of::<GLfloat>()) as GLsizeiptr,

@@ -13,6 +13,7 @@ pub const LEFT_STICK_VECTOR2: &str =                        "/user/hand/left/inp
 pub const LEFT_TRACKPAD_VECTOR2: &str =                     "/user/hand/left/input/trackpad";
 pub const LEFT_TRACKPAD_CLICK: &str =                       "/user/hand/left/input/trackpad/click";
 pub const LEFT_B_BUTTON: &str =                             "/user/hand/left/input/b/click";
+pub const LEFT_Y_BUTTON: &str =                             "/user/hand/left/input/y/click";
 pub const RIGHT_TRACKPAD_CLICK: &str =                      "/user/hand/right/input/trackpad/click";
 pub const RIGHT_TRACKPAD_FORCE: &str =                      "/user/hand/right/input/trackpad/force";
 pub const RIGHT_TRIGGER_FLOAT: &str =                       "/user/hand/right/input/trigger/value";

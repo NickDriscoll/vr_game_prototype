@@ -91,7 +91,7 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32) {
                     AudioCommand::SetListenerPosition(pos) => { alto_context.set_position(pos).unwrap(); }
                     AudioCommand::SetListenerVelocity(vel) => { alto_context.set_velocity(vel).unwrap(); }
                     AudioCommand::SetListenerOrientation(ori) => { alto_context.set_orientation(ori).unwrap(); }
-                    AudioCommand::SetSourcePosition(pos, i) => { kanye_source.set_position(pos).unwrap(); }
+                    AudioCommand::SetSourcePosition(pos, i) => { if i == 0 { kanye_source.set_position(pos).unwrap(); } }
                     AudioCommand::SetListenerGain(volume) => { set_linearized_gain(&alto_context, volume); }
                     AudioCommand::SelectNewBGM => {
                         kanye_source.pause();

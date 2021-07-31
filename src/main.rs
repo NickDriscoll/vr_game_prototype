@@ -32,7 +32,6 @@ use std::mem::size_of;
 use std::os::raw::c_void;
 use std::sync::mpsc;
 use std::sync::mpsc::Sender;
-use std::thread;
 use std::time::{Duration, Instant};
 use strum::EnumCount;
 use tfd::MessageBoxIcon;
@@ -52,6 +51,8 @@ use crate::structs::*;
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
 
 const EPSILON: f32 = 0.00001;
+const GRAVITY_VELOCITY_CAP: f32 = 10.0;        //m/s
+const ACCELERATION_GRAVITY: f32 = 20.0;        //20.0 m/s^2
 
 unsafe fn screenshot(screen_state: &ScreenState, flag: &mut bool) {
     //Take a screenshot here as to get the dev gui in it
@@ -91,7 +92,7 @@ fn get_clicked_totoro(totoros: &mut OptionVec<Totoro>, click_ray: &Ray) -> Optio
     for i in 0..totoros.len() {
         if let Some(tot) = &totoros[i] {
             let focus = tot.position + glm::vec3(0.0, 0.0, 0.5);
-            let radius = tot.scale.x;
+            let radius = tot.scale;
             let sph = Sphere {
                 focus,
                 radius
@@ -372,6 +373,7 @@ fn main() {
     let left_aim_pose_path = xrutil::make_path(&xr_instance, xrutil::LEFT_AIM_POSE);
     let left_trigger_float_path = xrutil::make_path(&xr_instance, xrutil::LEFT_TRIGGER_FLOAT);
     let left_b_path = xrutil::make_path(&xr_instance, xrutil::LEFT_B_BUTTON);
+    let left_y_path = xrutil::make_path(&xr_instance, xrutil::LEFT_Y_BUTTON);
     let left_stick_vector_path = xrutil::make_path(&xr_instance, xrutil::LEFT_STICK_VECTOR2);
     let left_trackpad_vector_path = xrutil::make_path(&xr_instance, xrutil::LEFT_TRACKPAD_VECTOR2);
     let left_trackpad_click_path = xrutil::make_path(&xr_instance, xrutil::LEFT_TRACKPAD_CLICK);
@@ -424,7 +426,8 @@ fn main() {
            &left_switch_gadget,
            &right_b_path,
            &right_switch_gadget,
-           &left_trackpad_click_path) {
+           &left_trackpad_click_path,
+           &left_y_path) {
         (Some(inst),
          Some(l_grip_action),
          Some(l_aim_action),
@@ -449,7 +452,8 @@ fn main() {
          Some(l_switch),
          Some(r_b_path),
          Some(r_switch),
-        Some(l_track_click_path)) => {
+         Some(l_track_click_path),
+         Some(l_y_path)) => {
             //Valve Index
             let bindings = [
                 xr::Binding::new(l_grip_action, *l_grip_path),
@@ -489,7 +493,7 @@ fn main() {
                 xr::Binding::new(r_trigger_action, *r_trigger_path),
                 xr::Binding::new(r_action, *r_path),
                 xr::Binding::new(move_action, *l_stick_path),
-                xr::Binding::new(l_switch, *l_b_path),
+                xr::Binding::new(l_switch, *l_y_path),
                 xr::Binding::new(r_switch, *r_a_button_path)
             ];
             xrutil::suggest_bindings(inst, xrutil::OCULUS_TOUCH_INTERACTION_PROFILE, &bindings);
@@ -863,19 +867,18 @@ fn main() {
     let mut screen_space_mouse = glm::zero();
     
     //Load terrain data
+    let level_name = match config.string_options.get(Configuration::LEVEL_NAME) {
+        Some(name) => { name }
+        None => { "testmap" }
+    };
     let terrain = {
-        let terrain_name = match config.string_options.get(Configuration::LEVEL_NAME) {
-            Some(name) => { name }
-            None => { "testmap" }
-        };
-
         let level_load_error = |s: std::io::Error| {
-            tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", terrain_name, s), MessageBoxIcon::Error);
+            tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", level_name, s), MessageBoxIcon::Error);
             exit(-1);
         };
 
         //Load the scene data from the level file
-        match File::open(&format!("maps/{}.lvl", terrain_name)) {
+        match File::open(&format!("maps/{}.lvl", level_name)) {
             Ok(mut file) => {
                 loop {
                     //Read ozy name
@@ -894,14 +897,14 @@ fn main() {
                     let matrices_count = match io::read_u32(&mut file) {
                         Ok(count) => { count as usize } 
                         Err(e) => {
-                            tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", terrain_name, e), MessageBoxIcon::Error);
+                            tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", level_name, e), MessageBoxIcon::Error);
                             panic!("Error reading from level file: {}", e);
                         }
                     };
                     let matrix_floats = match io::read_f32_data(&mut file, matrices_count as usize * 16) {
                         Ok(floats) => { floats }
                         Err(e) => {
-                            tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", terrain_name, e), MessageBoxIcon::Error);
+                            tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", level_name, e), MessageBoxIcon::Error);
                             panic!("Error reading from level file: {}", e);
                         }
                     };
@@ -913,8 +916,8 @@ fn main() {
             }
             Err(e) => { level_load_error(e); }
         }
-        let t = Terrain::from_ozt(&format!("models/{}.ozt", terrain_name));
-        println!("Loaded {} collision triangles from {}.ozt", t.indices.len() / 3, terrain_name);
+        let t = Terrain::from_ozt(&format!("models/{}.ozt", level_name));
+        println!("Loaded {} collision triangles from {}.ozt", t.indices.len() / 3, level_name);
         t
     };
 
@@ -967,6 +970,7 @@ fn main() {
     let mut do_imgui = true;
     let mut screenshot_this_frame = false;
     let mut full_screenshot_this_frame = false;
+    let mut turbo_clicking = false;
     if let Some(_) = &xr_instance {
         hmd_pov = true;
         do_vsync = false;
@@ -1256,9 +1260,6 @@ fn main() {
             }
         }
 
-        const GRAVITY_VELOCITY_CAP: f32 = 10.0;
-        const ACCELERATION_GRAVITY: f32 = 20.0;        //20.0 m/s^2
-
         //Apply gravity to the player's velocity
         if player.movement_state != MoveState::Grounded {
             player.tracking_velocity.z -= ACCELERATION_GRAVITY * delta_time;
@@ -1328,7 +1329,7 @@ fn main() {
         camera_position += camera_velocity * delta_time;
 
         //Do click action
-        if !imgui_wants_mouse && mouse_clicked && !was_mouse_clicked {
+        if !imgui_wants_mouse && mouse_clicked && (!was_mouse_clicked || turbo_clicking) {
             match click_action {
                 ClickAction::SpawnTotoro => {
                     let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
@@ -1380,7 +1381,7 @@ fn main() {
 
         //Update the GPU transform buffer for the Totoros
         if let Some(entity) = scene_data.entities.get_mut_element(totoro_entity_index) {
-            let mut transform_buffer = vec![0.0; totoros.len() * 16];
+            let mut transform_buffer = vec![0.0; totoros.count() * 16];
             for i in 0..totoros.len() {
                 if let Some(totoro) = &totoros[i] {
                     let cr = glm::cross(&Z_UP, &totoro.forward);
@@ -1391,18 +1392,24 @@ fn main() {
                         0.0, 0.0, 0.0, 1.0
                     );
 
-                    let mm = glm::translation(&totoro.position) * rotation_mat * glm::scaling(&totoro.scale);
-                    if i == 0 {
-                        let pos = [mm[12], mm[13], mm[14]];
-                        send_or_error(&audio_sender, AudioCommand::SetSourcePosition(pos, 0));
-                    }
+                    let mm = glm::translation(&totoro.position) * rotation_mat * uniform_scale(totoro.scale);
                     write_matrix_to_buffer(&mut transform_buffer, i, mm);
+                    
+                    let pos = [mm[12], mm[13], mm[14]];
+                    send_or_error(&audio_sender, AudioCommand::SetSourcePosition(pos, i));
                 }
             }
 
             entity.update_buffer(&transform_buffer);
         }
 
+        //Apply a speed limit to player movement
+        const PLAYER_SPEED_LIMIT: f32 = 100.0;
+        let velocity_mag = glm::length(&player.tracking_velocity);
+        if velocity_mag > PLAYER_SPEED_LIMIT {
+            player.tracking_velocity = player.tracking_velocity / velocity_mag * PLAYER_SPEED_LIMIT;
+        }
+        
         //Update tracking space location
         player.tracking_position += player.tracking_velocity * delta_time;
         world_from_tracking = glm::translation(&player.tracking_position);
@@ -1508,7 +1515,7 @@ fn main() {
             //Check totoros against triangle
             for i in 0..totoros.len() {
                 if let Some(totoro) = totoros.get_mut_element(i) {
-                    let radius = totoro.scale.x * 0.5;
+                    let radius = totoro.scale * 0.5;
                     let totoro_sphere = Sphere {
                         focus: totoro.position + glm::vec3(0.0, 0.0, radius),
                         radius
@@ -1582,10 +1589,12 @@ fn main() {
             let win = imgui::Window::new(im_str!("Hacking window"));
             if let Some(win_token) = win.begin(&imgui_ui) {
                 imgui_ui.text(im_str!("Frametime: {:.2}ms\tFPS: {:.2}\tFrame: {}", delta_time * 1000.0, framerate, frame_count));
+                imgui_ui.text(im_str!("Totoros spawned: {}", totoros.count()));
                 imgui_ui.checkbox(im_str!("Wireframe view"), &mut wireframe);
                 imgui_ui.checkbox(im_str!("TRUE wireframe view"), &mut true_wireframe);
                 imgui_ui.checkbox(im_str!("Complex normals"), &mut scene_data.complex_normals);
                 imgui_ui.checkbox(im_str!("Camera collision"), &mut camera_collision);
+                imgui_ui.checkbox(im_str!("Turbo clicking"), &mut turbo_clicking);
                 if let Some(_) = &xr_instance {
                     imgui_ui.checkbox(im_str!("HMD Point-of-view"), &mut hmd_pov);
                     imgui_ui.checkbox(im_str!("Infinite ammo"), &mut infinite_ammo);
@@ -1604,9 +1613,9 @@ fn main() {
                 do_radio_option(&imgui_ui, im_str!("Visualize shadow cascades"), &mut scene_data.fragment_flag, FragmentFlag::CascadeZones);
                 imgui_ui.separator();
 
-                imgui_ui.text(im_str!("Actor management"));
-                do_radio_option(&imgui_ui, im_str!("Select an actor"), &mut click_action, ClickAction::SelectTotoro);
-                do_radio_option(&imgui_ui, im_str!("Spawn new"), &mut click_action, ClickAction::SpawnTotoro);
+                imgui_ui.text(im_str!("Click action"));
+                do_radio_option(&imgui_ui, im_str!("Spawn totoro"), &mut click_action, ClickAction::SpawnTotoro);
+                do_radio_option(&imgui_ui, im_str!("Select totoro"), &mut click_action, ClickAction::SelectTotoro);
                 imgui_ui.separator();
 
                 imgui_ui.text(im_str!("Lighting controls:"));
@@ -1648,7 +1657,6 @@ fn main() {
                 if imgui_ui.button(im_str!("Toggle fullscreen"), [0.0, 32.0]) {
                     //Toggle window fullscreen
                     if !is_fullscreen {
-                        is_fullscreen = true;
                         glfw.with_primary_monitor_mut(|_, opt_monitor| {
                             if let Some(monitor) = opt_monitor {
                                 let pos = monitor.get_pos();
@@ -1658,10 +1666,10 @@ fn main() {
                             }
                         });
                     } else {
-                        is_fullscreen = false;
                         let window_size = get_window_size(&config);
                         resize_main_window(&mut window, &mut default_framebuffer, &mut screen_state, window_size, (200, 200), WindowMode::Windowed);
                     }
+                    is_fullscreen = !is_fullscreen;
                 }
 
                 if imgui_ui.button(im_str!("Print camera position"), [0.0, 32.0]) {
@@ -1670,6 +1678,14 @@ fn main() {
 
                 if imgui_ui.button(im_str!("Take screenshot"), [0.0, 32.0]) {
                     screenshot_this_frame = true;
+                }
+
+                if imgui_ui.button(im_str!("Totoro genocide"), [0.0, 32.0]) {
+                    totoros.clear();
+                }
+
+                if imgui_ui.button(im_str!("Save entity data"), [0.0, 32.0]) {
+                    
                 }
 
                 //Do quit button
@@ -1689,6 +1705,8 @@ fn main() {
                     imgui_ui.text(im_str!("AI timer state: {}", elapsed_time - tot.state_timer));
                             
                     imgui_ui.separator();
+                    imgui::Slider::new(im_str!("Scale")).range(RangeInclusive::new(0.1, 10.0)).build(&imgui_ui, &mut tot.scale);
+
                     if imgui_ui.button(im_str!("Toggle AI"), [0.0, 32.0]) {
                         tot.state = match tot.state {
                             TotoroState::BrainDead => { TotoroState::Relaxed }
@@ -1705,6 +1723,7 @@ fn main() {
                 }
             }
 
+            /*
             //Shadow cascade viewer
             let win = imgui::Window::new(im_str!("Shadow map"));
             if let Some(win_token) = win.begin(&imgui_ui) {
@@ -1713,6 +1732,7 @@ fn main() {
 
                 win_token.end(&imgui_ui);
             }
+            */
         }
 
         //Create a view matrix from the camera state
@@ -1723,7 +1743,7 @@ fn main() {
             screen_state.update_view(new_view_matrix);
         }
 
-        //Render
+        //Rendering
         unsafe {
             //Setting up OpenGL state for 3D rendering
             gl::Enable(gl::DEPTH_TEST);         //Depth test

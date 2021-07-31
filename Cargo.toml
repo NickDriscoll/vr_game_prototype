@@ -10,8 +10,8 @@ edition = "2018"
 #lto = true
 
 [dependencies]
-#ozy_engine = { path = "../ozy_engine" }
-ozy_engine = { git = "https://github.com/NickDriscoll/ozy_engine" }
+ozy_engine = { path = "../ozy_engine" }
+#ozy_engine = { git = "https://github.com/NickDriscoll/ozy_engine" }
 glfw = "*"
 gl = "*"
 nalgebra-glm = "*"
