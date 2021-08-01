@@ -54,7 +54,7 @@ const EPSILON: f32 = 0.00001;
 const GRAVITY_VELOCITY_CAP: f32 = 10.0;        //m/s
 const ACCELERATION_GRAVITY: f32 = 20.0;        //20.0 m/s^2
 const STANDARD_INSTANCED_ATTRIBUTE: GLuint = 5;
-const DEBUG_INSTANCED_ATTRIBUTE: GLuint = 2;
+const DEBUG_INSTANCED_ATTRIBUTE: GLuint = 3;
 
 unsafe fn screenshot(screen_state: &ScreenState, flag: &mut bool) {
     //Take a screenshot here as to get the dev gui in it
@@ -125,7 +125,7 @@ fn kill_totoro(scene_data: &mut SceneData, totoros: &mut OptionVec<Totoro>, toto
             *selected = None;
         }
     }
-    if let Some(ent) = scene_data.entities.get_mut_element(totoro_entity_index) {
+    if let Some(ent) = scene_data.opaque_entities.get_mut_element(totoro_entity_index) {
         if let Some(i) = ent.highlighted_item {
             if i == idx {
                 ent.highlighted_item = None;
@@ -907,7 +907,7 @@ fn main() {
 
                     let mut entity = RenderEntity::from_ozy(&format!("models/{}", ozy_name), standard_program, matrices_count, STANDARD_INSTANCED_ATTRIBUTE, &mut texture_keeper, &default_tex_params);
                     entity.update_buffer(&matrix_floats, STANDARD_INSTANCED_ATTRIBUTE);                
-                    scene_data.entities.insert(entity);
+                    scene_data.opaque_entities.insert(entity);
                 }                
             }
             Err(e) => { level_load_error(e); }
@@ -920,7 +920,7 @@ fn main() {
     //Create Totoros
     let mut totoros: OptionVec<Totoro> = OptionVec::with_capacity(64);
     let mut selected_totoro_idx: Option<usize> = None;
-    let totoro_re_index = scene_data.entities.insert(RenderEntity::from_ozy(
+    let totoro_re_index = scene_data.opaque_entities.insert(RenderEntity::from_ozy(
         "models/totoro.ozy",
         standard_program,
         64,
@@ -944,7 +944,7 @@ fn main() {
         );
         re.cast_shadows = false;
 
-        scene_data.entities.insert(re)
+        scene_data.transparent_entities.insert(re)
     };
 
     //Load gadget models
@@ -961,11 +961,11 @@ fn main() {
     let mut left_hand_gadget = GadgetType::Net;
     let mut right_hand_gadget = GadgetType::WaterCannon;
     let left_gadget_index = match gadget_model_map.get(&left_hand_gadget) {
-        Some(entity) => { scene_data.entities.insert(entity.clone()) }
+        Some(entity) => { scene_data.opaque_entities.insert(entity.clone()) }
         None => { panic!("No model found for {:?}", left_hand_gadget); }
     };
     let right_gadget_index = match gadget_model_map.get(&right_hand_gadget) {
-        Some(entity) => { scene_data.entities.insert(entity.clone()) }
+        Some(entity) => { scene_data.opaque_entities.insert(entity.clone()) }
         None => { panic!("No model found for {:?}", right_hand_gadget); }
     };
 
@@ -979,7 +979,7 @@ fn main() {
     let mut left_water_pillar_scale: glm::TVec3<f32> = glm::zero();
     let mut right_water_pillar_scale: glm::TVec3<f32> = glm::zero();
     let water_cylinder_path = "models/water_cylinder.ozy";
-    let water_cylinder_entity_index = scene_data.entities.insert(RenderEntity::from_ozy(water_cylinder_path, standard_program, 2, STANDARD_INSTANCED_ATTRIBUTE, &mut texture_keeper, &default_tex_params));
+    let water_cylinder_entity_index = scene_data.opaque_entities.insert(RenderEntity::from_ozy(water_cylinder_path, standard_program, 2, STANDARD_INSTANCED_ATTRIBUTE, &mut texture_keeper, &default_tex_params));
 
     //Set up global flags lol
     let mut is_fullscreen = false;
@@ -1195,11 +1195,11 @@ fn main() {
                             let new = (*gadgets[i] as usize + 1) % GadgetType::COUNT;
                             *gadgets[i] = GadgetType::from_usize(new);
         
-                            if let Some(ent) = scene_data.entities.get_mut_element(gadget_indices[i]) { unsafe { 
+                            if let Some(ent) = scene_data.opaque_entities.get_mut_element(gadget_indices[i]) { unsafe { 
                                 ent.update_single_transform(i, &glm::zero());
                             }}
                             if let Some(ent) = gadget_model_map.get(gadgets[i]) {
-                                scene_data.entities.replace(gadget_indices[i], ent.clone());
+                                scene_data.opaque_entities.replace(gadget_indices[i], ent.clone());
                             }
                         }
                     }
@@ -1256,7 +1256,7 @@ fn main() {
                                     pillar_scales[i].z = xz_scale;
                                     player.tracking_velocity += update_force;
         
-                                    if let Some(entity) = scene_data.entities.get_mut_element(water_cylinder_entity_index) {
+                                    if let Some(entity) = scene_data.opaque_entities.get_mut_element(water_cylinder_entity_index) {
                                         //Update the water gun's pillar of water
                                         entity.uv_offset += glm::vec2(0.0, 5.0) * delta_time;
                                         entity.uv_scale.y = pillar_scales[i].y;
@@ -1367,18 +1367,8 @@ fn main() {
                     let hit_info = get_clicked_totoro(&mut totoros, &click_ray);
                     
                     match hit_info {
-                        Some((_, idx)) => {
-                            selected_totoro_idx = Some(idx);
-                            if let Some(ent) = scene_data.entities.get_mut_element(totoro_re_index) {
-                                ent.highlighted_item = Some(idx);
-                            }    
-                        }
-                        _ => {
-                            selected_totoro_idx = None;
-                            if let Some(ent) = scene_data.entities.get_mut_element(totoro_re_index) {
-                                ent.highlighted_item = None;
-                            }    
-                        }
+                        Some((_, idx)) => { selected_totoro_idx = Some(idx); }
+                        _ => { selected_totoro_idx = None; }
                     }
                 }
                 ClickAction::DeleteTotoro => {
@@ -1411,7 +1401,7 @@ fn main() {
         }
 
         //Update the GPU transform buffer for the Totoros
-        if let Some(entity) = scene_data.entities.get_mut_element(totoro_re_index) {
+        if let Some(entity) = scene_data.opaque_entities.get_mut_element(totoro_re_index) {
             let mut transform_buffer = vec![0.0; totoros.count() * 16];
             let mut current_totoro = 0;
             for i in 0..totoros.len() {
@@ -1430,9 +1420,14 @@ fn main() {
                     let pos = [mm[12], mm[13], mm[14]];
                     send_or_error(&audio_sender, AudioCommand::SetSourcePosition(pos, i));
 
-                    if let Some(idx) = selected_totoro_idx {
-                        if idx == i {
-                            entity.highlighted_item = Some(current_totoro);
+                    match selected_totoro_idx {
+                        Some(idx) => {                                
+                            if idx == i {
+                                entity.highlighted_item = Some(current_totoro);
+                            }
+                        }
+                        None => {
+                            entity.highlighted_item = None;
                         }
                     }
 
@@ -1443,7 +1438,7 @@ fn main() {
         }
 
         //Update the GPU transforms for the debug hit spheres
-        if let Some(entity) = scene_data.entities.get_mut_element(debug_sphere_re_index) {
+        if let Some(entity) = scene_data.transparent_entities.get_mut_element(debug_sphere_re_index) {
             if viewing_collision {
                 let mut transform_buffer = vec![0.0; totoros.count() * 16];
                 let mut current_item = 0;
@@ -1454,9 +1449,14 @@ fn main() {
                         let mm = glm::translation(&sph.focus) * uniform_scale(-sph.radius);
                         write_matrix_to_buffer(&mut transform_buffer, current_item, mm);
 
-                        if let Some(idx) = selected_totoro_idx {
-                            if idx == i {
-                                entity.highlighted_item = Some(current_item);
+                        match selected_totoro_idx {
+                            Some(idx) => {                                
+                                if idx == i {
+                                    entity.highlighted_item = Some(current_item);
+                                }
+                            }
+                            None => {
+                                entity.highlighted_item = None;
                             }
                         }
 
@@ -1834,12 +1834,12 @@ fn main() {
                             //Right here is where we want to update the controller objects' transforms
                             {
                                 if let Some(pose) = &left_grip_pose {
-                                    if let Some(entity) = scene_data.entities.get_mut_element(left_gadget_index) {
+                                    if let Some(entity) = scene_data.opaque_entities.get_mut_element(left_gadget_index) {
                                         entity.update_single_transform(0, &xrutil::pose_to_mat4(pose, &world_from_tracking))
                                     }
                                 }
                                 if let Some(pose) = &right_grip_pose {
-                                    if let Some(entity) = scene_data.entities.get_mut_element(right_gadget_index) {
+                                    if let Some(entity) = scene_data.opaque_entities.get_mut_element(right_gadget_index) {
                                         entity.update_single_transform(1, &xrutil::pose_to_mat4(pose, &world_from_tracking))
                                     }
                                 }
@@ -1851,7 +1851,7 @@ fn main() {
                                 let scales = [&left_water_pillar_scale, &right_water_pillar_scale];
                                 for i in 0..poses.len() {
                                     if let Some(p) = poses[i] {
-                                        if let Some(entity) = scene_data.entities.get_mut_element(water_cylinder_entity_index) {
+                                        if let Some(entity) = scene_data.opaque_entities.get_mut_element(water_cylinder_entity_index) {
                                             let mm = xrutil::pose_to_mat4(&p, &world_from_tracking) * glm::scaling(scales[i]);
                                             entity.update_single_transform(i, &mm);
                                         }
@@ -1867,7 +1867,7 @@ fn main() {
                                 //Compute the view_projection matrices for the shadow maps
                                 let shadow_view = glm::look_at(&(scene_data.sun_direction * 20.0), &glm::zero(), &Z_UP);
                                 scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, &v_mat, &projection);
-                                render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.entities.as_slice());
+                                render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.opaque_entities.as_slice());
 
                                 for i in 0..views.len() {
                                     let image_index = swapchains[i].acquire_image().unwrap();
@@ -1980,7 +1980,7 @@ fn main() {
                 let v_mat = screen_state.get_view_from_world();
                 let shadow_view = glm::look_at(&(scene_data.sun_direction * 20.0), &glm::zero(), &Z_UP);
                 scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, v_mat, &projection);
-                render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.entities.as_slice());
+                render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.opaque_entities.as_slice());
 
                 //Render main scene
                 let freecam_viewdata = ViewData::new(

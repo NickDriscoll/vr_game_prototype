@@ -212,7 +212,8 @@ pub struct SceneData {
     pub sun_shadow_map: CascadedShadowMap,
     pub ambient_strength: f32,
     pub current_time: f32,
-    pub entities: OptionVec<RenderEntity>
+    pub opaque_entities: OptionVec<RenderEntity>,
+    pub transparent_entities: OptionVec<RenderEntity>
 }
 
 impl Default for SceneData {
@@ -237,7 +238,8 @@ impl Default for SceneData {
             ambient_strength: 0.2,
             sun_shadow_map,
             current_time: 0.0,
-            entities: OptionVec::new()
+            opaque_entities: OptionVec::new(),
+            transparent_entities: OptionVec::new()
         }
     }
 }
@@ -276,59 +278,14 @@ impl ViewData {
 
 //This is the function that renders the 3D objects in the scene
 pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
-    let texture_map_names = ["albedo_tex", "normal_tex", "roughness_tex", "shadow_map"];
-    let sun_shadow_map = &scene_data.sun_shadow_map;
-
     //Main scene rendering
     gl::ActiveTexture(gl::TEXTURE0 + ozy::render::TEXTURE_MAP_COUNT as GLenum);
     gl::BindTexture(gl::TEXTURE_2D, scene_data.sun_shadow_map.rendertarget.texture);
 
-    //Render 3D entities
+    //Render opaque geometry
     let sun_c = glm::vec3(scene_data.sun_color[0], scene_data.sun_color[1], scene_data.sun_color[2]);
-    for opt_entity in scene_data.entities.iter() {
-        if let Some(entity) = opt_entity {
-            let p = entity.shader;
-            gl::UseProgram(p);
-            glutil::bind_matrix4_array(p, "shadow_matrices", &sun_shadow_map.matrices);
-            glutil::bind_matrix4(p, "view_projection", &view_data.view_projection);
-            glutil::bind_vector3(p, "sun_direction", &scene_data.sun_direction);
-            glutil::bind_vector3(p, "sun_color", &sun_c);
-            glutil::bind_float(p, "ambient_strength", scene_data.ambient_strength);
-            glutil::bind_float(p, "current_time", scene_data.current_time);
-            glutil::bind_int(p, "shadow_map", TEXTURE_MAP_COUNT as GLint);
-            glutil::bind_int(p, "complex_normals", scene_data.complex_normals as GLint);
-            glutil::bind_float_array(p, "cascade_distances", &sun_shadow_map.clip_space_distances[1..]);
-            glutil::bind_vector3(p, "view_position", &view_data.view_position);
-            glutil::bind_vector2(p, "uv_scale", &entity.uv_scale);
-            glutil::bind_vector2(p, "uv_offset", &entity.uv_offset);
-
-            let highlight_idx = match entity.highlighted_item {
-                Some(idx) => { idx as GLint }
-                None => { -1 }
-            };
-            glutil::bind_int(p, "highlighted_idx", highlight_idx);
-
-            //fragment flag stuff
-            let flag_names = ["visualize_normals", "visualize_lod", "visualize_shadowed", "visualize_cascade_zone"];
-            for name in flag_names.iter() {
-                glutil::bind_int(p, name, 0);
-            }
-            match scene_data.fragment_flag {
-                FragmentFlag::Shadowed => { glutil::bind_int(p, "visualize_shadowed", 1); }
-                FragmentFlag::Normals => { glutil::bind_int(p, "visualize_normals", 1); }
-                FragmentFlag::CascadeZones => { glutil::bind_int(p, "visualize_cascade_zone", 1); }
-                FragmentFlag::Default => {}
-            }
-            
-            for i in 0..TEXTURE_MAP_COUNT {
-                glutil::bind_int(p, texture_map_names[i], i as GLint);
-                gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
-                gl::BindTexture(gl::TEXTURE_2D, entity.textures[i]);
-            }            
-
-            gl::BindVertexArray(entity.vao);
-            gl::DrawElementsInstanced(gl::TRIANGLES, entity.index_count, gl::UNSIGNED_SHORT, ptr::null(), entity.active_instances);
-        }
+    for opt_entity in scene_data.opaque_entities.iter() {        
+        render_entity(opt_entity, scene_data, view_data);
     }
 
     //Skybox rendering
@@ -345,6 +302,59 @@ pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
     gl::BindTexture(gl::TEXTURE_CUBE_MAP, scene_data.skybox_cubemap);
     gl::BindVertexArray(scene_data.skybox_vao);
     gl::DrawElements(gl::TRIANGLES, CUBE_INDICES_COUNT, gl::UNSIGNED_SHORT, ptr::null());
+
+    //Render transparent geometry
+    for opt_entity in scene_data.transparent_entities.iter() {
+        render_entity(opt_entity, scene_data, view_data);
+    }
+}
+
+unsafe fn render_entity(opt_entity: &Option<RenderEntity>, scene_data: &SceneData, view_data: &ViewData) {
+    let texture_map_names = ["albedo_tex", "normal_tex", "roughness_tex", "shadow_map"];
+    let sun_c = glm::vec3(scene_data.sun_color[0], scene_data.sun_color[1], scene_data.sun_color[2]);
+    if let Some(entity) = opt_entity {
+        let p = entity.shader;
+        gl::UseProgram(p);
+        glutil::bind_matrix4_array(p, "shadow_matrices", &scene_data.sun_shadow_map.matrices);
+        glutil::bind_matrix4(p, "view_projection", &view_data.view_projection);
+        glutil::bind_vector3(p, "sun_direction", &scene_data.sun_direction);
+        glutil::bind_vector3(p, "sun_color", &sun_c);
+        glutil::bind_float(p, "ambient_strength", scene_data.ambient_strength);
+        glutil::bind_float(p, "current_time", scene_data.current_time);
+        glutil::bind_int(p, "shadow_map", TEXTURE_MAP_COUNT as GLint);
+        glutil::bind_int(p, "complex_normals", scene_data.complex_normals as GLint);
+        glutil::bind_float_array(p, "cascade_distances", &scene_data.sun_shadow_map.clip_space_distances[1..]);
+        glutil::bind_vector3(p, "view_position", &view_data.view_position);
+        glutil::bind_vector2(p, "uv_scale", &entity.uv_scale);
+        glutil::bind_vector2(p, "uv_offset", &entity.uv_offset);
+
+        let highlight_idx = match entity.highlighted_item {
+            Some(idx) => { idx as GLint }
+            None => { -1 }
+        };
+        glutil::bind_int(p, "highlighted_idx", highlight_idx);
+
+        //fragment flag stuff
+        let flag_names = ["visualize_normals", "visualize_lod", "visualize_shadowed", "visualize_cascade_zone"];
+        for name in flag_names.iter() {
+            glutil::bind_int(p, name, 0);
+        }
+        match scene_data.fragment_flag {
+            FragmentFlag::Shadowed => { glutil::bind_int(p, "visualize_shadowed", 1); }
+            FragmentFlag::Normals => { glutil::bind_int(p, "visualize_normals", 1); }
+            FragmentFlag::CascadeZones => { glutil::bind_int(p, "visualize_cascade_zone", 1); }
+            FragmentFlag::Default => {}
+        }
+        
+        for i in 0..TEXTURE_MAP_COUNT {
+            glutil::bind_int(p, texture_map_names[i], i as GLint);
+            gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
+            gl::BindTexture(gl::TEXTURE_2D, entity.textures[i]);
+        }            
+
+        gl::BindVertexArray(entity.vao);
+        gl::DrawElementsInstanced(gl::TRIANGLES, entity.index_count, gl::UNSIGNED_SHORT, ptr::null(), entity.active_instances);
+    }
 }
 
 pub unsafe fn cascaded_shadow_map(shadow_map: &CascadedShadowMap, entities: &[Option<RenderEntity>]) {
