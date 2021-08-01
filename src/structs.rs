@@ -109,6 +109,14 @@ impl Totoro {
             state: TotoroState::Relaxed
         }
     }
+
+    pub fn collision_sphere(&self) -> Sphere {
+        let radius = self.scale * 0.75;
+        Sphere {
+            radius,
+            focus: self.position + glm::vec3(0.0, 0.0, radius)
+        }
+    }
 }
 
 #[derive(Debug)]

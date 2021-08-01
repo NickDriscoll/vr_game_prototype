@@ -53,6 +53,8 @@ use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
 const EPSILON: f32 = 0.00001;
 const GRAVITY_VELOCITY_CAP: f32 = 10.0;        //m/s
 const ACCELERATION_GRAVITY: f32 = 20.0;        //20.0 m/s^2
+const STANDARD_INSTANCED_ATTRIBUTE: GLuint = 5;
+const DEBUG_INSTANCED_ATTRIBUTE: GLuint = 2;
 
 unsafe fn screenshot(screen_state: &ScreenState, flag: &mut bool) {
     //Take a screenshot here as to get the dev gui in it
@@ -91,25 +93,18 @@ fn get_clicked_totoro(totoros: &mut OptionVec<Totoro>, click_ray: &Ray) -> Optio
     let mut hit_index = None;
     for i in 0..totoros.len() {
         if let Some(tot) = &totoros[i] {
-            let focus = tot.position + glm::vec3(0.0, 0.0, 0.5);
-            let radius = tot.scale;
-            let sph = Sphere {
-                focus,
-                radius
-            };
-
             //Translate the ray, such that the test can be performed on a sphere centered at the origin
             //This just simplifies the math
             let test_ray = Ray {
-                origin: click_ray.origin - sph.focus,
+                origin: click_ray.origin - tot.collision_sphere().focus,
                 direction: click_ray.direction
             };
 
             //Compute t
             let d_dot_p = glm::dot(&test_ray.direction, &test_ray.origin);
-            let sqrt_body = d_dot_p * d_dot_p - glm::dot(&test_ray.origin, &test_ray.origin) + sph.radius * sph.radius;
+            let sqrt_body = d_dot_p * d_dot_p - glm::dot(&test_ray.origin, &test_ray.origin) + tot.collision_sphere().radius * tot.collision_sphere().radius;
 
-            //The sqrt body being negative indicates a miss so we branch here
+            //The sqrt body being negative indicates a miss
             if sqrt_body >= 0.0 {
                 //Technically this equation is "plus-or-minus" the square root but we want the closest intersection so it's always minus
                 let t = glm::dot(&(-test_ray.direction), &test_ray.origin) - f32::sqrt(sqrt_body);
@@ -713,6 +708,7 @@ fn main() {
 
     //Compile shader programs
     let standard_program = compile_shader_or_crash("shaders/standard.vert", "shaders/standard.frag");
+    let debug_program = compile_shader_or_crash("shaders/debug.vert", "shaders/debug.frag");
     let shadow_program = compile_shader_or_crash("shaders/shadow.vert", "shaders/shadow.frag");
     let skybox_program = compile_shader_or_crash("shaders/skybox.vert", "shaders/skybox.frag");
     let imgui_program = compile_shader_or_crash("shaders/ui/imgui.vert", "shaders/ui/imgui.frag");
@@ -909,8 +905,8 @@ fn main() {
                         }
                     };
 
-                    let mut entity = RenderEntity::from_ozy(&format!("models/{}", ozy_name), standard_program, matrices_count, &mut texture_keeper, &default_tex_params);
-                    entity.update_buffer(&matrix_floats);                
+                    let mut entity = RenderEntity::from_ozy(&format!("models/{}", ozy_name), standard_program, matrices_count, STANDARD_INSTANCED_ATTRIBUTE, &mut texture_keeper, &default_tex_params);
+                    entity.update_buffer(&matrix_floats, STANDARD_INSTANCED_ATTRIBUTE);                
                     scene_data.entities.insert(entity);
                 }                
             }
@@ -924,12 +920,37 @@ fn main() {
     //Create Totoros
     let mut totoros: OptionVec<Totoro> = OptionVec::with_capacity(64);
     let mut selected_totoro_idx: Option<usize> = None;
-    let totoro_entity_index = scene_data.entities.insert(RenderEntity::from_ozy("models/totoro.ozy", standard_program, 64, &mut texture_keeper, &default_tex_params));
+    let totoro_re_index = scene_data.entities.insert(RenderEntity::from_ozy(
+        "models/totoro.ozy",
+        standard_program,
+        64,
+        STANDARD_INSTANCED_ATTRIBUTE,
+        &mut texture_keeper,
+        &default_tex_params
+    ));
+
+    //Create debug sphere render entity
+    let debug_sphere_re_index = {
+        let segments = 16;
+        let rings = 16;
+        let vao = ozy::prims::debug_sphere_vao(1.0, segments, rings, [0.0, 0.0, 1.0, 0.4]);
+
+        let mut re = RenderEntity::from_vao(
+            vao,
+            debug_program,
+            ozy::prims::sphere_index_count(segments, rings),
+            64,
+            DEBUG_INSTANCED_ATTRIBUTE
+        );
+        re.cast_shadows = false;
+
+        scene_data.entities.insert(re)
+    };
 
     //Load gadget models
     let gadget_model_map = {
-        let wand_entity = RenderEntity::from_ozy("models/wand.ozy", standard_program, 2, &mut texture_keeper, &default_tex_params);
-        let stick_entity = RenderEntity::from_ozy("models/stick.ozy", standard_program, 2, &mut texture_keeper, &default_tex_params);
+        let wand_entity = RenderEntity::from_ozy("models/wand.ozy", standard_program, 2, STANDARD_INSTANCED_ATTRIBUTE, &mut texture_keeper, &default_tex_params);
+        let stick_entity = RenderEntity::from_ozy("models/stick.ozy", standard_program, 2, STANDARD_INSTANCED_ATTRIBUTE, &mut texture_keeper, &default_tex_params);
         let mut h = HashMap::new();
         h.insert(GadgetType::Net, wand_entity);
         h.insert(GadgetType::WaterCannon, stick_entity);
@@ -958,7 +979,7 @@ fn main() {
     let mut left_water_pillar_scale: glm::TVec3<f32> = glm::zero();
     let mut right_water_pillar_scale: glm::TVec3<f32> = glm::zero();
     let water_cylinder_path = "models/water_cylinder.ozy";
-    let water_cylinder_entity_index = scene_data.entities.insert(RenderEntity::from_ozy(water_cylinder_path, standard_program, 2, &mut texture_keeper, &default_tex_params));
+    let water_cylinder_entity_index = scene_data.entities.insert(RenderEntity::from_ozy(water_cylinder_path, standard_program, 2, STANDARD_INSTANCED_ATTRIBUTE, &mut texture_keeper, &default_tex_params));
 
     //Set up global flags lol
     let mut is_fullscreen = false;
@@ -971,6 +992,7 @@ fn main() {
     let mut screenshot_this_frame = false;
     let mut full_screenshot_this_frame = false;
     let mut turbo_clicking = false;
+    let mut viewing_collision = false;
     if let Some(_) = &xr_instance {
         hmd_pov = true;
         do_vsync = false;
@@ -1315,7 +1337,7 @@ fn main() {
 
                 //Kill if below a certain point
                 if totoro.position.z < -1000.0 {
-                    kill_totoro(&mut scene_data, &mut totoros, totoro_entity_index, &mut selected_totoro_idx, i);
+                    kill_totoro(&mut scene_data, &mut totoros, totoro_re_index, &mut selected_totoro_idx, i);
                 }
             }
         }
@@ -1347,13 +1369,13 @@ fn main() {
                     match hit_info {
                         Some((_, idx)) => {
                             selected_totoro_idx = Some(idx);
-                            if let Some(ent) = scene_data.entities.get_mut_element(totoro_entity_index) {
+                            if let Some(ent) = scene_data.entities.get_mut_element(totoro_re_index) {
                                 ent.highlighted_item = Some(idx);
                             }    
                         }
                         _ => {
                             selected_totoro_idx = None;
-                            if let Some(ent) = scene_data.entities.get_mut_element(totoro_entity_index) {
+                            if let Some(ent) = scene_data.entities.get_mut_element(totoro_re_index) {
                                 ent.highlighted_item = None;
                             }    
                         }
@@ -1364,7 +1386,7 @@ fn main() {
                     let hit_info = get_clicked_totoro(&mut totoros, &click_ray);
 
                     if let Some((_, idx)) = hit_info {
-                        kill_totoro(&mut scene_data, &mut totoros, totoro_entity_index, &mut selected_totoro_idx, idx);
+                        kill_totoro(&mut scene_data, &mut totoros, totoro_re_index, &mut selected_totoro_idx, idx);
                     }
 
                 }
@@ -1389,7 +1411,7 @@ fn main() {
         }
 
         //Update the GPU transform buffer for the Totoros
-        if let Some(entity) = scene_data.entities.get_mut_element(totoro_entity_index) {
+        if let Some(entity) = scene_data.entities.get_mut_element(totoro_re_index) {
             let mut transform_buffer = vec![0.0; totoros.count() * 16];
             let mut current_totoro = 0;
             for i in 0..totoros.len() {
@@ -1417,8 +1439,34 @@ fn main() {
                     current_totoro += 1;
                 }
             }
+            entity.update_buffer(&transform_buffer, STANDARD_INSTANCED_ATTRIBUTE);
+        }
 
-            entity.update_buffer(&transform_buffer);
+        //Update the GPU transforms for the debug hit spheres
+        if let Some(entity) = scene_data.entities.get_mut_element(debug_sphere_re_index) {
+            if viewing_collision {
+                let mut transform_buffer = vec![0.0; totoros.count() * 16];
+                let mut current_item = 0;
+
+                for i in 0..totoros.len() {
+                    if let Some(totoro) = &totoros[i] {
+                        let sph = totoro.collision_sphere();
+                        let mm = glm::translation(&sph.focus) * uniform_scale(-sph.radius);
+                        write_matrix_to_buffer(&mut transform_buffer, current_item, mm);
+
+                        if let Some(idx) = selected_totoro_idx {
+                            if idx == i {
+                                entity.highlighted_item = Some(current_item);
+                            }
+                        }
+
+                        current_item += 1;
+                    }
+                }
+                entity.update_buffer(&transform_buffer, DEBUG_INSTANCED_ATTRIBUTE);
+            } else {                
+                entity.update_buffer(&[], DEBUG_INSTANCED_ATTRIBUTE);
+            }
         }
 
         //Apply a speed limit to player movement
@@ -1533,17 +1581,11 @@ fn main() {
             //Check totoros against triangle
             for i in 0..totoros.len() {
                 if let Some(totoro) = totoros.get_mut_element(i) {
-                    let radius = totoro.scale * 0.5;
-                    let totoro_sphere = Sphere {
-                        focus: totoro.position + glm::vec3(0.0, 0.0, radius),
-                        radius
-                    };
-
-                    if let Some(vec) = triangle_collide_sphere(&totoro_sphere, &triangle, &triangle_sphere) {
+                    if let Some(vec) = triangle_collide_sphere(&totoro.collision_sphere(), &triangle, &triangle_sphere) {
                         if floats_equal(glm::dot(&glm::normalize(&vec), &triangle.normal), 1.0) {
                             let dot_z_up = glm::dot(&triangle.normal, &Z_UP);                        
                             if dot_z_up >= MIN_NORMAL_LIKENESS {
-                                let t = (glm::dot(&triangle.normal, &(triangle.a - totoro_sphere.focus)) + totoro_sphere.radius) / dot_z_up;
+                                let t = (glm::dot(&triangle.normal, &(triangle.a - totoro.collision_sphere().focus)) + totoro.collision_sphere().radius) / dot_z_up;
                                 totoro.position += Z_UP * t;
                                 totoro.velocity.z = 0.0;
                             } else {
@@ -1629,6 +1671,7 @@ fn main() {
                 do_radio_option(&imgui_ui, im_str!("Visualize normals"), &mut scene_data.fragment_flag, FragmentFlag::Normals);
                 do_radio_option(&imgui_ui, im_str!("Visualize how shadowed"), &mut scene_data.fragment_flag, FragmentFlag::Shadowed);
                 do_radio_option(&imgui_ui, im_str!("Visualize shadow cascades"), &mut scene_data.fragment_flag, FragmentFlag::CascadeZones);
+                imgui_ui.checkbox(im_str!("View collision volumes"), &mut viewing_collision);
                 imgui_ui.separator();
 
                 imgui_ui.text(im_str!("Click action"));
@@ -1701,6 +1744,7 @@ fn main() {
 
                 if imgui_ui.button(im_str!("Totoro genocide"), [0.0, 32.0]) {
                     totoros.clear();
+                    selected_totoro_idx = None;
                 }
 
                 if imgui_ui.button(im_str!("Save level data"), [0.0, 32.0]) {
@@ -1735,7 +1779,7 @@ fn main() {
                     imgui_ui.same_line(0.0);
 
                     if imgui_ui.button(im_str!("Kill"), [0.0, 32.0]) {
-                        kill_totoro(&mut scene_data, &mut totoros, totoro_entity_index, &mut selected_totoro_idx, idx);
+                        kill_totoro(&mut scene_data, &mut totoros, totoro_re_index, &mut selected_totoro_idx, idx);
                     }
 
                     token.end(&imgui_ui);

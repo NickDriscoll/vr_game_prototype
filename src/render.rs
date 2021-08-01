@@ -13,14 +13,12 @@ pub const NEAR_DISTANCE: f32 = 0.0625;
 pub const FAR_DISTANCE: f32 = 1000000.0;
 pub const MSAA_SAMPLES: u32 = 8;
 pub const SHADOW_CASCADES: usize = 6;
-pub const INSTANCED_ATTRIBUTE: GLuint = 5;
 pub const TEXTURE_MAP_COUNT: usize = 3;
 const CUBE_INDICES_COUNT: GLsizei = 36;
 
 //Represents all of the data necessary to render an object (potentially instanced) that exists in the 3D scene
 #[derive(Clone, Debug)]
-pub struct RenderEntity {    
-    pub is_collision: bool,
+pub struct RenderEntity {
     pub vao: GLuint,
     pub transform_buffer: GLuint,       //GPU buffer with one 4x4 homogenous transform per instance
     pub index_count: GLint,
@@ -31,11 +29,28 @@ pub struct RenderEntity {
     pub uv_offset: glm::TVec2<f32>,
     pub uv_scale: glm::TVec2<f32>,
     pub textures: [GLuint; TEXTURE_MAP_COUNT],
-    pub color: glm::TVec3<f32>
+    pub cast_shadows: bool
 }
 
 impl RenderEntity {
-    pub fn from_ozy(path: &str, program: GLuint, instances: usize, texture_keeper: &mut TextureKeeper, tex_params: &[(GLenum, GLenum)]) -> Self {
+    pub fn from_vao(vao: GLuint, program: GLuint, index_count: usize, instances: usize, instanced_attribute: GLuint) -> Self {
+        let transform_buffer = unsafe { glutil::create_instanced_transform_buffer(vao, instances, instanced_attribute) };
+        RenderEntity {
+            vao,
+            transform_buffer,
+            index_count: index_count as GLint,
+            active_instances: 0,
+            max_instances: instances,
+            highlighted_item: None,
+            shader: program,
+            uv_offset: glm::zero(),
+            uv_scale: glm::zero(),
+            textures: [0; 3],
+            cast_shadows: true
+        }
+    }
+
+    pub fn from_ozy(path: &str, program: GLuint, instances: usize, instanced_attribute: GLuint, texture_keeper: &mut TextureKeeper, tex_params: &[(GLenum, GLenum)]) -> Self {
         match OzyMesh::load(&path) {
             Some(meshdata) => unsafe {
                 let vao = glutil::create_vertex_array_object(&meshdata.vertex_array.vertices, &meshdata.vertex_array.indices, &meshdata.vertex_array.attribute_offsets);
@@ -74,20 +89,19 @@ impl RenderEntity {
                     gl::TexImage2D(gl::TEXTURE_2D, 0, gl::R32F as GLint, 1, 1, 0, gl::RED, gl::FLOAT, &[0.5f32] as *const f32 as *const c_void);
                 }
 
-                let transform_buffer = glutil::create_instanced_transform_buffer(vao, instances, INSTANCED_ATTRIBUTE);
+                let transform_buffer = glutil::create_instanced_transform_buffer(vao, instances, instanced_attribute);
                 RenderEntity {
-                    is_collision: false,
                     vao,
                     transform_buffer,
                     index_count: meshdata.vertex_array.indices.len() as GLint,
-                    active_instances: instances as GLint,
+                    active_instances: 0,
                     max_instances: instances,
                     highlighted_item: None,
                     shader: program,                    
                     textures: [albedo, normal, roughness],
                     uv_scale: glm::vec2(1.0, 1.0),
                     uv_offset: glm::vec2(0.0, 0.0),
-                    color: glm::zero()
+                    cast_shadows: true
                 }
             }
             None => {
@@ -102,7 +116,7 @@ impl RenderEntity {
         gl::BufferSubData(gl::ARRAY_BUFFER, (16 * idx * size_of::<GLfloat>()) as GLsizeiptr, (16 * size_of::<GLfloat>()) as GLsizeiptr, &matrix[0] as *const GLfloat as *const c_void);
     }
 
-    pub fn update_buffer(&mut self, transforms: &[f32]) {
+    pub fn update_buffer(&mut self, transforms: &[f32], instanced_attribute: GLuint) {
         //Record the current active instance count
         let new_instances = transforms.len() as GLint / 16;
         let fewer_instances = new_instances < self.active_instances;
@@ -118,7 +132,7 @@ impl RenderEntity {
                 
                 gl::BindVertexArray(self.vao);
                 gl::BindBuffer(gl::ARRAY_BUFFER, self.transform_buffer);
-                glutil::bind_new_transform_buffer(INSTANCED_ATTRIBUTE);
+                glutil::bind_new_transform_buffer(instanced_attribute);
 
                 gl::BufferData(
                     gl::ARRAY_BUFFER,
@@ -134,7 +148,7 @@ impl RenderEntity {
 
                 gl::BindVertexArray(self.vao);
                 gl::BindBuffer(gl::ARRAY_BUFFER, self.transform_buffer);
-                glutil::bind_new_transform_buffer(INSTANCED_ATTRIBUTE);
+                glutil::bind_new_transform_buffer(instanced_attribute);
 
                 gl::BufferData(
                     gl::ARRAY_BUFFER,
@@ -287,7 +301,6 @@ pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
             glutil::bind_vector3(p, "view_position", &view_data.view_position);
             glutil::bind_vector2(p, "uv_scale", &entity.uv_scale);
             glutil::bind_vector2(p, "uv_offset", &entity.uv_offset);
-            glutil::bind_int(p, "is_collision", entity.is_collision as GLint);
 
             let highlight_idx = match entity.highlighted_item {
                 Some(idx) => { idx as GLint }
@@ -344,8 +357,10 @@ pub unsafe fn cascaded_shadow_map(shadow_map: &CascadedShadowMap, entities: &[Op
 
         for opt_entity in entities.iter() {
             if let Some(entity) = opt_entity {
-                gl::BindVertexArray(entity.vao);
-                gl::DrawElementsInstanced(gl::TRIANGLES, entity.index_count, gl::UNSIGNED_SHORT, ptr::null(), entity.active_instances);
+                if entity.cast_shadows {
+                    gl::BindVertexArray(entity.vao);
+                    gl::DrawElementsInstanced(gl::TRIANGLES, entity.index_count, gl::UNSIGNED_SHORT, ptr::null(), entity.active_instances);
+                }
             }
         }
     }
