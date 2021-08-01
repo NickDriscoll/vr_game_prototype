@@ -1720,7 +1720,10 @@ fn main() {
                 }
                 if imgui::ComboBox::new(im_str!("Active skybox")).build_simple_string(&imgui_ui, &mut selected_skybox_string, &skybox_strs) {
                     let name = Path::new(skybox_strs[selected_skybox_string].to_str()).file_name().unwrap().to_str().unwrap();
-                    scene_data.skybox_cubemap = unsafe { create_skybox_cubemap(name) };
+                    scene_data.skybox_cubemap = unsafe { 
+                        gl::DeleteTextures(1, &mut scene_data.skybox_cubemap);
+                        create_skybox_cubemap(name)
+                    };
                 }
 
                 imgui_ui.separator();
