@@ -111,7 +111,7 @@ impl Totoro {
     }
 
     pub fn collision_sphere(&self) -> Sphere {
-        let radius = self.scale * 0.75;
+        let radius = self.scale * 0.65;
         Sphere {
             radius,
             focus: self.position + glm::vec3(0.0, 0.0, radius)

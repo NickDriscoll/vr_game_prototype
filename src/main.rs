@@ -24,7 +24,7 @@ use imgui::{ColorEdit, DrawCmd, EditableColor, FontAtlasRefMut, Slider, TextureI
 use core::ops::RangeInclusive;
 use std::collections::HashMap;
 use std::fs;
-use std::fs::File;
+use std::fs::{File, read_dir};
 use std::io::{ErrorKind};
 use std::path::Path;
 use std::process::exit;
@@ -88,27 +88,64 @@ unsafe fn screenshot(screen_state: &ScreenState, flag: &mut bool) {
     }
 }
 
+unsafe fn create_skybox_cubemap(sky_name: &str) -> GLuint {
+	let paths = [
+		&format!("skyboxes/{}/rt.tga", sky_name),		//Right side
+		&format!("skyboxes/{}/lf.tga", sky_name),		//Left side
+		&format!("skyboxes/{}/up.tga", sky_name),		//Up side
+		&format!("skyboxes/{}/dn.tga", sky_name),		//Down side
+		&format!("skyboxes/{}/bk.tga", sky_name),		//Back side
+		&format!("skyboxes/{}/ft.tga", sky_name)		//Front side
+	];
+
+	let mut cubemap = 0;
+	gl::GenTextures(1, &mut cubemap);
+	gl::BindTexture(gl::TEXTURE_CUBE_MAP, cubemap);
+	gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+	gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+	gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_WRAP_R, gl::CLAMP_TO_EDGE as i32);
+	gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+	gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+
+	//Place each piece of the skybox on the correct face
+    //gl::TEXTURE_CUBEMAP_POSITIVE_X + i gets you the correct cube face
+	for i in 0..6 {
+		let image_data = glutil::image_data_from_path(paths[i], ColorSpace::Gamma);
+		gl::TexImage2D(gl::TEXTURE_CUBE_MAP_POSITIVE_X + i as u32,
+					   0,
+					   image_data.internal_format as i32,
+					   image_data.width as i32,
+					   image_data.height as i32,
+					   0,
+					   image_data.format,
+					   gl::UNSIGNED_BYTE,
+			  		   &image_data.data[0] as *const u8 as *const c_void);
+	}
+	cubemap
+}
+
 fn get_clicked_totoro(totoros: &mut OptionVec<Totoro>, click_ray: &Ray) -> Option<(f32, usize)> {
     let mut smallest_t = f32::INFINITY;
     let mut hit_index = None;
     for i in 0..totoros.len() {
         if let Some(tot) = &totoros[i] {
+            let tot_sphere = tot.collision_sphere();
             //Translate the ray, such that the test can be performed on a sphere centered at the origin
             //This just simplifies the math
             let test_ray = Ray {
-                origin: click_ray.origin - tot.collision_sphere().focus,
+                origin: click_ray.origin - tot_sphere.focus,
                 direction: click_ray.direction
             };
 
             //Compute t
             let d_dot_p = glm::dot(&test_ray.direction, &test_ray.origin);
-            let sqrt_body = d_dot_p * d_dot_p - glm::dot(&test_ray.origin, &test_ray.origin) + tot.collision_sphere().radius * tot.collision_sphere().radius;
+            let sqrt_body = d_dot_p * d_dot_p - glm::dot(&test_ray.origin, &test_ray.origin) + tot_sphere.radius * tot_sphere.radius;
 
             //The sqrt body being negative indicates a miss
             if sqrt_body >= 0.0 {
                 //Technically this equation is "plus-or-minus" the square root but we want the closest intersection so it's always minus
                 let t = glm::dot(&(-test_ray.direction), &test_ray.origin) - f32::sqrt(sqrt_body);
-                if t < smallest_t {
+                if t >= 0.0 && t < smallest_t {
                     smallest_t = t;
                     hit_index = Some((smallest_t, i));
                 }
@@ -800,42 +837,30 @@ fn main() {
     };
 
 	//Create the skybox cubemap
-	scene_data.skybox_cubemap = unsafe {
-		let name = "siege";
-		let paths = [
-			&format!("skyboxes/{}_rt.tga", name),		//Right side
-			&format!("skyboxes/{}_lf.tga", name),		//Left side
-			&format!("skyboxes/{}_up.tga", name),		//Up side
-			&format!("skyboxes/{}_dn.tga", name),		//Down side
-			&format!("skyboxes/{}_bk.tga", name),		//Back side
-			&format!("skyboxes/{}_ft.tga", name)		//Front side
-		];
-
-		let mut cubemap = 0;
-		gl::GenTextures(1, &mut cubemap);
-		gl::BindTexture(gl::TEXTURE_CUBE_MAP, cubemap);
-		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
-		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
-		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_WRAP_R, gl::CLAMP_TO_EDGE as i32);
-		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-		gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
-
-		//Place each piece of the skybox on the correct face
-        //gl::TEXTURE_CUBEMAP_POSITIVE_X + i gets you the correct cube face
-		for i in 0..6 {
-			let image_data = glutil::image_data_from_path(paths[i], ColorSpace::Gamma);
-			gl::TexImage2D(gl::TEXTURE_CUBE_MAP_POSITIVE_X + i as u32,
-						   0,
-						   image_data.internal_format as i32,
-						   image_data.width as i32,
-						   image_data.height as i32,
-						   0,
-						   image_data.format,
-						   gl::UNSIGNED_BYTE,
-				  		   &image_data.data[0] as *const u8 as *const c_void);
-		}
-		cubemap
-	};
+    let mut selected_skybox_string = 0;
+    let skybox_strings = {
+        let mut v = Vec::new();
+        match read_dir("skyboxes/") {
+            Ok(iter) => {
+                for entry in iter {
+                    match entry {
+                        Ok(ent) => {
+                            let name = ent.file_name().into_string().unwrap();
+                            v.push(im_str!("{}", name));
+                        }
+                        Err(e) => {
+                            tfd::message_box_ok("Unable to read skybox entry", &format!("{}", e), MessageBoxIcon::Error);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tfd::message_box_ok("Unable to read skybox directory", &format!("{}", e), MessageBoxIcon::Error);
+            }
+        }
+        v
+    };
+    scene_data.skybox_cubemap = unsafe { create_skybox_cubemap(skybox_strings[selected_skybox_string].to_str()) };
 
     //Initialize texture caching struct
     let mut texture_keeper = TextureKeeper::new();
@@ -1689,6 +1714,15 @@ fn main() {
                 let sun_color_editor = ColorEdit::new(im_str!("Sun color"), EditableColor::Float3(&mut scene_data.sun_color));
                 sun_color_editor.build(&imgui_ui);
 
+                let mut skybox_strs = Vec::with_capacity(skybox_strings.len());
+                for i in 0.. skybox_strings.len() {
+                    skybox_strs.push(&skybox_strings[i]);
+                }
+                if imgui::ComboBox::new(im_str!("Active skybox")).build_simple_string(&imgui_ui, &mut selected_skybox_string, &skybox_strs) {
+                    let name = Path::new(skybox_strs[selected_skybox_string].to_str()).file_name().unwrap().to_str().unwrap();
+                    scene_data.skybox_cubemap = unsafe { create_skybox_cubemap(name) };
+                }
+
                 imgui_ui.separator();
 
                 //Music controls section
@@ -1771,7 +1805,7 @@ fn main() {
                     imgui_ui.text(im_str!("AI timer state: {}", elapsed_time - tot.state_timer));
                             
                     imgui_ui.separator();
-                    imgui::Slider::new(im_str!("Scale")).range(RangeInclusive::new(0.1, 10.0)).build(&imgui_ui, &mut tot.scale);
+                    imgui::Slider::new(im_str!("Scale")).range(RangeInclusive::new(0.1, 4.0)).build(&imgui_ui, &mut tot.scale);
 
                     if imgui_ui.button(im_str!("Toggle AI"), [0.0, 32.0]) {
                         tot.state = match tot.state {
