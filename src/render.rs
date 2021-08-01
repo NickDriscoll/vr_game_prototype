@@ -140,22 +140,6 @@ impl RenderEntity {
                     &transforms[0] as *const GLfloat as *const c_void,
                     gl::DYNAMIC_DRAW
                 );
-            } else if fewer_instances && transforms.len() > 0 {
-                let mut b = 0;
-                gl::DeleteBuffers(1, &self.transform_buffer as *const u32);
-                gl::GenBuffers(1, &mut b);
-                self.transform_buffer = b;
-
-                gl::BindVertexArray(self.vao);
-                gl::BindBuffer(gl::ARRAY_BUFFER, self.transform_buffer);
-                glutil::bind_new_transform_buffer(instanced_attribute);
-
-                gl::BufferData(
-                    gl::ARRAY_BUFFER,
-                    (self.active_instances as usize * 16 * size_of::<GLfloat>()) as GLsizeiptr,
-                    &transforms[0] as *const GLfloat as *const c_void,
-                    gl::DYNAMIC_DRAW
-                );
             } else if transforms.len() > 0 {
                 gl::BindBuffer(gl::ARRAY_BUFFER, self.transform_buffer);
                 gl::BufferSubData(

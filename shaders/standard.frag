@@ -52,9 +52,9 @@ vec4 simple_diffuse(vec3 color, float diffuse, float ambient) {
     return vec4((diffuse + ambient) * color, 1.0);
 }
 
-float determine_shadowed(vec3 f_shadow_pos, int cascade) {
-    float bias = 0.0025;
-    //float bias = 0.0025 * (1.0 - max(0.0, dot(tangent_space_normal, tangent_sun_direction)));
+float determine_shadowed(vec3 f_shadow_pos, vec3 tan_normal, int cascade) {
+    //float bias = 0.0025;
+    float bias = 0.0025 * (1.0 - max(0.0, dot(tan_normal, tangent_sun_direction)));
     vec2 sample_uv = f_shadow_pos.xy;
     sample_uv.x = sample_uv.x * SHADOW_CASCADES_RECIPROCAL;
     sample_uv.x += cascade * SHADOW_CASCADES_RECIPROCAL;
@@ -114,12 +114,12 @@ void main() {
             vec2 texel_size = 1.0 / textureSize(shadow_map, 0);
             for (int x = -bound; x <= bound; x++) {
                 for (int y = -bound; y <= bound; y++) {
-                    shadow += determine_shadowed(vec3(adj_shadow_space_pos.xy + vec2(x, y) * texel_size, adj_shadow_space_pos.z), shadow_cascade);
+                    shadow += determine_shadowed(vec3(adj_shadow_space_pos.xy + vec2(x, y) * texel_size, adj_shadow_space_pos.z), tangent_space_normal, shadow_cascade);
                 }
             }
             shadow /= 9.0;
         } else {
-            shadow = determine_shadowed(adj_shadow_space_pos.xyz, shadow_cascade);
+            shadow = determine_shadowed(adj_shadow_space_pos.xyz, tangent_space_normal, shadow_cascade);
         }
     }
 

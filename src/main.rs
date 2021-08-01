@@ -770,6 +770,8 @@ fn main() {
     let cascade_size = 2048;
     let shadow_rendertarget = unsafe { RenderTarget::new_shadow((cascade_size * render::SHADOW_CASCADES as GLint, cascade_size)) };
     let sun_shadow_map = CascadedShadowMap::new(shadow_rendertarget, shadow_program, cascade_size);
+    let mut sun_pitch = 0.813306;
+    let mut sun_yaw = 3.699744;
 
     //Initialize scene data struct
     let mut scene_data = SceneData::default();
@@ -1682,9 +1684,10 @@ fn main() {
 
                 imgui_ui.text(im_str!("Lighting controls:"));
                 Slider::new(im_str!("Ambient light")).range(RangeInclusive::new(0.0, 0.5)).build(&imgui_ui, &mut scene_data.ambient_strength);
-
+                Slider::new(im_str!("Sun pitch")).range(RangeInclusive::new(0.0, glm::half_pi::<f32>())).build(&imgui_ui, &mut sun_pitch);
+                Slider::new(im_str!("Sun yaw")).range(RangeInclusive::new(0.0, glm::two_pi::<f32>())).build(&imgui_ui, &mut sun_yaw);
                 let sun_color_editor = ColorEdit::new(im_str!("Sun color"), EditableColor::Float3(&mut scene_data.sun_color));
-                if sun_color_editor.build(&imgui_ui) {}
+                sun_color_editor.build(&imgui_ui);
 
                 imgui_ui.separator();
 
@@ -1797,6 +1800,13 @@ fn main() {
             }
             */
         }
+
+        //Recompute sun direction
+        scene_data.sun_direction = glm::vec4_to_vec3(&(
+            glm::rotation(sun_yaw, &Z_UP) *
+            glm::rotation(sun_pitch, &glm::vec3(0.0, 1.0, 0.0)) *
+            glm::vec4(-1.0, 0.0, 0.0, 0.0)
+        ));
 
         //Create a view matrix from the camera state
         {

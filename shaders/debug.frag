@@ -2,7 +2,7 @@
 
 in vec4 f_pos;
 in vec4 f_color;
-in vec3 f_normal;
+in vec4 f_normal;
 in vec3 view_direction;
 flat in int instance_id;
 
@@ -16,7 +16,7 @@ uniform int highlighted_idx = -1;
 
 void main() {
     vec3 view_dir = normalize(view_position - vec3(f_pos));
-    vec3 world_normal = normalize(f_normal);
+    vec3 world_normal = normalize(vec3(f_normal));
     vec3 rim_light = vec3(0.0);
     if (instance_id == highlighted_idx) {        
         float likeness = 1.0 - max(0.0, dot(view_dir, world_normal));
