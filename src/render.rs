@@ -113,13 +113,17 @@ impl RenderEntity {
 
     pub unsafe fn update_single_transform(&mut self, idx: usize, matrix: &glm::TMat4<f32>) {
         gl::BindBuffer(gl::ARRAY_BUFFER, self.transform_buffer);
-        gl::BufferSubData(gl::ARRAY_BUFFER, (16 * idx * size_of::<GLfloat>()) as GLsizeiptr, (16 * size_of::<GLfloat>()) as GLsizeiptr, &matrix[0] as *const GLfloat as *const c_void);
+        gl::BufferSubData(
+            gl::ARRAY_BUFFER,
+            (16 * idx * size_of::<GLfloat>()) as GLsizeiptr,
+            (16 * size_of::<GLfloat>()) as GLsizeiptr,
+            &matrix[0] as *const GLfloat as *const c_void
+        );
     }
 
     pub fn update_buffer(&mut self, transforms: &[f32], instanced_attribute: GLuint) {
         //Record the current active instance count
         let new_instances = transforms.len() as GLint / 16;
-        let fewer_instances = new_instances < self.active_instances;
         self.active_instances = new_instances;
 
         //Update GPU buffer storing transforms
@@ -267,7 +271,6 @@ pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
     gl::BindTexture(gl::TEXTURE_2D, scene_data.sun_shadow_map.rendertarget.texture);
 
     //Render opaque geometry
-    let sun_c = glm::vec3(scene_data.sun_color[0], scene_data.sun_color[1], scene_data.sun_color[2]);
     for opt_entity in scene_data.opaque_entities.iter() {        
         render_entity(opt_entity, scene_data, view_data);
     }
@@ -280,6 +283,7 @@ pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
     let skybox_view_projection = view_data.projection_matrix * glm::mat3_to_mat4(&glm::mat4_to_mat3(&view_data.view_matrix));
 
     //Render the skybox
+    let sun_c = glm::vec3(scene_data.sun_color[0], scene_data.sun_color[1], scene_data.sun_color[2]);
     gl::UseProgram(scene_data.skybox_program);
     glutil::bind_matrix4(scene_data.skybox_program, "view_projection", &skybox_view_projection);
     glutil::bind_vector3(scene_data.skybox_program, "sun_color", &sun_c);

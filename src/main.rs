@@ -1428,75 +1428,6 @@ fn main() {
             }            
         }
 
-        //Update the GPU transform buffer for the Totoros
-        if let Some(entity) = scene_data.opaque_entities.get_mut_element(totoro_re_index) {
-            let mut transform_buffer = vec![0.0; totoros.count() * 16];
-            let mut current_totoro = 0;
-            for i in 0..totoros.len() {
-                if let Some(totoro) = &totoros[i] {
-                    let cr = glm::cross(&Z_UP, &totoro.forward);
-                    let rotation_mat = glm::mat4(
-                        totoro.forward.x, cr.x, 0.0, 0.0,
-                        totoro.forward.y, cr.y, 0.0, 0.0,
-                        totoro.forward.z, cr.z, 1.0, 0.0,
-                        0.0, 0.0, 0.0, 1.0
-                    );
-
-                    let mm = glm::translation(&totoro.position) * rotation_mat * uniform_scale(totoro.scale);
-                    write_matrix_to_buffer(&mut transform_buffer, current_totoro, mm);
-                    
-                    let pos = [mm[12], mm[13], mm[14]];
-                    send_or_error(&audio_sender, AudioCommand::SetSourcePosition(pos, i));
-
-                    match selected_totoro_idx {
-                        Some(idx) => {                                
-                            if idx == i {
-                                entity.highlighted_item = Some(current_totoro);
-                            }
-                        }
-                        None => {
-                            entity.highlighted_item = None;
-                        }
-                    }
-
-                    current_totoro += 1;
-                }
-            }
-            entity.update_buffer(&transform_buffer, STANDARD_INSTANCED_ATTRIBUTE);
-        }
-
-        //Update the GPU transforms for the debug hit spheres
-        if let Some(entity) = scene_data.transparent_entities.get_mut_element(debug_sphere_re_index) {
-            if viewing_collision {
-                let mut transform_buffer = vec![0.0; totoros.count() * 16];
-                let mut current_item = 0;
-
-                for i in 0..totoros.len() {
-                    if let Some(totoro) = &totoros[i] {
-                        let sph = totoro.collision_sphere();
-                        let mm = glm::translation(&sph.focus) * uniform_scale(-sph.radius);
-                        write_matrix_to_buffer(&mut transform_buffer, current_item, mm);
-
-                        match selected_totoro_idx {
-                            Some(idx) => {                                
-                                if idx == i {
-                                    entity.highlighted_item = Some(current_item);
-                                }
-                            }
-                            None => {
-                                entity.highlighted_item = None;
-                            }
-                        }
-
-                        current_item += 1;
-                    }
-                }
-                entity.update_buffer(&transform_buffer, DEBUG_INSTANCED_ATTRIBUTE);
-            } else {                
-                entity.update_buffer(&[], DEBUG_INSTANCED_ATTRIBUTE);
-            }
-        }
-
         //Apply a speed limit to player movement
         const PLAYER_SPEED_LIMIT: f32 = 100.0;
         let velocity_mag = glm::length(&player.tracking_velocity);
@@ -1667,6 +1598,75 @@ fn main() {
         was_mouse_clicked = mouse_clicked;
 
         //Pre-render phase
+
+        //Update the GPU transform buffer for the Totoros
+        if let Some(entity) = scene_data.opaque_entities.get_mut_element(totoro_re_index) {
+            let mut transform_buffer = vec![0.0; totoros.count() * 16];
+            let mut current_totoro = 0;
+            for i in 0..totoros.len() {
+                if let Some(totoro) = &totoros[i] {
+                    let cr = glm::cross(&Z_UP, &totoro.forward);
+                    let rotation_mat = glm::mat4(
+                        totoro.forward.x, cr.x, 0.0, 0.0,
+                        totoro.forward.y, cr.y, 0.0, 0.0,
+                        totoro.forward.z, cr.z, 1.0, 0.0,
+                        0.0, 0.0, 0.0, 1.0
+                    );
+
+                    let mm = glm::translation(&totoro.position) * rotation_mat * uniform_scale(totoro.scale);
+                    write_matrix_to_buffer(&mut transform_buffer, current_totoro, mm);
+                    
+                    let pos = [mm[12], mm[13], mm[14]];
+                    send_or_error(&audio_sender, AudioCommand::SetSourcePosition(pos, i));
+
+                    match selected_totoro_idx {
+                        Some(idx) => {                                
+                            if idx == i {
+                                entity.highlighted_item = Some(current_totoro);
+                            }
+                        }
+                        None => {
+                            entity.highlighted_item = None;
+                        }
+                    }
+
+                    current_totoro += 1;
+                }
+            }
+            entity.update_buffer(&transform_buffer, STANDARD_INSTANCED_ATTRIBUTE);
+        }
+
+        //Update the GPU transforms for the debug hit spheres
+        if let Some(entity) = scene_data.transparent_entities.get_mut_element(debug_sphere_re_index) {
+            if viewing_collision {
+                let mut transform_buffer = vec![0.0; totoros.count() * 16];
+                let mut current_item = 0;
+
+                for i in 0..totoros.len() {
+                    if let Some(totoro) = &totoros[i] {
+                        let sph = totoro.collision_sphere();
+                        let mm = glm::translation(&sph.focus) * uniform_scale(-sph.radius);
+                        write_matrix_to_buffer(&mut transform_buffer, current_item, mm);
+
+                        match selected_totoro_idx {
+                            Some(idx) => {                                
+                                if idx == i {
+                                    entity.highlighted_item = Some(current_item);
+                                }
+                            }
+                            None => {
+                                entity.highlighted_item = None;
+                            }
+                        }
+
+                        current_item += 1;
+                    }
+                }
+                entity.update_buffer(&transform_buffer, DEBUG_INSTANCED_ATTRIBUTE);
+            } else {                
+                entity.update_buffer(&[], DEBUG_INSTANCED_ATTRIBUTE);
+            }
+        }
 
         //Draw ImGui
         if do_imgui {
