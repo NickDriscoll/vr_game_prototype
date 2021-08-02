@@ -275,6 +275,7 @@ fn main() {
                 int_options.insert(String::from(Configuration::WINDOWED_WIDTH), 1280);
                 int_options.insert(String::from(Configuration::WINDOWED_HEIGHT), 720);
                 string_options.insert(String::from(Configuration::LEVEL_NAME), String::from("recreate"));
+                string_options.insert(String::from(Configuration::MUSIC_NAME), String::from("music/ikebukuro.mp3"));
                 let c = Configuration {
                     int_options,
                     string_options
@@ -1035,7 +1036,7 @@ fn main() {
     //Init audio system
     let mut bgm_volume = 20.0;
     let (audio_sender, audio_receiver) = mpsc::channel();
-    audio::audio_main(audio_receiver, bgm_volume);          //This spawns a thread to run the audio system
+    audio::audio_main(audio_receiver, bgm_volume, &config);          //This spawns a thread to run the audio system
 
     let key_directions = {
         let mut hm = HashMap::new();

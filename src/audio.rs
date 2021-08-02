@@ -6,6 +6,7 @@ use std::sync::mpsc::Receiver;
 use std::process::exit;
 use std::thread;
 use std::time::Duration;
+use crate::structs::Configuration;
 
 const DEFAULT_BGM_PATH: &str = "music/ikebukuro.mp3";
 const IDEAL_FRAMES_QUEUED: ALint = 10;
@@ -29,7 +30,7 @@ fn load_decoder(path: &str) -> Option<mp3::Decoder<File>> {
             Some(mp3::Decoder::new(f))
         }
         Err(e) => {
-            tfd::message_box_ok("Error loading mp3", &format!("Unable to open \"{}\"\n{}", path, e), MessageBoxIcon::Error);
+            tfd::message_box_ok("Error loading mp3", &format!("Unable to open: {}\n{}", path, e), MessageBoxIcon::Error);
             None
         }
     }    
@@ -41,7 +42,13 @@ fn set_linearized_gain(ctxt: &alto::Context, volume: f32) {
 }
 
 //Main function for the audio system
-pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32) {
+pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, conf: &Configuration) {
+    //Allocation is necessary here because we are moving this into another thread
+    let default_bgm = match conf.string_options.get(Configuration::MUSIC_NAME) {
+        Some(path) => { String::from(path) }
+        None => { String::from(DEFAULT_BGM_PATH) }
+    }; 
+
     thread::spawn(move || {
         //Initializing the OpenAL context
         //This can fail if OpenAL is not installed on the host system
@@ -80,7 +87,7 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32) {
         set_linearized_gain(&alto_context, bgm_volume);
 
         //Initialize the mp3 decoder with the default bgm
-        let mut decoder = load_decoder(DEFAULT_BGM_PATH);
+        let mut decoder = load_decoder(&default_bgm);
 
         let mut kanye_source = alto_context.new_streaming_source().unwrap();
         let mut kickstart_bgm = true;

@@ -144,7 +144,8 @@ impl Configuration {
     const INTS: [&'static str; 2] = [Self::WINDOWED_WIDTH, Self::WINDOWED_HEIGHT];
 
     pub const LEVEL_NAME: &'static str = "level_name";
-    const STRS: [&'static str; 1] = [Self::LEVEL_NAME];
+    pub const MUSIC_NAME: &'static str = "default_music";
+    const STRS: [&'static str; 2] = [Self::LEVEL_NAME, Self::MUSIC_NAME];
 
     pub const CONFIG_FILEPATH: &'static str = "settings.cfg";
 
