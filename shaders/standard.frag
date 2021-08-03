@@ -53,8 +53,8 @@ vec4 simple_diffuse(vec3 color, float diffuse, float ambient) {
 }
 
 float determine_shadowed(vec3 f_shadow_pos, vec3 tan_normal, int cascade) {
-    float bias = 0.0025;
-    //float bias = 0.0025 * (1.0 - max(0.0, dot(tan_normal, tangent_sun_direction)));
+    //float bias = 0.0025;
+    float bias = 0.0025 * (1.0 - max(0.0, dot(tan_normal, tangent_sun_direction)));
     vec2 sample_uv = f_shadow_pos.xy;
     sample_uv.x = sample_uv.x * SHADOW_CASCADES_RECIPROCAL;
     sample_uv.x += cascade * SHADOW_CASCADES_RECIPROCAL;

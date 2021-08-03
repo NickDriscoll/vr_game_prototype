@@ -267,3 +267,7 @@ pub fn get_window_size(config: &Configuration) -> glm::TVec2<u32> {
         }
     }
 }
+
+pub struct Level {
+    terrain: Terrain
+}
