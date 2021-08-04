@@ -169,6 +169,17 @@ impl RenderEntity {
     }
 }
 
+impl Drop for RenderEntity {
+    fn drop(&mut self) {
+        unsafe {
+            gl::DeleteVertexArrays(1, &mut self.vao);
+
+            //We actually don't want to blindly delete the textures, bc other things could be using them
+            //gl::DeleteTextures(self.textures.len() as GLsizei, &mut self.textures as *const GLuint);
+        }
+    }
+}
+
 pub struct CascadedShadowMap {
     pub rendertarget: RenderTarget,             //Rendertarget for the shadow atlas
     pub program: GLuint,                        //Associated program name
@@ -195,6 +206,8 @@ pub struct SceneData {
     pub skybox_cubemap: GLuint,
     pub skybox_vao: GLuint,
     pub skybox_program: GLuint,
+    pub sun_pitch: f32,
+    pub sun_yaw: f32,
     pub sun_direction: glm::TVec3<f32>,
     pub sun_color: [f32; 3],
     pub sun_shadow_map: CascadedShadowMap,
@@ -221,7 +234,9 @@ impl Default for SceneData {
             skybox_cubemap: 0,
             skybox_vao: ozy::prims::skybox_cube_vao(),
             skybox_program: 0,
-            sun_direction: glm::normalize(&glm::vec3(1.0, 0.6, 1.0)),
+            sun_pitch: 0.0,
+            sun_yaw: 0.0,
+            sun_direction: glm::zero(),
             sun_color: [1.0, 1.0, 1.0],
             ambient_strength: 0.2,
             sun_shadow_map,

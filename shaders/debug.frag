@@ -17,6 +17,8 @@ uniform int highlighted_idx = -1;
 void main() {
     vec3 view_dir = normalize(view_position - vec3(f_pos));
     vec3 world_normal = normalize(vec3(f_normal));
+
+    //Rim-lighting if this one is highlighted
     vec3 rim_light = vec3(0.0);
     if (instance_id == highlighted_idx) {        
         float likeness = 1.0 - max(0.0, dot(view_dir, world_normal));

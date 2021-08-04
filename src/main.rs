@@ -17,28 +17,22 @@ mod xrutil;
 use render::{compute_shadow_cascade_matrices, CascadedShadowMap, FragmentFlag, RenderEntity, SceneData, ViewData};
 use render::{NEAR_DISTANCE, FAR_DISTANCE};
 
-use chrono::offset::Local;
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
 use gl::types::*;
-use image::{ImageBuffer, DynamicImage};
-use imgui::{ColorEdit, DrawCmd, EditableColor, FontAtlasRefMut, Slider, TextureId, im_str};
+use imgui::{ColorEdit, DrawCmd, EditableColor, FontAtlasRefMut, ImString, Slider, TextureId, im_str};
 use core::ops::RangeInclusive;
 use std::collections::HashMap;
-use std::fs;
 use std::fs::{File, read_dir};
 use std::io::{ErrorKind, Write};
 use std::path::Path;
 use std::process::exit;
 use std::mem::size_of;
-use std::os::raw::c_void;
 use std::sync::mpsc;
-use std::sync::mpsc::Sender;
-use std::time::{Duration, Instant};
+use std::time::{ Instant};
 use strum::EnumCount;
 use tfd::MessageBoxIcon;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use ozy::{glutil, io};
-use ozy::glutil::ColorSpace;
 use ozy::render::{Framebuffer, RenderTarget, ScreenState, TextureKeeper};
 use ozy::routines::uniform_scale;
 use ozy::structs::OptionVec;
@@ -58,9 +52,145 @@ const ACCELERATION_GRAVITY: f32 = 20.0;        //20.0 m/s^2
 const STANDARD_INSTANCED_ATTRIBUTE: GLuint = 5;
 const DEBUG_INSTANCED_ATTRIBUTE: GLuint = 3;
 
+//Default texture parameters for a 2D image texture
+const DEFAULT_TEX_PARAMS: [(GLenum, GLenum); 4] = [  
+    (gl::TEXTURE_WRAP_S, gl::REPEAT),
+    (gl::TEXTURE_WRAP_T, gl::REPEAT),
+    (gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR),
+    (gl::TEXTURE_MAG_FILTER, gl::LINEAR)
+];
 
+fn load_lvl(level_name: &str, world_state: &mut WorldState, scene_data: &mut SceneData, texture_keeper: &mut TextureKeeper, terrain_program: GLuint) {    
+    let level_load_error = |s: std::io::Error| {
+        tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", level_name, s), MessageBoxIcon::Error);
+        exit(-1);
+    };
 
-fn main() {
+    println!("Level name: {}", level_name);
+    world_state.level_name = String::from(level_name);
+
+    //Load the scene data from the level file
+    for index in &world_state.terrain_re_indices {
+        scene_data.opaque_entities.delete(*index);
+    }
+    world_state.terrain_re_indices.clear();
+    match File::open(&format!("maps/{}.lvl", world_state.level_name)) {
+        Ok(mut file) => {
+            loop {
+                //Read ozy name
+                let ozy_name = match io::read_pascal_strings(&mut file, 1) {
+                    Ok(v) => { v[0].clone() }
+                    Err(e) => {
+                        //We expect this call to eventually return EOF
+                        if e.kind() == ErrorKind::UnexpectedEof {
+                            break;
+                        }
+                        level_load_error(e)
+                    }
+                };
+
+                //Read number of matrices
+                let matrices_count = match io::read_u32(&mut file) {
+                    Ok(count) => { count as usize } 
+                    Err(e) => {
+                        tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", world_state.level_name, e), MessageBoxIcon::Error);
+                        panic!("Error reading from level file: {}", e);
+                    }
+                };
+                let matrix_floats = match io::read_f32_data(&mut file, matrices_count as usize * 16) {
+                    Ok(floats) => { floats }
+                    Err(e) => {
+                        tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", world_state.level_name, e), MessageBoxIcon::Error);
+                        panic!("Error reading from level file: {}", e);
+                    }
+                };
+
+                let mut entity = RenderEntity::from_ozy(&format!("models/{}", ozy_name), terrain_program, matrices_count, STANDARD_INSTANCED_ATTRIBUTE, texture_keeper, &DEFAULT_TEX_PARAMS);
+                entity.update_buffer(&matrix_floats, STANDARD_INSTANCED_ATTRIBUTE);                
+                world_state.terrain_re_indices.push(scene_data.opaque_entities.insert(entity));
+            }                
+        }
+        Err(e) => { level_load_error(e); }
+    }
+}
+
+fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldState) {
+    //First, clear world data
+    world_state.totoros.clear();
+
+    match File::open(path) {
+        Ok(mut file) => {
+            fn io_or_error<T>(res: Result<T, std::io::Error>, level_name: &str) -> T {
+                match res {
+                    Ok(r) => { r }
+                    Err(e) => {
+                        tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", level_name, e), MessageBoxIcon::Error);
+                        panic!("Error reading from level file: {}", e);
+                    }
+                }
+            }
+
+            let r = io::read_pascal_strings(&mut file, 1);
+            let new_skybox = io_or_error(r, path)[0].clone();                                
+
+            let raw_floats = io_or_error(io::read_f32_data(&mut file, 6), path);
+
+            scene_data.ambient_strength = raw_floats[0];
+            scene_data.sun_pitch = raw_floats[1];
+            scene_data.sun_yaw = raw_floats[2];
+            scene_data.sun_color[0] = raw_floats[3];
+            scene_data.sun_color[1] = raw_floats[4];
+            scene_data.sun_color[2] = raw_floats[5];
+            
+            let totoros_count = io_or_error(io::read_u32(&mut file), path);                
+            let raw_floats = io_or_error(io::read_f32_data(&mut file, totoros_count as usize * 3), path);
+            for i in (0..raw_floats.len()).step_by(3) {
+                let pos = glm::vec3(raw_floats[i], raw_floats[i + 1], raw_floats[i + 2]);
+                let tot = Totoro::new(pos, rand::random::<f32>() * 4.5 - 2.0);
+                world_state.totoros.insert(tot);
+            }
+
+            world_state.skybox_strings = {
+                let mut v = Vec::new();
+                match read_dir("skyboxes/") {
+                    Ok(iter) => {
+                        let mut current_skybox = 0;
+                        for entry in iter {
+                            match entry {
+                                Ok(ent) => {
+                                    let name = ent.file_name().into_string().unwrap();
+                                    if name == new_skybox {
+                                        world_state.active_skybox_index = current_skybox;
+                                    }
+                                    v.push(im_str!("{}", name));
+                                }
+                                Err(e) => {
+                                    tfd::message_box_ok("Unable to read skybox entry", &format!("{}", e), MessageBoxIcon::Error);
+                                }
+                            }
+                            current_skybox += 1;
+                        }
+                    }
+                    Err(e) => {
+                        tfd::message_box_ok("Unable to read skybox directory", &format!("{}", e), MessageBoxIcon::Error);
+                    }
+                }
+                v
+            };
+
+            //Create the skybox cubemap
+            scene_data.skybox_cubemap = unsafe { 
+                gl::DeleteTextures(1, &mut scene_data.skybox_cubemap);
+                create_skybox_cubemap(world_state.skybox_strings[world_state.active_skybox_index].to_str())
+            };
+        }
+        Err(e) => {
+            tfd::message_box_ok("Error loading level data", &format!("Could not load level data:\n{}", e), MessageBoxIcon::Error);
+        }
+    }
+}
+
+fn main() {    
     let Z_UP = glm::vec3(0.0, 0.0, 1.0);
 
     //Do a bunch of OpenXR initialization
@@ -609,8 +739,6 @@ fn main() {
     let cascade_size = 2048;
     let shadow_rendertarget = unsafe { RenderTarget::new_shadow((cascade_size * render::SHADOW_CASCADES as GLint, cascade_size)) };
     let sun_shadow_map = CascadedShadowMap::new(shadow_rendertarget, shadow_program, cascade_size);
-    let mut sun_pitch = 0.813306;
-    let mut sun_yaw = 3.699744;
 
     //Initialize scene data struct
     let mut scene_data = SceneData::default();
@@ -640,12 +768,6 @@ fn main() {
 
     //Initialize texture caching struct
     let mut texture_keeper = TextureKeeper::new();
-    let default_tex_params = [  
-        (gl::TEXTURE_WRAP_S, gl::REPEAT),
-	    (gl::TEXTURE_WRAP_T, gl::REPEAT),
-	    (gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR),
-	    (gl::TEXTURE_MAG_FILTER, gl::LINEAR)
-    ];
 
     //Player state
     let mut player = Player {
@@ -665,159 +787,41 @@ fn main() {
 
     let mut screen_space_mouse = glm::zero();
 
-    //Create Totoros
-    let mut totoros: OptionVec<Totoro> = OptionVec::with_capacity(64);
-    let mut selected_totoro_idx: Option<usize> = None;
+    //Initialize Level struct
+    let level_name = match config.string_options.get(Configuration::LEVEL_NAME) {
+        Some(name) => { name }
+        None => { "testmap" }
+    };
+
+    let terrain = Terrain::from_ozt(&format!("models/{}.ozt", level_name));
+    println!("Loaded {} collision triangles from {}.ozt", terrain.indices.len() / 3, level_name);
+    let mut world_state = WorldState {
+        totoros: OptionVec::with_capacity(64),
+        selected_totoro: None,
+        terrain: Terrain::from_ozt(&format!("models/{}.ozt", level_name)),
+        terrain_re_indices: Vec::new(),
+        skybox_strings: Vec::new(),
+        level_name: String::new(),
+        active_skybox_index: 0
+    };
+
+    //Load Totoro graphics
     let totoro_re_index = scene_data.opaque_entities.insert(RenderEntity::from_ozy(
         "models/totoro.ozy",
         standard_program,
         64,
         STANDARD_INSTANCED_ATTRIBUTE,
         &mut texture_keeper,
-        &default_tex_params
+        &DEFAULT_TEX_PARAMS
     ));
-
-    //Load level data
-    let level_name = match config.string_options.get(Configuration::LEVEL_NAME) {
-        Some(name) => { name }
-        None => { "testmap" }
-    };
-
-    let mut selected_skybox_string = 0;
-    let mut default_skybox = String::new();
-    let mut skybox_strings = Vec::new();
-    let terrain = {
-        let level_load_error = |s: std::io::Error| {
-            tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", level_name, s), MessageBoxIcon::Error);
-            exit(-1);
-        };
+    
+    {
 
         //Load the scene data from the level file
-        match File::open(&format!("maps/{}.lvl", level_name)) {
-            Ok(mut file) => {
-                loop {
-                    //Read ozy name
-                    let ozy_name = match io::read_pascal_strings(&mut file, 1) {
-                        Ok(v) => { v[0].clone() }
-                        Err(e) => {
-                            //We expect this call to eventually return EOF
-                            if e.kind() == ErrorKind::UnexpectedEof {
-                                break;
-                            }
-                            level_load_error(e)
-                        }
-                    };
-
-                    //Read number of matrices
-                    let matrices_count = match io::read_u32(&mut file) {
-                        Ok(count) => { count as usize } 
-                        Err(e) => {
-                            tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", level_name, e), MessageBoxIcon::Error);
-                            panic!("Error reading from level file: {}", e);
-                        }
-                    };
-                    let matrix_floats = match io::read_f32_data(&mut file, matrices_count as usize * 16) {
-                        Ok(floats) => { floats }
-                        Err(e) => {
-                            tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", level_name, e), MessageBoxIcon::Error);
-                            panic!("Error reading from level file: {}", e);
-                        }
-                    };
-
-                    let mut entity = RenderEntity::from_ozy(&format!("models/{}", ozy_name), standard_program, matrices_count, STANDARD_INSTANCED_ATTRIBUTE, &mut texture_keeper, &default_tex_params);
-                    entity.update_buffer(&matrix_floats, STANDARD_INSTANCED_ATTRIBUTE);                
-                    scene_data.opaque_entities.insert(entity);
-                }                
-            }
-            Err(e) => { level_load_error(e); }
-        }
-
-        match File::open(format!("maps/{}.ent", level_name)) {
-            Ok(mut file) => {
-                fn io_or_error<T>(res: Result<T, std::io::Error>, level_name: &str) -> T {
-                    match res {
-                        Ok(r) => { r }
-                        Err(e) => {
-                            tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", level_name, e), MessageBoxIcon::Error);
-                            panic!("Error reading from level file: {}", e);
-                        }
-                    }
-                }
-
-                let r = io::read_pascal_strings(&mut file, 1);
-                let new_skybox = io_or_error(r, level_name)[0].clone();                                
-
-                let raw_floats = io_or_error(io::read_f32_data(&mut file, 6), level_name);
-
-                scene_data.ambient_strength = raw_floats[0];
-                sun_pitch = raw_floats[1];
-                sun_yaw = raw_floats[2];
-                scene_data.sun_color[0] = raw_floats[3];
-                scene_data.sun_color[1] = raw_floats[4];
-                scene_data.sun_color[2] = raw_floats[5];
-
-                /*
-                let floats_to_write = [
-                    scene_data.ambient_strength,
-                    sun_pitch,
-                    sun_yaw,
-                    scene_data.sun_color[0],
-                    scene_data.sun_color[1],
-                    scene_data.sun_color[2]
-                ];
-                */
-                
-                let totoros_count = io_or_error(io::read_u32(&mut file), level_name);                
-                let raw_floats = io_or_error(io::read_f32_data(&mut file, totoros_count as usize * 3), level_name);
-                for i in (0..raw_floats.len()).step_by(3) {
-                    let pos = glm::vec3(raw_floats[i], raw_floats[i + 1], raw_floats[i + 2]);
-                    let tot = Totoro::new(pos, 0.0);
-                    totoros.insert(tot);
-                }
-
-                skybox_strings = {
-                    let mut v = Vec::new();
-                    match read_dir("skyboxes/") {
-                        Ok(iter) => {
-                            let mut current_skybox = 0;
-                            for entry in iter {
-                                match entry {
-                                    Ok(ent) => {
-                                        let name = ent.file_name().into_string().unwrap();
-                                        if name == new_skybox {
-                                            selected_skybox_string = current_skybox;
-                                        }
-                                        v.push(im_str!("{}", name));
-                                    }
-                                    Err(e) => {
-                                        tfd::message_box_ok("Unable to read skybox entry", &format!("{}", e), MessageBoxIcon::Error);
-                                    }
-                                }
-                                current_skybox += 1;
-                            }
-                        }
-                        Err(e) => {
-                            tfd::message_box_ok("Unable to read skybox directory", &format!("{}", e), MessageBoxIcon::Error);
-                        }
-                    }
-                    v
-                };
-
-                //Create the skybox cubemap
-                scene_data.skybox_cubemap = unsafe { 
-                    gl::DeleteTextures(1, &mut scene_data.skybox_cubemap);
-                    create_skybox_cubemap(skybox_strings[selected_skybox_string].to_str())
-                };
-            }
-            Err(e) => {
-                tfd::message_box_ok("Error loading level data", &format!("Could not load level data:\n{}", e), MessageBoxIcon::Error);
-            }
-        }
-
-        let t = Terrain::from_ozt(&format!("models/{}.ozt", level_name));
-        println!("Loaded {} collision triangles from {}.ozt", t.indices.len() / 3, level_name);
-        t
+        load_lvl(level_name, &mut world_state, &mut scene_data, &mut texture_keeper, standard_program);
+        load_ent(&format!("maps/{}.ent", level_name), &mut scene_data, &mut world_state);        
     };
+    drop(level_name);
 
     //Create debug sphere render entity
     let debug_sphere_re_index = {
@@ -839,8 +843,8 @@ fn main() {
 
     //Load gadget models
     let gadget_model_map = {
-        let wand_entity = RenderEntity::from_ozy("models/wand.ozy", standard_program, 2, STANDARD_INSTANCED_ATTRIBUTE, &mut texture_keeper, &default_tex_params);
-        let stick_entity = RenderEntity::from_ozy("models/stick.ozy", standard_program, 2, STANDARD_INSTANCED_ATTRIBUTE, &mut texture_keeper, &default_tex_params);
+        let wand_entity = RenderEntity::from_ozy("models/wand.ozy", standard_program, 2, STANDARD_INSTANCED_ATTRIBUTE, &mut texture_keeper, &DEFAULT_TEX_PARAMS);
+        let stick_entity = RenderEntity::from_ozy("models/stick.ozy", standard_program, 2, STANDARD_INSTANCED_ATTRIBUTE, &mut texture_keeper, &DEFAULT_TEX_PARAMS);
         let mut h = HashMap::new();
         h.insert(GadgetType::Net, wand_entity);
         h.insert(GadgetType::WaterCannon, stick_entity);
@@ -869,7 +873,7 @@ fn main() {
     let mut left_water_pillar_scale: glm::TVec3<f32> = glm::zero();
     let mut right_water_pillar_scale: glm::TVec3<f32> = glm::zero();
     let water_cylinder_path = "models/water_cylinder.ozy";
-    let water_cylinder_entity_index = scene_data.opaque_entities.insert(RenderEntity::from_ozy(water_cylinder_path, standard_program, 2, STANDARD_INSTANCED_ATTRIBUTE, &mut texture_keeper, &default_tex_params));
+    let water_cylinder_entity_index = scene_data.opaque_entities.insert(RenderEntity::from_ozy(water_cylinder_path, standard_program, 2, STANDARD_INSTANCED_ATTRIBUTE, &mut texture_keeper, &DEFAULT_TEX_PARAMS));
 
     //Set up global flags lol
     let mut is_fullscreen = false;
@@ -1182,8 +1186,8 @@ fn main() {
 
         //Totoro update
         let totoro_speed = 3.0;
-        for i in 0..totoros.len() {
-            if let Some(totoro) = totoros.get_mut_element(i) {
+        for i in 0..world_state.totoros.len() {
+            if let Some(totoro) = world_state.totoros.get_mut_element(i) {
                 //Do behavior based on AI state
                 match totoro.state {
                     TotoroState::Relaxed => {
@@ -1227,7 +1231,7 @@ fn main() {
 
                 //Kill if below a certain point
                 if totoro.position.z < -1000.0 {
-                    kill_totoro(&mut scene_data, &mut totoros, totoro_re_index, &mut selected_totoro_idx, i);
+                    kill_totoro(&mut scene_data, &mut world_state.totoros, totoro_re_index, &mut world_state.selected_totoro, i);
                 }
             }
         }
@@ -1247,35 +1251,35 @@ fn main() {
                     let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
 
                     //Create Totoro if the ray hit
-                    if let Some((_, point)) = ray_hit_terrain(&terrain, &click_ray) {
+                    if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
                         let tot = Totoro::new(point, elapsed_time);
-                        totoros.insert(tot);
+                        world_state.totoros.insert(tot);
                     }
                 }
                 ClickAction::SelectTotoro => {
                     let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
-                    let hit_info = get_clicked_totoro(&mut totoros, &click_ray);
+                    let hit_info = get_clicked_totoro(&mut world_state.totoros, &click_ray);
                     
                     match hit_info {
-                        Some((_, idx)) => { selected_totoro_idx = Some(idx); }
-                        _ => { selected_totoro_idx = None; }
+                        Some((_, idx)) => { world_state.selected_totoro = Some(idx); }
+                        _ => { world_state.selected_totoro = None; }
                     }
                 }
                 ClickAction::DeleteTotoro => {
                     let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
-                    let hit_info = get_clicked_totoro(&mut totoros, &click_ray);
+                    let hit_info = get_clicked_totoro(&mut world_state.totoros, &click_ray);
 
                     if let Some((_, idx)) = hit_info {
-                        kill_totoro(&mut scene_data, &mut totoros, totoro_re_index, &mut selected_totoro_idx, idx);
+                        kill_totoro(&mut scene_data, &mut world_state.totoros, totoro_re_index, &mut world_state.selected_totoro, idx);
                     }
 
                 }
                 ClickAction::FlickTotoro => {
                     let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
-                    let hit_info = get_clicked_totoro(&mut totoros, &click_ray);
+                    let hit_info = get_clicked_totoro(&mut world_state.totoros, &click_ray);
                             
                     if let Some((t_value, idx)) = hit_info {
-                        if let Some(tot) = totoros.get_mut_element(idx) {
+                        if let Some(tot) = world_state.totoros.get_mut_element(idx) {
                             let hit_point = click_ray.origin + t_value * click_ray.direction;
                             let focus = tot.position + glm::vec3(0.0, 0.0, 0.5);
                             let mut v = 20.0 * (focus - hit_point);
@@ -1308,8 +1312,8 @@ fn main() {
 
         //We try to do all work related to terrain collision here in order
         //to avoid iterating over all of the triangles more than once
-        for i in (0..terrain.indices.len()).step_by(3) {
-            let triangle = get_terrain_triangle(&terrain, i);                              //Get the triangle in question
+        for i in (0..world_state.terrain.indices.len()).step_by(3) {
+            let triangle = get_terrain_triangle(&world_state.terrain, i);                              //Get the triangle in question
             let triangle_plane = Plane::new(
                 triangle.a,
                 triangle.normal
@@ -1400,6 +1404,7 @@ fn main() {
             }
 
             //Check totoros against triangle
+            let totoros = &mut world_state.totoros;
             for i in 0..totoros.len() {
                 if let Some(totoro) = totoros.get_mut_element(i) {
                     if let Some(vec) = triangle_collide_sphere(&totoro.collision_sphere(), &triangle, &triangle_sphere) {
@@ -1463,6 +1468,7 @@ fn main() {
 
         //Update the GPU transform buffer for the Totoros
         if let Some(entity) = scene_data.opaque_entities.get_mut_element(totoro_re_index) {
+            let totoros = &world_state.totoros;
             let mut transform_buffer = vec![0.0; totoros.count() * 16];
             let mut current_totoro = 0;
             for i in 0..totoros.len() {
@@ -1481,7 +1487,7 @@ fn main() {
                     let pos = [mm[12], mm[13], mm[14]];
                     send_or_error(&audio_sender, AudioCommand::SetSourcePosition(pos, i));
 
-                    match selected_totoro_idx {
+                    match world_state.selected_totoro {
                         Some(idx) => {                                
                             if idx == i {
                                 entity.highlighted_item = Some(current_totoro);
@@ -1500,6 +1506,7 @@ fn main() {
 
         //Update the GPU transforms for the debug hit spheres
         if let Some(entity) = scene_data.transparent_entities.get_mut_element(debug_sphere_re_index) {
+            let totoros = &world_state.totoros;
             if viewing_collision {
                 let mut transform_buffer = vec![0.0; totoros.count() * 16];
                 let mut current_item = 0;
@@ -1510,7 +1517,7 @@ fn main() {
                         let mm = glm::translation(&sph.focus) * uniform_scale(-sph.radius);
                         write_matrix_to_buffer(&mut transform_buffer, current_item, mm);
 
-                        match selected_totoro_idx {
+                        match world_state.selected_totoro {
                             Some(idx) => {                                
                                 if idx == i {
                                     entity.highlighted_item = Some(current_item);
@@ -1530,6 +1537,12 @@ fn main() {
             }
         }
 
+        scene_data.sun_direction = glm::vec4_to_vec3(&(
+            glm::rotation(scene_data.sun_yaw, &Z_UP) *
+            glm::rotation(scene_data.sun_pitch, &glm::vec3(0.0, 1.0, 0.0)) *
+            glm::vec4(-1.0, 0.0, 0.0, 0.0)
+        ));
+
         //Draw ImGui
         if do_imgui {
             fn do_radio_option<T: Eq + Default>(imgui_ui: &imgui::Ui, label: &imgui::ImStr, flag: &mut T, new_flag: T) {
@@ -1539,7 +1552,7 @@ fn main() {
             let win = imgui::Window::new(im_str!("Hacking window"));
             if let Some(win_token) = win.begin(&imgui_ui) {
                 imgui_ui.text(im_str!("Frametime: {:.2}ms\tFPS: {:.2}\tFrame: {}", delta_time * 1000.0, framerate, frame_count));
-                imgui_ui.text(im_str!("Totoros spawned: {}", totoros.count()));
+                imgui_ui.text(im_str!("Totoros spawned: {}", world_state.totoros.count()));
                 imgui_ui.checkbox(im_str!("Wireframe view"), &mut wireframe);
                 imgui_ui.checkbox(im_str!("TRUE wireframe view"), &mut true_wireframe);
                 imgui_ui.checkbox(im_str!("Complex normals"), &mut scene_data.complex_normals);
@@ -1572,17 +1585,17 @@ fn main() {
 
                 imgui_ui.text(im_str!("Environment controls:"));
                 Slider::new(im_str!("Ambient light")).range(RangeInclusive::new(0.0, 0.5)).build(&imgui_ui, &mut scene_data.ambient_strength);
-                Slider::new(im_str!("Sun pitch")).range(RangeInclusive::new(0.0, glm::pi::<f32>())).build(&imgui_ui, &mut sun_pitch);
-                Slider::new(im_str!("Sun yaw")).range(RangeInclusive::new(0.0, glm::two_pi::<f32>())).build(&imgui_ui, &mut sun_yaw);
+                Slider::new(im_str!("Sun pitch")).range(RangeInclusive::new(0.0, glm::pi::<f32>())).build(&imgui_ui, &mut scene_data.sun_pitch);
+                Slider::new(im_str!("Sun yaw")).range(RangeInclusive::new(0.0, glm::two_pi::<f32>())).build(&imgui_ui, &mut scene_data.sun_yaw);
                 let sun_color_editor = ColorEdit::new(im_str!("Sun color"), EditableColor::Float3(&mut scene_data.sun_color));
                 sun_color_editor.build(&imgui_ui);
 
-                let mut skybox_strs = Vec::with_capacity(skybox_strings.len());
-                for i in 0.. skybox_strings.len() {
-                    skybox_strs.push(&skybox_strings[i]);
+                let mut skybox_strs = Vec::with_capacity(world_state.skybox_strings.len());
+                for i in 0..world_state.skybox_strings.len() {
+                    skybox_strs.push(&world_state.skybox_strings[i]);
                 }
-                if imgui::ComboBox::new(im_str!("Active skybox")).build_simple_string(&imgui_ui, &mut selected_skybox_string, &skybox_strs) {
-                    let name = Path::new(skybox_strs[selected_skybox_string].to_str()).file_name().unwrap().to_str().unwrap();
+                if imgui::ComboBox::new(im_str!("Active skybox")).build_simple_string(&imgui_ui, &mut world_state.active_skybox_index, &skybox_strs) {
+                    let name = Path::new(skybox_strs[world_state.active_skybox_index].to_str()).file_name().unwrap().to_str().unwrap();
                     scene_data.skybox_cubemap = unsafe { 
                         gl::DeleteTextures(1, &mut scene_data.skybox_cubemap);
                         create_skybox_cubemap(name)
@@ -1646,8 +1659,8 @@ fn main() {
                 }
 
                 if imgui_ui.button(im_str!("Totoro genocide"), [0.0, 32.0]) {
-                    totoros.clear();
-                    selected_totoro_idx = None;
+                    world_state.totoros.clear();
+                    world_state.selected_totoro = None;
                 }
 
                 if imgui_ui.button(im_str!("Save level data"), [0.0, 32.0]) {
@@ -1671,14 +1684,15 @@ fn main() {
                         tfd::message_box_ok("Error saving level data", &format!("Could not save level data:\n{}", e), MessageBoxIcon::Error);
                     };
                     
-                    match File::create(format!("maps/{}.ent", level_name)) {
+                    match File::create(format!("maps/{}.ent", world_state.level_name)) {
                         Ok(mut file) => {
-                            io::write_pascal_strings(&mut file, &[skybox_strings[selected_skybox_string].to_str()]);
+                            let totoros = &world_state.totoros;
+                            io::write_pascal_strings(&mut file, &[world_state.skybox_strings[world_state.active_skybox_index].to_str()]);
 
                             let floats_to_write = [
                                 scene_data.ambient_strength,
-                                sun_pitch,
-                                sun_yaw,
+                                scene_data.sun_pitch,
+                                scene_data.sun_yaw,
                                 scene_data.sun_color[0],
                                 scene_data.sun_color[1],
                                 scene_data.sun_color[2]
@@ -1718,88 +1732,16 @@ fn main() {
                 imgui_ui.same_line(0.0);
 
                 if imgui_ui.button(im_str!("Load level data"), [0.0, 32.0]) {
-                    if let Some(path) = tfd::open_file_dialog("Load level data", "maps/", Some((&["*.ent"], "*.ent"))) {
-                        match File::open(path) {
-                            Ok(mut file) => {
-                                fn io_or_error<T>(res: Result<T, std::io::Error>, level_name: &str) -> T {
-                                    match res {
-                                        Ok(r) => { r }
-                                        Err(e) => {
-                                            tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", level_name, e), MessageBoxIcon::Error);
-                                            panic!("Error reading from level file: {}", e);
-                                        }
-                                    }
-                                }
-                
-                                let r = io::read_pascal_strings(&mut file, 1);
-                                let new_skybox = io_or_error(r, level_name)[0].clone();                                
+                    if let Some(path) = tfd::open_file_dialog("Load level data", "maps/", Some((&["*.lvl"], "*.lvl"))) {                
+                        //Load the scene data from the level file
+                        let lvl_name = Path::new(&path).file_stem().unwrap().to_str().unwrap();
+                        load_lvl(lvl_name, &mut world_state, &mut scene_data, &mut texture_keeper, standard_program);
 
-                                let raw_floats = io_or_error(io::read_f32_data(&mut file, 6), level_name);
-                
-                                scene_data.ambient_strength = raw_floats[0];
-                                sun_pitch = raw_floats[1];
-                                sun_yaw = raw_floats[2];
-                                scene_data.sun_color[0] = raw_floats[3];
-                                scene_data.sun_color[1] = raw_floats[4];
-                                scene_data.sun_color[2] = raw_floats[5];
-                
-                                /*
-                                let floats_to_write = [
-                                    scene_data.ambient_strength,
-                                    sun_pitch,
-                                    sun_yaw,
-                                    scene_data.sun_color[0],
-                                    scene_data.sun_color[1],
-                                    scene_data.sun_color[2]
-                                ];
-                                */
-                                
-                                let totoros_count = io_or_error(io::read_u32(&mut file), level_name);                
-                                let raw_floats = io_or_error(io::read_f32_data(&mut file, totoros_count as usize * 3), level_name);
-                                for i in (0..raw_floats.len()).step_by(3) {
-                                    let pos = glm::vec3(raw_floats[i], raw_floats[i + 1], raw_floats[i + 2]);
-                                    let tot = Totoro::new(pos, 0.0);
-                                    totoros.insert(tot);
-                                }
-    
-                                let skybox_strings = {
-                                    let mut v = Vec::new();
-                                    match read_dir("skyboxes/") {
-                                        Ok(iter) => {
-                                            let mut current_skybox = 0;
-                                            for entry in iter {
-                                                match entry {
-                                                    Ok(ent) => {
-                                                        let name = ent.file_name().into_string().unwrap();
-                                                        if name == new_skybox {
-                                                            selected_skybox_string = current_skybox;
-                                                        }
-                                                        v.push(im_str!("{}", name));
-                                                    }
-                                                    Err(e) => {
-                                                        tfd::message_box_ok("Unable to read skybox entry", &format!("{}", e), MessageBoxIcon::Error);
-                                                    }
-                                                }
-                                                current_skybox += 1;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            tfd::message_box_ok("Unable to read skybox directory", &format!("{}", e), MessageBoxIcon::Error);
-                                        }
-                                    }
-                                    v
-                                };
+                        //Load terrain data
+                        world_state.terrain = Terrain::from_ozt(&format!("models/{}.ozt", lvl_name));
 
-                                //Create the skybox cubemap
-                                scene_data.skybox_cubemap = unsafe { 
-                                    gl::DeleteTextures(1, &mut scene_data.skybox_cubemap);
-                                    create_skybox_cubemap(skybox_strings[selected_skybox_string].to_str())
-                                };
-                            }
-                            Err(e) => {
-                                tfd::message_box_ok("Error loading level data", &format!("Could not load level data:\n{}", e), MessageBoxIcon::Error);
-                            }
-                        }
+                        //Load entity data
+                        load_ent(&format!("maps/{}.ent", lvl_name), &mut scene_data, &mut world_state);
                     }
                 }
 
@@ -1811,8 +1753,8 @@ fn main() {
             }
 
             //Do selected Totoro window
-            if let Some(idx) = selected_totoro_idx {
-                let tot = totoros.get_mut_element(idx).unwrap();
+            if let Some(idx) = world_state.selected_totoro {
+                let tot = world_state.totoros.get_mut_element(idx).unwrap();
                 if let Some(token) = imgui::Window::new(&im_str!("Totoro #{} control panel###totoro_panel", idx)).begin(&imgui_ui) {
                     imgui_ui.text(im_str!("Position ({:.3}, {:.3}, {:.3})", tot.position.x, tot.position.y, tot.position.z));
                     imgui_ui.text(im_str!("Velocity ({:.3}, {:.3}, {:.3})", tot.velocity.x, tot.velocity.y, tot.velocity.z));
@@ -1831,7 +1773,7 @@ fn main() {
                     imgui_ui.same_line(0.0);
 
                     if imgui_ui.button(im_str!("Kill"), [0.0, 32.0]) {
-                        kill_totoro(&mut scene_data, &mut totoros, totoro_re_index, &mut selected_totoro_idx, idx);
+                        kill_totoro(&mut scene_data, &mut world_state.totoros, totoro_re_index, &mut world_state.selected_totoro, idx);
                     }
 
                     token.end(&imgui_ui);
@@ -1849,13 +1791,6 @@ fn main() {
             }
             */
         }
-
-        //Recompute sun direction
-        scene_data.sun_direction = glm::vec4_to_vec3(&(
-            glm::rotation(sun_yaw, &Z_UP) *
-            glm::rotation(sun_pitch, &glm::vec3(0.0, 1.0, 0.0)) *
-            glm::vec4(-1.0, 0.0, 0.0, 0.0)
-        ));
 
         //Create a view matrix from the camera state
         {
