@@ -60,168 +60,6 @@ const DEFAULT_TEX_PARAMS: [(GLenum, GLenum); 4] = [
     (gl::TEXTURE_MAG_FILTER, gl::LINEAR)
 ];
 
-fn load_lvl(level_name: &str, world_state: &mut WorldState, scene_data: &mut SceneData, texture_keeper: &mut TextureKeeper, terrain_program: GLuint) {    
-    let level_load_error = |s: std::io::Error| {
-        tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", level_name, s), MessageBoxIcon::Error);
-        exit(-1);
-    };
-
-    println!("Level name: {}", level_name);
-    world_state.level_name = String::from(level_name);
-
-    //Load the scene data from the level file
-    for index in &world_state.terrain_re_indices {
-        scene_data.opaque_entities.delete(*index);
-    }
-    world_state.terrain_re_indices.clear();
-    world_state.selected_totoro = None;
-    match File::open(&format!("maps/{}.lvl", world_state.level_name)) {
-        Ok(mut file) => {
-            loop {
-                //Read ozy name
-                let ozy_name = match io::read_pascal_strings(&mut file, 1) {
-                    Ok(v) => { v[0].clone() }
-                    Err(e) => {
-                        //We expect this call to eventually return EOF
-                        if e.kind() == ErrorKind::UnexpectedEof {
-                            break;
-                        }
-                        level_load_error(e)
-                    }
-                };
-
-                //Read number of matrices
-                let matrices_count = match io::read_u32(&mut file) {
-                    Ok(count) => { count as usize } 
-                    Err(e) => {
-                        tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", world_state.level_name, e), MessageBoxIcon::Error);
-                        panic!("Error reading from level file: {}", e);
-                    }
-                };
-                let matrix_floats = match io::read_f32_data(&mut file, matrices_count as usize * 16) {
-                    Ok(floats) => { floats }
-                    Err(e) => {
-                        tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", world_state.level_name, e), MessageBoxIcon::Error);
-                        panic!("Error reading from level file: {}", e);
-                    }
-                };
-
-                let mut entity = RenderEntity::from_ozy(&format!("models/{}", ozy_name), terrain_program, matrices_count, STANDARD_INSTANCED_ATTRIBUTE, texture_keeper, &DEFAULT_TEX_PARAMS);
-                entity.update_buffer(&matrix_floats, STANDARD_INSTANCED_ATTRIBUTE);                
-                world_state.terrain_re_indices.push(scene_data.opaque_entities.insert(entity));
-            }                
-        }
-        Err(e) => { level_load_error(e); }
-    }
-}
-
-fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldState) {
-    fn io_or_error<T>(res: Result<T, std::io::Error>, level_name: &str) -> T {
-        match res {
-            Ok(r) => { r }
-            Err(e) => {
-                tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}\n", level_name, e), MessageBoxIcon::Error);
-                panic!("Error reading from level file: {}", e);
-            }
-        }
-    }
-
-    //First, clear world data
-    world_state.totoros.clear();
-
-    match File::open(path) {
-        Ok(mut file) => {
-
-            let r = io::read_pascal_strings(&mut file, 1);
-            let new_skybox = io_or_error(r, path)[0].clone();                                
-
-            let raw_floats = io_or_error(io::read_f32_data(&mut file, 6), path);
-
-            scene_data.ambient_strength = raw_floats[0];
-            scene_data.sun_pitch = raw_floats[1];
-            scene_data.sun_yaw = raw_floats[2];
-            scene_data.sun_color[0] = raw_floats[3];
-            scene_data.sun_color[1] = raw_floats[4];
-            scene_data.sun_color[2] = raw_floats[5];
-            
-            let totoros_count = io_or_error(io::read_u32(&mut file), path);                
-            let raw_floats = io_or_error(io::read_f32_data(&mut file, totoros_count as usize * 3), path);
-            for i in (0..raw_floats.len()).step_by(3) {
-                let pos = glm::vec3(raw_floats[i], raw_floats[i + 1], raw_floats[i + 2]);
-                let tot = Totoro::new(pos, rand::random::<f32>() * 4.5 - 2.0);
-                world_state.totoros.insert(tot);
-            }
-
-            world_state.skybox_strings = {
-                let mut v = Vec::new();
-                match read_dir("skyboxes/") {
-                    Ok(iter) => {
-                        let mut current_skybox = 0;
-                        for entry in iter {
-                            match entry {
-                                Ok(ent) => {
-                                    let name = ent.file_name().into_string().unwrap();
-                                    if name == new_skybox {
-                                        world_state.active_skybox_index = current_skybox;
-                                    }
-                                    v.push(im_str!("{}", name));
-                                }
-                                Err(e) => {
-                                    tfd::message_box_ok("Unable to read skybox entry", &format!("{}", e), MessageBoxIcon::Error);
-                                }
-                            }
-                            current_skybox += 1;
-                        }
-                    }
-                    Err(e) => {
-                        tfd::message_box_ok("Unable to read skybox directory", &format!("{}", e), MessageBoxIcon::Error);
-                    }
-                }
-                v
-            };
-
-            //Create the skybox cubemap
-            scene_data.skybox_cubemap = unsafe { 
-                gl::DeleteTextures(1, &mut scene_data.skybox_cubemap);
-                create_skybox_cubemap(world_state.skybox_strings[world_state.active_skybox_index].to_str())
-            };
-        }
-        Err(e) => {
-            tfd::message_box_ok("Error loading level data", &format!("Could not load level data:\n{}\nHave you saved the level data for this level yet?", e), MessageBoxIcon::Error);
-
-            //We still want the skybox strings to get recomputed even if we can't load the ent file
-            world_state.active_skybox_index = 0;
-            world_state.skybox_strings = {
-                let mut v = Vec::new();
-                match read_dir("skyboxes/") {
-                    Ok(iter) => {
-                        let mut current_skybox = 0;
-                        for entry in iter {
-                            match entry {
-                                Ok(ent) => {
-                                    let name = ent.file_name().into_string().unwrap();
-                                    if name == "" {
-                                        world_state.active_skybox_index = current_skybox;
-                                    }
-                                    v.push(im_str!("{}", name));
-                                }
-                                Err(e) => {
-                                    tfd::message_box_ok("Unable to read skybox entry", &format!("{}", e), MessageBoxIcon::Error);
-                                }
-                            }
-                            current_skybox += 1;
-                        }
-                    }
-                    Err(e) => {
-                        tfd::message_box_ok("Unable to read skybox directory", &format!("{}", e), MessageBoxIcon::Error);
-                    }
-                }
-                v
-            };
-        }
-    }
-}
-
 fn main() {    
     let Z_UP = glm::vec3(0.0, 0.0, 1.0);
 
@@ -399,57 +237,57 @@ fn main() {
 
     //Suggest interaction profile bindings
     match (&xr_instance,
-           &left_hand_pose_action,
-           &left_hand_aim_action,
-           &left_gadget_action,
-           &right_gadget_action,
-           &right_hand_grip_action,
-           &player_move_action,
-           &left_grip_pose_path,
-           &left_aim_pose_path,
-           &left_trigger_float_path,
-           &right_trigger_float_path,
-           &right_grip_pose_path,
-           &left_stick_vector_path,
-           &left_trackpad_vector_path,
-           &right_trackpad_force_path,
-           &go_home_action,
-           &right_hand_aim_action,
-           &right_aim_pose_path,
-           &right_trackpad_click_path,
-           &right_a_button_bool_path,
-           &left_b_path,
-           &left_switch_gadget,
-           &right_b_path,
-           &right_switch_gadget,
-           &left_trackpad_click_path,
-           &left_y_path) {
+        &left_hand_pose_action,
+        &left_hand_aim_action,
+        &left_gadget_action,
+        &right_gadget_action,
+        &right_hand_grip_action,
+        &player_move_action,
+        &left_grip_pose_path,
+        &left_aim_pose_path,
+        &left_trigger_float_path,
+        &right_trigger_float_path,
+        &right_grip_pose_path,
+        &left_stick_vector_path,
+        &left_trackpad_vector_path,
+        &right_trackpad_force_path,
+        &go_home_action,
+        &right_hand_aim_action,
+        &right_aim_pose_path,
+        &right_trackpad_click_path,
+        &right_a_button_bool_path,
+        &left_b_path,
+        &left_switch_gadget,
+        &right_b_path,
+        &right_switch_gadget,
+        &left_trackpad_click_path,
+        &left_y_path) {
         (Some(inst),
-         Some(l_grip_action),
-         Some(l_aim_action),
-         Some(l_trigger_action),
-         Some(r_trigger_action),
-         Some(r_action),
-         Some(move_action),
-         Some(l_grip_path),
-         Some(l_aim_path),
-         Some(l_trigger_path),
-         Some(r_trigger_path),
-         Some(r_path),
-         Some(l_stick_path),
-         Some(l_trackpad_path),
-         Some(r_trackpad_force),
-         Some(i_menu_action),
-         Some(r_aim_action),
-         Some(r_aim_path),
-         Some(r_track_click_path),
-         Some(r_a_button_path),
-         Some(l_b_path),
-         Some(l_switch),
-         Some(r_b_path),
-         Some(r_switch),
-         Some(l_track_click_path),
-         Some(l_y_path)) => {
+        Some(l_grip_action),
+        Some(l_aim_action),
+        Some(l_trigger_action),
+        Some(r_trigger_action),
+        Some(r_action),
+        Some(move_action),
+        Some(l_grip_path),
+        Some(l_aim_path),
+        Some(l_trigger_path),
+        Some(r_trigger_path),
+        Some(r_path),
+        Some(l_stick_path),
+        Some(l_trackpad_path),
+        Some(r_trackpad_force),
+        Some(i_menu_action),
+        Some(r_aim_action),
+        Some(r_aim_path),
+        Some(r_track_click_path),
+        Some(r_a_button_path),
+        Some(l_b_path),
+        Some(l_switch),
+        Some(r_b_path),
+        Some(r_switch),
+        Some(l_track_click_path),
+        Some(l_y_path)) => {
             //Valve Index
             let bindings = [
                 xr::Binding::new(l_grip_action, *l_grip_path),
@@ -802,16 +640,7 @@ fn main() {
     let mut texture_keeper = TextureKeeper::new();
 
     //Player state
-    let mut player = Player {
-        tracking_position: glm::zero(),
-        tracking_velocity: glm::zero(),
-        tracked_segment: LineSegment::zero(),
-        last_tracked_segment: LineSegment::zero(),
-        movement_state: MoveState::Falling,
-        radius: 0.15,
-        jumps_remaining: Player::MAX_JUMPS,
-        was_holding_jump: false
-    };
+    let mut player = Player::new(glm::zero());
     
     //Matrices for relating tracking space and world space
     let mut world_from_tracking = glm::identity();
@@ -1084,6 +913,7 @@ fn main() {
         let imgui_ui = imgui_context.frame();
 
         //Handle player inputs
+        let mut sticky_action = None;
         {
             const MOVEMENT_SPEED: f32 = 5.0;
             const DEADZONE_MAGNITUDE: f32 = 0.1;
@@ -1151,7 +981,17 @@ fn main() {
                                 }
                             }
                             GadgetType::StickyHand => {
-                                
+                                if let Some(pose) = xrutil::locate_space(aim_spaces[i], &tracking_space, last_xr_render_time) {
+                                    if floats_equal(state.current_state, 1.0) {
+                                        let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
+                                        let grip_position = glm::vec4_to_vec3(&(hand_transform * glm::vec4(0.0, 0.0, 0.0, 1.0)));
+                                        if i == 0 {
+                                            sticky_action = Some(StickData::Left(grip_position));
+                                        } else {
+                                            sticky_action = Some(StickData::Right(grip_position));
+                                        }
+                                    }
+                                }
                             }
                             GadgetType::WaterCannon => {
                                 //Calculate the force of shooting the water gun for the left hand
@@ -1208,11 +1048,33 @@ fn main() {
             }
         }
 
-        //Apply gravity to the player's velocity
-        if player.movement_state != MoveState::Grounded {
-            player.tracking_velocity.z -= ACCELERATION_GRAVITY * delta_time;
-            if player.tracking_velocity.z > GRAVITY_VELOCITY_CAP {
-                player.tracking_velocity.z = GRAVITY_VELOCITY_CAP;
+        match &player.stick_data {
+            Some(data) => {
+                match data {
+                    StickData::Left(stick_point) => {
+                        if let Some(pose) = xrutil::locate_space(&left_hand_aim_space, &tracking_space, last_xr_render_time) {
+                            let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
+                            let grip_position = glm::vec4_to_vec3(&(hand_transform * glm::vec4(0.0, 0.0, 0.0, 1.0)));
+                            player.tracking_position += stick_point - grip_position;
+                        }
+                    }                    
+                    StickData::Right(stick_point) => {
+                        if let Some(pose) = xrutil::locate_space(&right_hand_aim_space, &tracking_space, last_xr_render_time) {
+                            let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
+                            let grip_position = glm::vec4_to_vec3(&(hand_transform * glm::vec4(0.0, 0.0, 0.0, 1.0)));
+                            player.tracking_position += stick_point - grip_position;
+                        }
+                    }
+                }
+            }
+            None => {
+                //Apply gravity to the player's velocity
+                if player.movement_state != MoveState::Grounded {
+                    player.tracking_velocity.z -= ACCELERATION_GRAVITY * delta_time;
+                    if player.tracking_velocity.z > GRAVITY_VELOCITY_CAP {
+                        player.tracking_velocity.z = GRAVITY_VELOCITY_CAP;
+                    }
+                }
             }
         }
 
@@ -1327,7 +1189,7 @@ fn main() {
         }
 
         //Apply a speed limit to player movement
-        const PLAYER_SPEED_LIMIT: f32 = 100.0;
+        const PLAYER_SPEED_LIMIT: f32 = 20.0;
         let velocity_mag = glm::length(&player.tracking_velocity);
         if velocity_mag > PLAYER_SPEED_LIMIT {
             player.tracking_velocity = player.tracking_velocity / velocity_mag * PLAYER_SPEED_LIMIT;
@@ -1431,6 +1293,37 @@ fn main() {
                         } else {
                             player.tracking_position += vec;
                         }
+                    }
+                }
+            }
+
+            //Resolve player's attempt to stick to a wall
+            if let Some(action) = &sticky_action {
+                let stick_sphere_radius = 0.1;
+                match action {
+                    StickData::Left(focus) => {
+                        let sphere = Sphere {
+                            focus: *focus,
+                            radius: stick_sphere_radius
+                        };
+
+                        if let Some((_, collision_point)) = triangle_sphere_collision_point(&sphere, &triangle, &triangle_sphere) {
+                            player.tracking_position += collision_point - sphere.focus;
+                            player.tracking_velocity.z = 0.0;
+                            player.stick_data = Some(StickData::Left(collision_point));
+                        }
+                    }
+                    StickData::Right(focus) => {
+                        let sphere = Sphere {
+                            focus: *focus,
+                            radius: stick_sphere_radius
+                        };
+
+                        if let Some((_, collision_point)) = triangle_sphere_collision_point(&sphere, &triangle, &triangle_sphere) {
+                            player.tracking_position += collision_point - sphere.focus;
+                            player.tracking_velocity.z = 0.0;
+                            player.stick_data = Some(StickData::Right(collision_point));
+                        }                  
                     }
                 }
             }

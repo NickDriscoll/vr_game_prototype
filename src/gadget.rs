@@ -30,3 +30,8 @@ impl GadgetType {
         }
     }
 }
+
+pub enum StickData {
+    Left(glm::TVec3<f32>),
+    Right(glm::TVec3<f32>)
+}

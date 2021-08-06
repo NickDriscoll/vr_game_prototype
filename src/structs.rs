@@ -60,6 +60,7 @@ pub struct Player {
     pub tracked_segment: LineSegment,
     pub last_tracked_segment: LineSegment,
     pub movement_state: MoveState,
+    pub stick_data: Option<StickData>,
     pub radius: f32,
     pub jumps_remaining: usize,
     pub was_holding_jump: bool
@@ -67,6 +68,21 @@ pub struct Player {
 
 impl Player {
     pub const MAX_JUMPS: usize = 2;
+
+    pub fn new(pos: glm::TVec3<f32>) -> Self {
+
+        Player {
+            tracking_position: pos,
+            tracking_velocity: glm::zero(),            
+            tracked_segment: LineSegment::zero(),
+            last_tracked_segment: LineSegment::zero(),
+            movement_state: MoveState::Falling,
+            stick_data: None,
+            radius: 0.15,
+            jumps_remaining: Player::MAX_JUMPS,
+            was_holding_jump: false
+        }
+    }
 }
 
 pub fn ground_player(player: &mut Player, max_energy: &mut f32) {    

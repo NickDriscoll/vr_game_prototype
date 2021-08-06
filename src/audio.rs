@@ -193,7 +193,6 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                 bgm_source.unqueue_buffer().unwrap();
             }
 
-            println!("{}", bgm_source.buffers_queued());
             if bgm_source.state() != SourceState::Playing && playing_bgm && bgm_source.buffers_queued() >= IDEAL_FRAMES_QUEUED {
                 bgm_source.play();
                 playing_bgm = false;

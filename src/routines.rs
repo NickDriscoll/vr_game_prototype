@@ -222,3 +222,166 @@ pub fn compute_click_ray(screen_state: &ScreenState, screen_space_mouse: &glm::T
 pub fn rand_binomial() -> f32 {
     rand::random::<f32>() - rand::random::<f32>()
 }
+
+
+
+pub fn load_lvl(level_name: &str, world_state: &mut WorldState, scene_data: &mut SceneData, texture_keeper: &mut TextureKeeper, terrain_program: GLuint) {    
+    let level_load_error = |s: std::io::Error| {
+        tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", level_name, s), MessageBoxIcon::Error);
+        exit(-1);
+    };
+
+    world_state.level_name = String::from(level_name);
+
+    //Load the scene data from the level file
+    for index in &world_state.terrain_re_indices {
+        scene_data.opaque_entities.delete(*index);
+    }
+    world_state.terrain_re_indices.clear();
+    world_state.selected_totoro = None;
+    match File::open(&format!("maps/{}.lvl", world_state.level_name)) {
+        Ok(mut file) => {
+            loop {
+                //Read ozy name
+                let ozy_name = match io::read_pascal_strings(&mut file, 1) {
+                    Ok(v) => { v[0].clone() }
+                    Err(e) => {
+                        //We expect this call to eventually return EOF
+                        if e.kind() == ErrorKind::UnexpectedEof {
+                            break;
+                        }
+                        level_load_error(e)
+                    }
+                };
+
+                //Read number of matrices
+                let matrices_count = match io::read_u32(&mut file) {
+                    Ok(count) => { count as usize } 
+                    Err(e) => {
+                        tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", world_state.level_name, e), MessageBoxIcon::Error);
+                        panic!("Error reading from level file: {}", e);
+                    }
+                };
+                let matrix_floats = match io::read_f32_data(&mut file, matrices_count as usize * 16) {
+                    Ok(floats) => { floats }
+                    Err(e) => {
+                        tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", world_state.level_name, e), MessageBoxIcon::Error);
+                        panic!("Error reading from level file: {}", e);
+                    }
+                };
+
+                let mut entity = RenderEntity::from_ozy(&format!("models/{}", ozy_name), terrain_program, matrices_count, STANDARD_INSTANCED_ATTRIBUTE, texture_keeper, &DEFAULT_TEX_PARAMS);
+                entity.update_buffer(&matrix_floats, STANDARD_INSTANCED_ATTRIBUTE);                
+                world_state.terrain_re_indices.push(scene_data.opaque_entities.insert(entity));
+            }                
+        }
+        Err(e) => { level_load_error(e); }
+    }
+}
+
+pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldState) {
+    fn io_or_error<T>(res: Result<T, std::io::Error>, level_name: &str) -> T {
+        match res {
+            Ok(r) => { r }
+            Err(e) => {
+                tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}\n", level_name, e), MessageBoxIcon::Error);
+                panic!("Error reading from level file: {}", e);
+            }
+        }
+    }
+
+    //First, clear world data
+    world_state.totoros.clear();
+
+    match File::open(path) {
+        Ok(mut file) => {
+
+            let r = io::read_pascal_strings(&mut file, 1);
+            let new_skybox = io_or_error(r, path)[0].clone();                                
+
+            let raw_floats = io_or_error(io::read_f32_data(&mut file, 6), path);
+
+            scene_data.ambient_strength = raw_floats[0];
+            scene_data.sun_pitch = raw_floats[1];
+            scene_data.sun_yaw = raw_floats[2];
+            scene_data.sun_color[0] = raw_floats[3];
+            scene_data.sun_color[1] = raw_floats[4];
+            scene_data.sun_color[2] = raw_floats[5];
+            
+            let totoros_count = io_or_error(io::read_u32(&mut file), path);                
+            let raw_floats = io_or_error(io::read_f32_data(&mut file, totoros_count as usize * 3), path);
+            for i in (0..raw_floats.len()).step_by(3) {
+                let pos = glm::vec3(raw_floats[i], raw_floats[i + 1], raw_floats[i + 2]);
+                let tot = Totoro::new(pos, rand::random::<f32>() * 4.5 - 2.0);
+                world_state.totoros.insert(tot);
+            }
+
+            world_state.skybox_strings = {
+                let mut v = Vec::new();
+                match read_dir("skyboxes/") {
+                    Ok(iter) => {
+                        let mut current_skybox = 0;
+                        for entry in iter {
+                            match entry {
+                                Ok(ent) => {
+                                    let name = ent.file_name().into_string().unwrap();
+                                    if name == new_skybox {
+                                        world_state.active_skybox_index = current_skybox;
+                                    }
+                                    v.push(im_str!("{}", name));
+                                }
+                                Err(e) => {
+                                    tfd::message_box_ok("Unable to read skybox entry", &format!("{}", e), MessageBoxIcon::Error);
+                                }
+                            }
+                            current_skybox += 1;
+                        }
+                    }
+                    Err(e) => {
+                        tfd::message_box_ok("Unable to read skybox directory", &format!("{}", e), MessageBoxIcon::Error);
+                    }
+                }
+                v
+            };
+
+            //Create the skybox cubemap
+            scene_data.skybox_cubemap = unsafe { 
+                gl::DeleteTextures(1, &mut scene_data.skybox_cubemap);
+                create_skybox_cubemap(world_state.skybox_strings[world_state.active_skybox_index].to_str())
+            };
+        }
+        Err(e) => {
+            tfd::message_box_ok("Error loading level data", &format!("Could not load level data:\n{}\nHave you saved the level data for this level yet?", e), MessageBoxIcon::Error);
+
+            //We still want the skybox strings to get recomputed even if we can't load the ent file
+            world_state.active_skybox_index = 0;
+            world_state.skybox_strings = {
+                let mut v = Vec::new();
+                match read_dir("skyboxes/") {
+                    Ok(iter) => {
+                        let mut current_skybox = 0;
+                        for entry in iter {
+                            match entry {
+                                Ok(ent) => {
+                                    let name = ent.file_name().into_string().unwrap();
+                                    if name == "" {
+                                        world_state.active_skybox_index = current_skybox;
+                                    }
+                                    v.push(im_str!("{}", name));
+                                }
+                                Err(e) => {
+                                    tfd::message_box_ok("Unable to read skybox entry", &format!("{}", e), MessageBoxIcon::Error);
+                                }
+                            }
+                            current_skybox += 1;
+                        }
+                    }
+                    Err(e) => {
+                        tfd::message_box_ok("Unable to read skybox directory", &format!("{}", e), MessageBoxIcon::Error);
+                    }
+                }
+                v
+            };
+        }
+    }
+}
