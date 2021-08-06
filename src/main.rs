@@ -74,6 +74,7 @@ fn load_lvl(level_name: &str, world_state: &mut WorldState, scene_data: &mut Sce
         scene_data.opaque_entities.delete(*index);
     }
     world_state.terrain_re_indices.clear();
+    world_state.selected_totoro = None;
     match File::open(&format!("maps/{}.lvl", world_state.level_name)) {
         Ok(mut file) => {
             loop {
@@ -115,20 +116,21 @@ fn load_lvl(level_name: &str, world_state: &mut WorldState, scene_data: &mut Sce
 }
 
 fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldState) {
+    fn io_or_error<T>(res: Result<T, std::io::Error>, level_name: &str) -> T {
+        match res {
+            Ok(r) => { r }
+            Err(e) => {
+                tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}\n", level_name, e), MessageBoxIcon::Error);
+                panic!("Error reading from level file: {}", e);
+            }
+        }
+    }
+
     //First, clear world data
     world_state.totoros.clear();
 
     match File::open(path) {
         Ok(mut file) => {
-            fn io_or_error<T>(res: Result<T, std::io::Error>, level_name: &str) -> T {
-                match res {
-                    Ok(r) => { r }
-                    Err(e) => {
-                        tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", level_name, e), MessageBoxIcon::Error);
-                        panic!("Error reading from level file: {}", e);
-                    }
-                }
-            }
 
             let r = io::read_pascal_strings(&mut file, 1);
             let new_skybox = io_or_error(r, path)[0].clone();                                
@@ -185,7 +187,37 @@ fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldState
             };
         }
         Err(e) => {
-            tfd::message_box_ok("Error loading level data", &format!("Could not load level data:\n{}", e), MessageBoxIcon::Error);
+            tfd::message_box_ok("Error loading level data", &format!("Could not load level data:\n{}\nHave you saved the level data for this level yet?", e), MessageBoxIcon::Error);
+
+            //We still want the skybox strings to get recomputed even if we can't load the ent file
+            world_state.active_skybox_index = 0;
+            world_state.skybox_strings = {
+                let mut v = Vec::new();
+                match read_dir("skyboxes/") {
+                    Ok(iter) => {
+                        let mut current_skybox = 0;
+                        for entry in iter {
+                            match entry {
+                                Ok(ent) => {
+                                    let name = ent.file_name().into_string().unwrap();
+                                    if name == "" {
+                                        world_state.active_skybox_index = current_skybox;
+                                    }
+                                    v.push(im_str!("{}", name));
+                                }
+                                Err(e) => {
+                                    tfd::message_box_ok("Unable to read skybox entry", &format!("{}", e), MessageBoxIcon::Error);
+                                }
+                            }
+                            current_skybox += 1;
+                        }
+                    }
+                    Err(e) => {
+                        tfd::message_box_ok("Unable to read skybox directory", &format!("{}", e), MessageBoxIcon::Error);
+                    }
+                }
+                v
+            };
         }
     }
 }
@@ -1594,12 +1626,16 @@ fn main() {
                 for i in 0..world_state.skybox_strings.len() {
                     skybox_strs.push(&world_state.skybox_strings[i]);
                 }
+
+                let old_skybox_index = world_state.active_skybox_index;
                 if imgui::ComboBox::new(im_str!("Active skybox")).build_simple_string(&imgui_ui, &mut world_state.active_skybox_index, &skybox_strs) {
-                    let name = Path::new(skybox_strs[world_state.active_skybox_index].to_str()).file_name().unwrap().to_str().unwrap();
-                    scene_data.skybox_cubemap = unsafe { 
-                        gl::DeleteTextures(1, &mut scene_data.skybox_cubemap);
-                        create_skybox_cubemap(name)
-                    };
+                    if old_skybox_index != world_state.active_skybox_index {
+                        let name = Path::new(skybox_strs[world_state.active_skybox_index].to_str()).file_name().unwrap().to_str().unwrap();
+                        scene_data.skybox_cubemap = unsafe {
+                            gl::DeleteTextures(1, &mut scene_data.skybox_cubemap);
+                            create_skybox_cubemap(name)
+                        };
+                    }
                 }
 
                 imgui_ui.separator();

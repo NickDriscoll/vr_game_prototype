@@ -3,13 +3,12 @@ use tfd::MessageBoxIcon;
 use std::fs::File;
 use std::io::{ErrorKind, Seek, SeekFrom};
 use std::sync::mpsc::Receiver;
-use std::process::exit;
 use std::thread;
 use std::time::Duration;
 use crate::structs::Configuration;
 
 const DEFAULT_BGM_PATH: &str = "music/ikebukuro.mp3";
-const IDEAL_FRAMES_QUEUED: ALint = 10;
+const IDEAL_FRAMES_QUEUED: ALint = 5;
 
 //Represents the kinds of messages the audio system can receive from the 
 pub enum AudioCommand {
@@ -42,9 +41,9 @@ fn set_linearized_gain(ctxt: &alto::Context, volume: f32) {
 }
 
 //Main function for the audio system
-pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, conf: &Configuration) {
+pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, config: &Configuration) {
     //Allocation is necessary here because we are moving this into another thread
-    let default_bgm = match conf.string_options.get(Configuration::MUSIC_NAME) {
+    let default_bgm = match config.string_options.get(Configuration::MUSIC_NAME) {
         Some(path) => { String::from(path) }
         None => { String::from(DEFAULT_BGM_PATH) }
     }; 
@@ -89,8 +88,8 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, conf:
         //Initialize the mp3 decoder with the default bgm
         let mut decoder = load_decoder(&default_bgm);
 
-        let mut kanye_source = alto_context.new_streaming_source().unwrap();
-        let mut kickstart_bgm = true;
+        let mut bgm_source = alto_context.new_streaming_source().unwrap();
+        let mut playing_bgm = true;
         loop {
             //Process all commands from the main thread
             while let Ok(command) = audio_receiver.try_recv() {
@@ -98,47 +97,40 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, conf:
                     AudioCommand::SetListenerPosition(pos) => { alto_context.set_position(pos).unwrap(); }
                     AudioCommand::SetListenerVelocity(vel) => { alto_context.set_velocity(vel).unwrap(); }
                     AudioCommand::SetListenerOrientation(ori) => { alto_context.set_orientation(ori).unwrap(); }
-                    AudioCommand::SetSourcePosition(pos, i) => { if i == 0 { kanye_source.set_position(pos).unwrap(); } }
+                    AudioCommand::SetSourcePosition(pos, i) => { if i == 0 { bgm_source.set_position(pos).unwrap(); } }
                     AudioCommand::SetListenerGain(volume) => { set_linearized_gain(&alto_context, volume); }
                     AudioCommand::SelectNewBGM => {
-                        kanye_source.pause();
+                        bgm_source.pause();
                         match tfd::open_file_dialog("Choose bgm", "music/", Some((&["*.mp3"], "mp3 files (*.mp3)"))) {
-                            Some(res) => {
-                                kanye_source.stop();
-                                decoder = load_decoder(&res);
+                            Some(bgm_path) => {
+                                bgm_source.stop();
+                                decoder = load_decoder(&bgm_path);
                             
                                 //Clear out any residual sound data from the old mp3
-                                kanye_source = alto_context.new_streaming_source().unwrap();
-                                kickstart_bgm = true;
+                                bgm_source = alto_context.new_streaming_source().unwrap();
+                                playing_bgm = true;
                             }
-                            None => { kanye_source.play(); }
+                            None => { bgm_source.play(); }
                         }
                     }
                     AudioCommand::RestartBGM => {
-                        println!("Looping the mp3");
-                        
-                        //Dequeue any processed buffers
-                        while kanye_source.buffers_processed() > 0 {
-                            kanye_source.unqueue_buffer().unwrap();
-                        }
-
-                        kanye_source.pause();
+                        bgm_source.pause();
                         if let Some(decoder) = &mut decoder {
-                            kanye_source = alto_context.new_streaming_source().unwrap();
+                            bgm_source.stop();                            
                             decoder.reader_mut().seek(SeekFrom::Start(0)).unwrap();
+                            playing_bgm = true;
                         }
-                        kickstart_bgm = true;
                     }
                     AudioCommand::PlayPause => {
-                        kickstart_bgm = !kickstart_bgm;
-                        match kanye_source.state() {
+                        playing_bgm = !playing_bgm;
+                        match bgm_source.state() {
                             SourceState::Playing | SourceState::Initial => {
-                                kanye_source.pause();                                
-                                kickstart_bgm = false;
+                                bgm_source.pause();                                
+                                playing_bgm = false;
                             }
                             SourceState::Paused | SourceState::Stopped => {
-                                kanye_source.play();
-                                kickstart_bgm = true;
+                                bgm_source.play();
+                                playing_bgm = true;
                             }
                             SourceState::Unknown(code) => { println!("Source is in an unknown state: {}", code); }
                         }
@@ -147,7 +139,7 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, conf:
             }
 
             //If there are fewer than the ideal number of frames queued, prepare and queue a frame
-            if kanye_source.buffers_queued() < IDEAL_FRAMES_QUEUED {
+            if bgm_source.buffers_queued() < IDEAL_FRAMES_QUEUED {
                 if let Some(decoder) = &mut decoder {
                     match decoder.next_frame() {
                         Ok(frame) => {                          //Mono
@@ -162,7 +154,7 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, conf:
                                 }
 
                                 if let Ok(sample_buffer) = alto_context.new_buffer(mono_samples, frame.sample_rate) {
-                                    kanye_source.queue_buffer(sample_buffer).unwrap();
+                                    bgm_source.queue_buffer(sample_buffer).unwrap();
                                 }
                             } else if frame.channels == 2 {     //Stereo
                                 let mut stereo_samples = Vec::with_capacity(frame.data.len());
@@ -176,10 +168,10 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, conf:
                                 }
 
                                 if let Ok(sample_buffer) = alto_context.new_buffer(stereo_samples, frame.sample_rate) {
-                                    kanye_source.queue_buffer(sample_buffer).unwrap();
+                                    bgm_source.queue_buffer(sample_buffer).unwrap();
                                 }
                             } else {
-                                println!("Audio file must have one or two channels.");
+                                println!("Audio file must be mono or stereo.");
                                 return;
                             }
                         }
@@ -197,13 +189,14 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, conf:
             }
 
             //Unqueue any processed buffers
-            while kanye_source.buffers_processed() > 0 {
-                kanye_source.unqueue_buffer().unwrap();
+            while bgm_source.buffers_processed() > 0 {
+                bgm_source.unqueue_buffer().unwrap();
             }
 
-            if kanye_source.state() != SourceState::Playing && kickstart_bgm && kanye_source.buffers_queued() > 0 {
-                kanye_source.play();
-                kickstart_bgm = false;
+            println!("{}", bgm_source.buffers_queued());
+            if bgm_source.state() != SourceState::Playing && playing_bgm && bgm_source.buffers_queued() >= IDEAL_FRAMES_QUEUED {
+                bgm_source.play();
+                playing_bgm = false;
             }
 
             //Sleeping to avoid throttling a CPU core
