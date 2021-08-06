@@ -75,8 +75,8 @@ fn main() {
                 let mut string_options = HashMap::new();
                 int_options.insert(String::from(Configuration::WINDOWED_WIDTH), 1280);
                 int_options.insert(String::from(Configuration::WINDOWED_HEIGHT), 720);
-                string_options.insert(String::from(Configuration::LEVEL_NAME), String::from("recreate"));
-                string_options.insert(String::from(Configuration::MUSIC_NAME), String::from("music/ikebukuro.mp3"));
+                string_options.insert(String::from(Configuration::LEVEL_NAME), String::from("recreate_night"));
+                string_options.insert(String::from(Configuration::MUSIC_NAME), String::from("music/cryptic_relics.mp3"));
                 let c = Configuration {
                     int_options,
                     string_options
@@ -641,6 +641,8 @@ fn main() {
 
     //Player state
     let mut player = Player::new(glm::zero());
+    let mut left_sticky_grab = false;
+    let mut right_sticky_grab = false;
     
     //Matrices for relating tracking space and world space
     let mut world_from_tracking = glm::identity();
@@ -748,6 +750,7 @@ fn main() {
     let mut full_screenshot_this_frame = false;
     let mut turbo_clicking = false;
     let mut viewing_collision = false;
+    let mut showing_shadow_atlas = false;
     if let Some(_) = &xr_instance {
         hmd_pov = true;
         do_vsync = false;
@@ -982,13 +985,38 @@ fn main() {
                             }
                             GadgetType::StickyHand => {
                                 if let Some(pose) = xrutil::locate_space(aim_spaces[i], &tracking_space, last_xr_render_time) {
-                                    if floats_equal(state.current_state, 1.0) {
+                                    if state.current_state > 0.5 {
                                         let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
                                         let grip_position = glm::vec4_to_vec3(&(hand_transform * glm::vec4(0.0, 0.0, 0.0, 1.0)));
-                                        if i == 0 {
-                                            sticky_action = Some(StickData::Left(grip_position));
-                                        } else {
-                                            sticky_action = Some(StickData::Right(grip_position));
+                                        if i == 0 && !left_sticky_grab {
+                                            match player.stick_data {
+                                                Some(StickData::Left(_)) => {}
+                                                _ => {
+                                                    sticky_action = Some(StickData::Left(grip_position));
+                                                }
+                                            }
+                                        } else if !right_sticky_grab {
+                                            match player.stick_data {
+                                                Some(StickData::Right(_)) => {}
+                                                _ => {
+                                                    sticky_action = Some(StickData::Right(grip_position));
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        if let Some(StickData::Left(_)) = player.stick_data {
+                                            if i == 0 {
+                                                player.stick_data = None;
+                                                player.tracking_velocity = (player.tracked_segment.p0 - player.last_tracked_segment.p0) / delta_time * 2.0;
+                                                left_sticky_grab = false;
+                                            }
+                                        }
+                                        if let Some(StickData::Right(_)) = player.stick_data {
+                                            if i == 1 {
+                                                player.stick_data = None;
+                                                player.tracking_velocity = (player.tracked_segment.p0 - player.last_tracked_segment.p0) / delta_time * 2.0;
+                                                right_sticky_grab = false;
+                                            }
                                         }
                                     }
                                 }
@@ -1201,7 +1229,8 @@ fn main() {
 
         //Collision handling section
 
-        //The user is considered to be always standing on the ground in tracking space
+        //The user is considered to be always standing on the ground in tracking space        
+        player.last_tracked_segment = player.tracked_segment.clone();
         player.tracked_segment = xrutil::tracked_player_segment(&view_space, &tracking_space, last_xr_render_time, &world_from_tracking);
 
         //We try to do all work related to terrain collision here in order
@@ -1302,28 +1331,42 @@ fn main() {
                 let stick_sphere_radius = 0.1;
                 match action {
                     StickData::Left(focus) => {
-                        let sphere = Sphere {
-                            focus: *focus,
-                            radius: stick_sphere_radius
-                        };
-
-                        if let Some((_, collision_point)) = triangle_sphere_collision_point(&sphere, &triangle, &triangle_sphere) {
-                            player.tracking_position += collision_point - sphere.focus;
-                            player.tracking_velocity.z = 0.0;
-                            player.stick_data = Some(StickData::Left(collision_point));
+                        match player.stick_data {
+                            Some(StickData::Left(_)) => {}
+                            _ => { 
+                                let sphere = Sphere {
+                                    focus: *focus,
+                                    radius: stick_sphere_radius
+                                };
+        
+                                if let Some((_, collision_point)) = triangle_sphere_collision_point(&sphere, &triangle, &triangle_sphere) {
+                                    player.tracking_position += collision_point - sphere.focus;
+                                    player.tracking_velocity = glm::zero();
+                                    player.stick_data = Some(StickData::Left(collision_point));
+                                    left_sticky_grab = true;
+                                }
+                            }
                         }
+
+                        
                     }
                     StickData::Right(focus) => {
-                        let sphere = Sphere {
-                            focus: *focus,
-                            radius: stick_sphere_radius
-                        };
+                        match player.stick_data {
+                            Some(StickData::Right(_)) => {}
+                            _ => {
+                                let sphere = Sphere {
+                                    focus: *focus,
+                                    radius: stick_sphere_radius
+                                };
 
-                        if let Some((_, collision_point)) = triangle_sphere_collision_point(&sphere, &triangle, &triangle_sphere) {
-                            player.tracking_position += collision_point - sphere.focus;
-                            player.tracking_velocity.z = 0.0;
-                            player.stick_data = Some(StickData::Right(collision_point));
-                        }                  
+                                if let Some((_, collision_point)) = triangle_sphere_collision_point(&sphere, &triangle, &triangle_sphere) {
+                                    player.tracking_position += collision_point - sphere.focus;
+                                    player.tracking_velocity = glm::zero();
+                                    player.stick_data = Some(StickData::Right(collision_point));                                    
+                                    right_sticky_grab = true;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1353,8 +1396,6 @@ fn main() {
         //After all collision processing has been completed, update the tracking space matrices once more
         world_from_tracking = glm::translation(&player.tracking_position);
         tracking_from_world = glm::affine_inverse(world_from_tracking);
-
-        player.last_tracked_segment = player.tracked_segment.clone();
 
         //Tell the audio thread about the listener's current state
         {
@@ -1391,7 +1432,7 @@ fn main() {
 
         //Pre-render phase
 
-        //Update the GPU transform buffer for the Totoros
+        //Update the GPU instance buffer for the Totoros
         if let Some(entity) = scene_data.opaque_entities.get_mut_element(totoro_re_index) {
             let totoros = &world_state.totoros;
             let mut transform_buffer = vec![0.0; totoros.count() * 16];
@@ -1429,7 +1470,7 @@ fn main() {
             entity.update_buffer(&transform_buffer, STANDARD_INSTANCED_ATTRIBUTE);
         }
 
-        //Update the GPU transforms for the debug hit spheres
+        //Update the GPU instance buffer for the hit spheres
         if let Some(entity) = scene_data.transparent_entities.get_mut_element(debug_sphere_re_index) {
             let totoros = &world_state.totoros;
             if viewing_collision {
@@ -1499,6 +1540,7 @@ fn main() {
                 do_radio_option(&imgui_ui, im_str!("Visualize normals"), &mut scene_data.fragment_flag, FragmentFlag::Normals);
                 do_radio_option(&imgui_ui, im_str!("Visualize how shadowed"), &mut scene_data.fragment_flag, FragmentFlag::Shadowed);
                 do_radio_option(&imgui_ui, im_str!("Visualize shadow cascades"), &mut scene_data.fragment_flag, FragmentFlag::CascadeZones);
+                imgui_ui.checkbox(im_str!("View shadow atlas"), &mut showing_shadow_atlas);
                 imgui_ui.checkbox(im_str!("View collision volumes"), &mut viewing_collision);
                 imgui_ui.separator();
 
@@ -1708,17 +1750,18 @@ fn main() {
                     token.end(&imgui_ui);
                 }
             }
+            
 
-            /*
             //Shadow cascade viewer
-            let win = imgui::Window::new(im_str!("Shadow map"));
-            if let Some(win_token) = win.begin(&imgui_ui) {
-                let im = imgui::Image::new(TextureId::new(scene_data.sun_shadow_map.rendertarget.texture as usize), [(cascade_size * render::SHADOW_CASCADES as i32 / 6) as f32, (cascade_size / 6) as f32]).uv1([1.0, -1.0]);
-                im.build(&imgui_ui);
+            if showing_shadow_atlas {
+                let win = imgui::Window::new(im_str!("Shadow atlas"));
+                if let Some(win_token) = win.begin(&imgui_ui) {
+                    let im = imgui::Image::new(TextureId::new(scene_data.sun_shadow_map.rendertarget.texture as usize), [(cascade_size * render::SHADOW_CASCADES as i32 / 6) as f32, (cascade_size / 6) as f32]).uv1([1.0, -1.0]);
+                    im.build(&imgui_ui);
 
-                win_token.end(&imgui_ui);
+                    win_token.end(&imgui_ui);
+                }
             }
-            */
         }
 
         //Create a view matrix from the camera state

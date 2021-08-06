@@ -169,17 +169,6 @@ impl RenderEntity {
     }
 }
 
-impl Drop for RenderEntity {
-    fn drop(&mut self) {
-        unsafe {
-            gl::DeleteVertexArrays(1, &mut self.vao);
-
-            //We actually don't want to blindly delete the textures, bc other things could be using them
-            //gl::DeleteTextures(self.textures.len() as GLsizei, &mut self.textures as *const GLuint);
-        }
-    }
-}
-
 pub struct CascadedShadowMap {
     pub rendertarget: RenderTarget,             //Rendertarget for the shadow atlas
     pub program: GLuint,                        //Associated program name
