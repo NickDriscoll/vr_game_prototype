@@ -995,7 +995,7 @@ fn main() {
                                                     sticky_action = Some(StickData::Left(grip_position));
                                                 }
                                             }
-                                        } else if !right_sticky_grab {
+                                        } else if i == 1 && !right_sticky_grab {
                                             match player.stick_data {
                                                 Some(StickData::Right(_)) => {}
                                                 _ => {
@@ -1004,19 +1004,23 @@ fn main() {
                                             }
                                         }
                                     } else {
-                                        if let Some(StickData::Left(_)) = player.stick_data {
-                                            if i == 0 {
-                                                player.stick_data = None;
-                                                player.tracking_velocity = (player.tracked_segment.p0 - player.last_tracked_segment.p0) / delta_time * 2.0;
-                                                left_sticky_grab = false;
+                                        if i == 0 { left_sticky_grab = false; }
+                                        else if i == 1 { right_sticky_grab = false; }
+
+                                        match player.stick_data {
+                                            Some(StickData::Left(_)) => {
+                                                if i == 0 {
+                                                    player.stick_data = None;
+                                                    player.tracking_velocity = (player.tracked_segment.p0 - player.last_tracked_segment.p0) / delta_time * 2.0;
+                                                }
                                             }
-                                        }
-                                        if let Some(StickData::Right(_)) = player.stick_data {
-                                            if i == 1 {
-                                                player.stick_data = None;
-                                                player.tracking_velocity = (player.tracked_segment.p0 - player.last_tracked_segment.p0) / delta_time * 2.0;
-                                                right_sticky_grab = false;
+                                            Some(StickData::Right(_)) => {
+                                                if i == 1 {
+                                                    player.stick_data = None;
+                                                    player.tracking_velocity = (player.tracked_segment.p0 - player.last_tracked_segment.p0) / delta_time * 2.0;
+                                                }
                                             }
+                                            None => {}
                                         }
                                     }
                                 }
@@ -1327,6 +1331,11 @@ fn main() {
             }
 
             //Resolve player's attempt to stick to a wall
+
+            if i == 0 {
+                println!("{:?}", sticky_action);
+            }
+
             if let Some(action) = &sticky_action {
                 let stick_sphere_radius = 0.1;
                 match action {
@@ -1347,8 +1356,6 @@ fn main() {
                                 }
                             }
                         }
-
-                        
                     }
                     StickData::Right(focus) => {
                         match player.stick_data {
