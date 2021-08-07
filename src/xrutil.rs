@@ -140,7 +140,7 @@ pub unsafe fn entity_pose_update(entity_list: &mut OptionVec<RenderEntity>, enti
     if let Some(p) = pose {
         if let Some(entity) = entity_list.get_mut_element(entity_index) {
             let mm = pose_to_mat4(&p, world_from_tracking);
-            entity.update_single_transform(instance_index, &mm);
+            entity.update_single_transform(instance_index, &mm, 16);
         }
     }
 }

@@ -183,6 +183,13 @@ pub fn resize_main_window(window: &mut Window, framebuffer: &mut Framebuffer, sc
     window.set_monitor(window_mode, pos.0, pos.1, size.x, size.y, Some(144));
 }
 
+pub fn write_vec4_to_buffer(buffer: &mut [f32], index: usize, vec: glm::TVec4<f32>) {
+    buffer[4 * index + 0] = vec.x;
+    buffer[4 * index + 1] = vec.y;
+    buffer[4 * index + 2] = vec.z;
+    buffer[4 * index + 3] = vec.w;
+}
+
 pub fn write_matrix_to_buffer(buffer: &mut [f32], index: usize, matrix: glm::TMat4<f32>) {
     for k in 0..16 {
         buffer[16 * index + k] = matrix[k];
@@ -271,7 +278,7 @@ pub fn load_lvl(level_name: &str, world_state: &mut WorldState, scene_data: &mut
                 };
 
                 let mut entity = RenderEntity::from_ozy(&format!("models/{}", ozy_name), terrain_program, matrices_count, STANDARD_INSTANCED_ATTRIBUTE, texture_keeper, &DEFAULT_TEX_PARAMS);
-                entity.update_buffer(&matrix_floats, STANDARD_INSTANCED_ATTRIBUTE);                
+                entity.update_transform_buffer(&matrix_floats, STANDARD_INSTANCED_ATTRIBUTE);                
                 world_state.terrain_re_indices.push(scene_data.opaque_entities.insert(entity));
             }                
         }

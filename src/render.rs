@@ -20,6 +20,7 @@ const CUBE_INDICES_COUNT: GLsizei = 36;
 #[derive(Clone, Debug)]
 pub struct RenderEntity {
     pub vao: GLuint,
+    pub color_buffer: GLuint,
     pub transform_buffer: GLuint,       //GPU buffer with one 4x4 homogenous transform per instance
     pub index_count: GLint,
     pub active_instances: GLint,
@@ -38,6 +39,7 @@ impl RenderEntity {
         RenderEntity {
             vao,
             transform_buffer,
+            color_buffer: 0,
             index_count: index_count as GLint,
             active_instances: instances as GLint,
             max_instances: instances,
@@ -78,11 +80,13 @@ impl RenderEntity {
                     glutil::apply_texture_parameters(&tex_params);
                     gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA32F as GLint, (meshdata.colors.len() / 4) as GLint, 1, 0, gl::RGBA, gl::FLOAT, &meshdata.colors[0] as *const f32 as *const c_void);
 
+                    //Normal map
                     gl::GenTextures(1, &mut normal);
                     gl::BindTexture(gl::TEXTURE_2D, normal);
                     glutil::apply_texture_parameters(&tex_params);
                     gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA32F as GLint, 1, 1, 0, gl::RGBA, gl::FLOAT, &[0.5f32, 0.5, 1.0, 0.0] as *const f32 as *const c_void);
 
+                    //Roughness map
                     gl::GenTextures(1, &mut roughness);
                     gl::BindTexture(gl::TEXTURE_2D, roughness);
                     glutil::apply_texture_parameters(&tex_params);
@@ -93,6 +97,7 @@ impl RenderEntity {
                 RenderEntity {
                     vao,
                     transform_buffer,
+                    color_buffer: 0,
                     index_count: meshdata.vertex_array.indices.len() as GLint,
                     active_instances: instances as GLint,
                     max_instances: instances,
@@ -111,19 +116,19 @@ impl RenderEntity {
         }
     }
 
-    pub unsafe fn update_single_transform(&mut self, idx: usize, matrix: &glm::TMat4<f32>) {
+    pub unsafe fn update_single_transform(&mut self, idx: usize, matrix: &glm::TMat4<f32>, attribute_size: usize) {
         gl::BindBuffer(gl::ARRAY_BUFFER, self.transform_buffer);
         gl::BufferSubData(
             gl::ARRAY_BUFFER,
-            (16 * idx * size_of::<GLfloat>()) as GLsizeiptr,
-            (16 * size_of::<GLfloat>()) as GLsizeiptr,
+            (attribute_size * idx * size_of::<GLfloat>()) as GLsizeiptr,
+            (attribute_size * size_of::<GLfloat>()) as GLsizeiptr,
             &matrix[0] as *const GLfloat as *const c_void
         );
     }
 
-    pub fn update_buffer(&mut self, transforms: &[f32], instanced_attribute: GLuint) {
+    pub fn update_transform_buffer(&mut self, transforms: &[f32], instanced_attribute: GLuint) {
         //Record the current active instance count
-        let new_instances = transforms.len() as GLint / 16;
+        let new_instances = transforms.len() as GLint / 16 as GLint;
         self.active_instances = new_instances;
 
         //Update GPU buffer storing transforms
@@ -156,15 +161,38 @@ impl RenderEntity {
         }
     }
 
-    pub fn update_sub_buffer(&mut self, transforms: &[f32], idx: usize) {
-        unsafe {
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.transform_buffer);
-            gl::BufferSubData(
-                gl::ARRAY_BUFFER,
-                (16 * idx * size_of::<GLfloat>()) as GLsizeiptr,
-                (transforms.len() * size_of::<GLfloat>()) as GLsizeiptr,
-                &transforms[0] as *const GLfloat as *const c_void
-            );
+    pub fn update_color_buffer(&mut self, transforms: &[f32], instanced_attribute: GLuint) {
+        //Record the current active instance count
+        let new_instances = transforms.len() as GLint / 4 as GLint;
+        self.active_instances = new_instances;
+
+        //Update GPU buffer storing transforms
+		unsafe {
+            if self.max_instances < self.active_instances as usize {
+                let mut b = 0;
+                gl::DeleteBuffers(1, &self.color_buffer as *const u32);
+                gl::GenBuffers(1, &mut b);
+                self.color_buffer = b;
+                
+                gl::BindVertexArray(self.vao);
+                gl::BindBuffer(gl::ARRAY_BUFFER, self.color_buffer);
+                glutil::bind_new_transform_buffer(instanced_attribute);
+
+                gl::BufferData(
+                    gl::ARRAY_BUFFER,
+                    (self.active_instances as usize * 4 * size_of::<GLfloat>()) as GLsizeiptr,
+                    &transforms[0] as *const GLfloat as *const c_void,
+                    gl::DYNAMIC_DRAW
+                );
+            } else if transforms.len() > 0 {
+                gl::BindBuffer(gl::ARRAY_BUFFER, self.color_buffer);
+                gl::BufferSubData(
+                    gl::ARRAY_BUFFER,
+                    0 as GLsizeiptr,
+                    (transforms.len() * size_of::<GLfloat>()) as GLsizeiptr,
+                    &transforms[0] as *const GLfloat as *const c_void
+                );
+            }
         }
     }
 }

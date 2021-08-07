@@ -27,7 +27,9 @@ use std::io::{ErrorKind, Write};
 use std::path::Path;
 use std::process::exit;
 use std::mem::size_of;
+use std::os::raw::c_void;
 use std::sync::mpsc;
+use std::ptr;
 use std::time::{ Instant};
 use strum::EnumCount;
 use tfd::MessageBoxIcon;
@@ -50,7 +52,8 @@ const EPSILON: f32 = 0.00001;
 const GRAVITY_VELOCITY_CAP: f32 = 10.0;        //m/s
 const ACCELERATION_GRAVITY: f32 = 20.0;        //20.0 m/s^2
 const STANDARD_INSTANCED_ATTRIBUTE: GLuint = 5;
-const DEBUG_INSTANCED_ATTRIBUTE: GLuint = 3;
+const DEBUG_COLOR_ATTRIBUTE: GLuint = 2;
+const DEBUG_TRANSFORM_ATTRIBUTE: GLuint = 3;
 
 //Default texture parameters for a 2D image texture
 const DEFAULT_TEX_PARAMS: [(GLenum, GLenum); 4] = [  
@@ -687,7 +690,7 @@ fn main() {
     drop(level_name);
 
     //Create debug sphere render entity
-    let debug_sphere_re_index = {
+    let debug_sphere_re_index = unsafe {
         let segments = 16;
         let rings = 16;
         let vao = ozy::prims::debug_sphere_vao(1.0, segments, rings, [0.0, 0.0, 1.0, 0.4]);
@@ -697,9 +700,29 @@ fn main() {
             debug_program,
             ozy::prims::sphere_index_count(segments, rings),
             64,
-            DEBUG_INSTANCED_ATTRIBUTE
+            DEBUG_TRANSFORM_ATTRIBUTE
         );
         re.cast_shadows = false;
+
+        gl::BindVertexArray(re.vao);
+
+        let data = vec![0.5f32; re.max_instances * 4];
+        let mut b = 0;
+        gl::GenBuffers(1, &mut b);
+        gl::BindBuffer(gl::ARRAY_BUFFER, b);
+        gl::BufferData(gl::ARRAY_BUFFER, (re.max_instances * 4 * size_of::<GLfloat>()) as GLsizeiptr, &data[0] as *const f32 as *const c_void, gl::DYNAMIC_DRAW);
+        re.color_buffer = b;
+    
+        gl::VertexAttribPointer(
+            DEBUG_COLOR_ATTRIBUTE,
+            4,
+            gl::FLOAT,
+            gl::FALSE,
+            (4 * size_of::<GLfloat>()) as GLsizei,
+            ptr::null()
+        );
+        gl::EnableVertexAttribArray(DEBUG_COLOR_ATTRIBUTE);
+        gl::VertexAttribDivisor(DEBUG_COLOR_ATTRIBUTE, 1);
 
         scene_data.transparent_entities.insert(re)
     };
@@ -955,7 +978,7 @@ fn main() {
                             *gadgets[i] = GadgetType::from_usize(new);
         
                             if let Some(ent) = scene_data.opaque_entities.get_mut_element(gadget_indices[i]) { unsafe { 
-                                ent.update_single_transform(i, &glm::zero());
+                                ent.update_single_transform(i, &glm::zero(), 16);
                             }}
                             if let Some(ent) = gadget_model_map.get(gadgets[i]) {
                                 scene_data.opaque_entities.replace(gadget_indices[i], ent.clone());
@@ -1004,21 +1027,20 @@ fn main() {
                                             }
                                         }
                                     } else {
+                                        let unstick = |player: &mut Player| {                                            
+                                            player.stick_data = None;
+                                            player.tracking_velocity = (player.tracked_segment.p0 - player.last_tracked_segment.p0) / delta_time * 2.0;
+                                        };
+
                                         if i == 0 { left_sticky_grab = false; }
                                         else if i == 1 { right_sticky_grab = false; }
 
                                         match player.stick_data {
                                             Some(StickData::Left(_)) => {
-                                                if i == 0 {
-                                                    player.stick_data = None;
-                                                    player.tracking_velocity = (player.tracked_segment.p0 - player.last_tracked_segment.p0) / delta_time * 2.0;
-                                                }
+                                                if i == 0 { unstick(&mut player); }
                                             }
                                             Some(StickData::Right(_)) => {
-                                                if i == 1 {
-                                                    player.stick_data = None;
-                                                    player.tracking_velocity = (player.tracked_segment.p0 - player.last_tracked_segment.p0) / delta_time * 2.0;
-                                                }
+                                                if i == 1 { unstick(&mut player); }
                                             }
                                             None => {}
                                         }
@@ -1331,11 +1353,6 @@ fn main() {
             }
 
             //Resolve player's attempt to stick to a wall
-
-            if i == 0 {
-                println!("{:?}", sticky_action);
-            }
-
             if let Some(action) = &sticky_action {
                 let stick_sphere_radius = 0.1;
                 match action {
@@ -1474,13 +1491,14 @@ fn main() {
                     current_totoro += 1;
                 }
             }
-            entity.update_buffer(&transform_buffer, STANDARD_INSTANCED_ATTRIBUTE);
+            entity.update_transform_buffer(&transform_buffer, STANDARD_INSTANCED_ATTRIBUTE);
         }
 
         //Update the GPU instance buffer for the hit spheres
         if let Some(entity) = scene_data.transparent_entities.get_mut_element(debug_sphere_re_index) {
             let totoros = &world_state.totoros;
             if viewing_collision {
+                let mut color_buffer = vec![0.0; totoros.count() * 4];
                 let mut transform_buffer = vec![0.0; totoros.count() * 16];
                 let mut current_item = 0;
 
@@ -1489,6 +1507,7 @@ fn main() {
                         let sph = totoro.collision_sphere();
                         let mm = glm::translation(&sph.focus) * uniform_scale(-sph.radius);
                         write_matrix_to_buffer(&mut transform_buffer, current_item, mm);
+                        write_vec4_to_buffer(&mut color_buffer, current_item, glm::vec4(0.0, 0.0, 0.5, 0.5));
 
                         match world_state.selected_totoro {
                             Some(idx) => {                                
@@ -1504,9 +1523,10 @@ fn main() {
                         current_item += 1;
                     }
                 }
-                entity.update_buffer(&transform_buffer, DEBUG_INSTANCED_ATTRIBUTE);
+                entity.update_transform_buffer(&transform_buffer, DEBUG_TRANSFORM_ATTRIBUTE);
+                entity.update_color_buffer(&color_buffer, DEBUG_COLOR_ATTRIBUTE);
             } else {                
-                entity.update_buffer(&[], DEBUG_INSTANCED_ATTRIBUTE);
+                entity.update_transform_buffer(&[], DEBUG_TRANSFORM_ATTRIBUTE);
             }
         }
 
@@ -1808,12 +1828,12 @@ fn main() {
                             {
                                 if let Some(pose) = &left_grip_pose {
                                     if let Some(entity) = scene_data.opaque_entities.get_mut_element(left_gadget_index) {
-                                        entity.update_single_transform(0, &xrutil::pose_to_mat4(pose, &world_from_tracking))
+                                        entity.update_single_transform(0, &xrutil::pose_to_mat4(pose, &world_from_tracking), 16);
                                     }
                                 }
                                 if let Some(pose) = &right_grip_pose {
                                     if let Some(entity) = scene_data.opaque_entities.get_mut_element(right_gadget_index) {
-                                        entity.update_single_transform(1, &xrutil::pose_to_mat4(pose, &world_from_tracking))
+                                        entity.update_single_transform(1, &xrutil::pose_to_mat4(pose, &world_from_tracking), 16);
                                     }
                                 }
                             }
@@ -1826,7 +1846,7 @@ fn main() {
                                     if let Some(p) = poses[i] {
                                         if let Some(entity) = scene_data.opaque_entities.get_mut_element(water_cylinder_entity_index) {
                                             let mm = xrutil::pose_to_mat4(&p, &world_from_tracking) * glm::scaling(scales[i]);
-                                            entity.update_single_transform(i, &mm);
+                                            entity.update_single_transform(i, &mm, 16);
                                         }
                                     }
                                 }
