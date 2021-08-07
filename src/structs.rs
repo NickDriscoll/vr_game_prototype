@@ -19,7 +19,8 @@ pub enum ClickAction {
     SelectTotoro,
     SpawnTotoro,
     FlickTotoro,
-    DeleteTotoro
+    DeleteTotoro,
+    MovePlayerSpawn
 }
 
 impl Default for ClickAction {
@@ -285,6 +286,7 @@ pub fn get_window_size(config: &Configuration) -> glm::TVec2<u32> {
 }
 
 pub struct WorldState {
+    pub player_spawn: glm::TVec3<f32>,
     pub totoros: OptionVec<Totoro>,
     pub selected_totoro: Option<usize>,
     pub terrain: Terrain,

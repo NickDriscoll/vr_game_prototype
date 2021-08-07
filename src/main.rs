@@ -662,6 +662,7 @@ fn main() {
     let terrain = Terrain::from_ozt(&format!("models/{}.ozt", level_name));
     println!("Loaded {} collision triangles from {}.ozt", terrain.indices.len() / 3, level_name);
     let mut world_state = WorldState {
+        player_spawn: glm::zero(),
         totoros: OptionVec::with_capacity(64),
         selected_totoro: None,
         terrain: Terrain::from_ozt(&format!("models/{}.ozt", level_name)),
@@ -773,6 +774,7 @@ fn main() {
     let mut full_screenshot_this_frame = false;
     let mut turbo_clicking = false;
     let mut viewing_collision = false;
+    let mut viewing_player_spawn = false;
     let mut showing_shadow_atlas = false;
     if let Some(_) = &xr_instance {
         hmd_pov = true;
@@ -1222,6 +1224,12 @@ fn main() {
                     }
 
                 }
+                ClickAction::MovePlayerSpawn => {                    
+                    let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
+                    if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
+                        world_state.player_spawn = point;
+                    }
+                }
                 ClickAction::FlickTotoro => {
                     let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
                     let hit_info = get_clicked_totoro(&mut world_state.totoros, &click_ray);
@@ -1494,14 +1502,20 @@ fn main() {
             entity.update_transform_buffer(&transform_buffer, STANDARD_INSTANCED_ATTRIBUTE);
         }
 
-        //Update the GPU instance buffer for the hit spheres
+        //Update the GPU instance buffer for the debug spheres
         if let Some(entity) = scene_data.transparent_entities.get_mut_element(debug_sphere_re_index) {
             let totoros = &world_state.totoros;
-            if viewing_collision {
-                let mut color_buffer = vec![0.0; totoros.count() * 4];
-                let mut transform_buffer = vec![0.0; totoros.count() * 16];
-                let mut current_item = 0;
+            let instances =  {
+                let mut acc = 0;
+                if viewing_collision {acc += totoros.count();}
+                if viewing_player_spawn { acc += 1; }
+                acc
+            };
 
+            let mut color_buffer = vec![0.0; instances * 4];
+            let mut transform_buffer = vec![0.0; instances * 16];
+            let mut current_item = 0;
+            if viewing_collision {
                 for i in 0..totoros.len() {
                     if let Some(totoro) = &totoros[i] {
                         let sph = totoro.collision_sphere();
@@ -1523,11 +1537,17 @@ fn main() {
                         current_item += 1;
                     }
                 }
-                entity.update_transform_buffer(&transform_buffer, DEBUG_TRANSFORM_ATTRIBUTE);
-                entity.update_color_buffer(&color_buffer, DEBUG_COLOR_ATTRIBUTE);
-            } else {                
-                entity.update_transform_buffer(&[], DEBUG_TRANSFORM_ATTRIBUTE);
             }
+
+            if viewing_player_spawn {
+                let player_spawn_matrix = glm::translation(&world_state.player_spawn) * uniform_scale(-0.3);
+                write_matrix_to_buffer(&mut transform_buffer, current_item, player_spawn_matrix);
+                write_vec4_to_buffer(&mut color_buffer, current_item, glm::vec4(0.0, 0.5, 0.0, 0.5));
+                current_item += 1;
+            }
+
+            entity.update_transform_buffer(&transform_buffer, DEBUG_TRANSFORM_ATTRIBUTE);
+            entity.update_color_buffer(&color_buffer, DEBUG_COLOR_ATTRIBUTE);
         }
 
         scene_data.sun_direction = glm::vec4_to_vec3(&(
@@ -1569,12 +1589,14 @@ fn main() {
                 do_radio_option(&imgui_ui, im_str!("Visualize shadow cascades"), &mut scene_data.fragment_flag, FragmentFlag::CascadeZones);
                 imgui_ui.checkbox(im_str!("View shadow atlas"), &mut showing_shadow_atlas);
                 imgui_ui.checkbox(im_str!("View collision volumes"), &mut viewing_collision);
+                imgui_ui.checkbox(im_str!("View player spawn"), &mut viewing_player_spawn);
                 imgui_ui.separator();
 
                 imgui_ui.text(im_str!("Click action"));
                 do_radio_option(&imgui_ui, im_str!("Spawn totoro"), &mut click_action, ClickAction::SpawnTotoro);
                 do_radio_option(&imgui_ui, im_str!("Select totoro"), &mut click_action, ClickAction::SelectTotoro);
                 do_radio_option(&imgui_ui, im_str!("Delete totoro"), &mut click_action, ClickAction::DeleteTotoro);
+                do_radio_option(&imgui_ui, im_str!("Move player spawn"), &mut click_action, ClickAction::MovePlayerSpawn);
                 imgui_ui.separator();
 
                 imgui_ui.text(im_str!("Environment controls:"));
