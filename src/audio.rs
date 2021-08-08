@@ -1,13 +1,14 @@
 use alto::{sys::ALint, Source, SourceState};
 use tfd::MessageBoxIcon;
 use std::fs::File;
-use std::io::{ErrorKind, Seek, SeekFrom};
+use std::io::{Seek, SeekFrom};
 use std::sync::mpsc::Receiver;
 use std::thread;
 use std::time::Duration;
 use crate::structs::Configuration;
 
-const DEFAULT_BGM_PATH: &str = "music/ikebukuro.mp3";
+pub const DEFAULT_BGM_PATH: &str = "music/cryptic_relics.mp3";
+
 const IDEAL_FRAMES_QUEUED: ALint = 5;
 
 //Represents the kinds of messages the audio system can receive from the 

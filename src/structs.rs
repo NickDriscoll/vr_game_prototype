@@ -20,7 +20,8 @@ pub enum ClickAction {
     SpawnTotoro,
     FlickTotoro,
     DeleteTotoro,
-    MovePlayerSpawn
+    MovePlayerSpawn,
+    MoveSelectedTotoro
 }
 
 impl Default for ClickAction {
@@ -68,10 +69,9 @@ pub struct Player {
 }
 
 impl Player {
-    pub const MAX_JUMPS: usize = 2;
+    pub const MAX_JUMPS: usize = 1;
 
     pub fn new(pos: glm::TVec3<f32>) -> Self {
-
         Player {
             tracking_position: pos,
             tracking_velocity: glm::zero(),            
@@ -140,6 +140,8 @@ impl Totoro {
 pub enum TotoroState {
     Relaxed,
     Meandering,
+    Startled,
+    Panicking,
     BrainDead
 }
 

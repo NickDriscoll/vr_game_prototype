@@ -1,7 +1,5 @@
 //#![allow(dead_code)]
-use crate::render::{RenderEntity, SceneData};
 use ozy::collision::LineSegment;
-use ozy::structs::OptionVec;
 
 pub const VALVE_INDEX_INTERACTION_PROFILE: &str =           "/interaction_profiles/valve/index_controller";
 pub const HTC_VIVE_INTERACTION_PROFILE: &str =              "/interaction_profiles/htc/vive_controller";
@@ -133,15 +131,6 @@ pub fn make_reference_space<G: xr::Graphics>(session: &Option<xr::Session<G>>, r
             }
         }
         None => { None }
-    }
-}
-
-pub unsafe fn entity_pose_update(entity_list: &mut OptionVec<RenderEntity>, entity_index: usize, instance_index: usize, pose: Option<xr::Posef>, world_from_tracking: &glm::TMat4<f32>) {
-    if let Some(p) = pose {
-        if let Some(entity) = entity_list.get_mut_element(entity_index) {
-            let mm = pose_to_mat4(&p, world_from_tracking);
-            entity.update_single_transform(instance_index, &mm, 16);
-        }
     }
 }
 

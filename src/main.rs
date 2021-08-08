@@ -79,7 +79,7 @@ fn main() {
                 int_options.insert(String::from(Configuration::WINDOWED_WIDTH), 1280);
                 int_options.insert(String::from(Configuration::WINDOWED_HEIGHT), 720);
                 string_options.insert(String::from(Configuration::LEVEL_NAME), String::from("recreate_night"));
-                string_options.insert(String::from(Configuration::MUSIC_NAME), String::from("music/cryptic_relics.mp3"));
+                string_options.insert(String::from(Configuration::MUSIC_NAME), String::from(audio::DEFAULT_BGM_PATH));
                 let c = Configuration {
                     int_options,
                     string_options
@@ -385,7 +385,8 @@ fn main() {
         gl::Enable(gl::MULTISAMPLE);                                    //Enable MSAA
         gl::Enable(gl::BLEND);											//Enable alpha blending
 		gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);			//Set blend func to (Cs * alpha + Cd * (1.0 - alpha))
-        gl::ClearColor(0.26, 0.4, 0.46, 1.0);							//Set the clear color
+        //gl::ClearColor(0.26, 0.4, 0.46, 1.0);							//Set the clear color
+        gl::ClearColor(0.1, 0.1, 0.1, 1.0);
 
 		#[cfg(gloutput)]
 		{
@@ -641,11 +642,6 @@ fn main() {
 
     //Initialize texture caching struct
     let mut texture_keeper = TextureKeeper::new();
-
-    //Player state
-    let mut player = Player::new(glm::zero());
-    let mut left_sticky_grab = false;
-    let mut right_sticky_grab = false;
     
     //Matrices for relating tracking space and world space
     let mut world_from_tracking = glm::identity();
@@ -683,7 +679,6 @@ fn main() {
     ));
     
     {
-
         //Load the scene data from the level file
         load_lvl(level_name, &mut world_state, &mut scene_data, &mut texture_keeper, standard_program);
         load_ent(&format!("maps/{}.ent", level_name), &mut scene_data, &mut world_state);        
@@ -727,6 +722,11 @@ fn main() {
 
         scene_data.transparent_entities.insert(re)
     };
+
+    //Player state
+    let mut player = Player::new(world_state.player_spawn);
+    let mut left_sticky_grab = false;
+    let mut right_sticky_grab = false;
 
     //Load gadget models
     let gadget_model_map = {
@@ -808,6 +808,7 @@ fn main() {
     while !window.should_close() {
         let imgui_io = imgui_context.io_mut();
         //Compute the number of seconds since the start of the last frame (i.e at 60fps, delta_time ~= 0.016667)
+        //The largest this value can be is 1.0 / 30.0
         let delta_time = {
             const MAX_DELTA_TIME: f32 = 1.0 / 30.0;
 			let frame_instant = Instant::now();
@@ -1071,7 +1072,7 @@ fn main() {
                                 if !floats_equal(glm::length(&water_gun_force), 0.0) && remaining_water > 0.0 {
                                     let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
                                     if !infinite_ammo {
-                                        remaining_water -= glm::length(&update_force);
+                                        remaining_water -= glm::length(&update_force) * 2.0;
                                     }
                                     let xz_scale = remaining_water / Gadget::MAX_ENERGY;
                                     pillar_scales[i].x = xz_scale;
@@ -1136,12 +1137,14 @@ fn main() {
 
         //Totoro update
         let totoro_speed = 3.0;
+        let totoro_awareness_radius = 5.0;
         for i in 0..world_state.totoros.len() {
             if let Some(totoro) = world_state.totoros.get_mut_element(i) {
                 //Do behavior based on AI state
+                let ai_time = elapsed_time - totoro.state_timer;
                 match totoro.state {
                     TotoroState::Relaxed => {
-                        if elapsed_time - totoro.state_timer >= 2.0 {
+                        if ai_time >= 2.0 {
                             totoro.state_timer = elapsed_time;
                             totoro.state = TotoroState::Meandering;
                             if glm::distance(&totoro.home, &totoro.position) > EPSILON {
@@ -1151,21 +1154,35 @@ fn main() {
                         }
                     }
                     TotoroState::Meandering => {
-                        if elapsed_time - totoro.state_timer >= 3.0 {
+                        if ai_time >= 3.0 {
                             totoro.state_timer = elapsed_time;
                             totoro.velocity = glm::vec3(0.0, 0.0, totoro.velocity.z);
                             totoro.state = TotoroState::Relaxed;
                         } else {
-                            let turn_speed = totoro_speed * 2.0;
-                            totoro.forward = glm::normalize(&lerp(&totoro.forward, &totoro.desired_forward, turn_speed * delta_time));
-                            
-                            if elapsed_time - totoro.state_timer >= 1.0 {
-                                totoro.desired_forward = glm::mat4_to_mat3(&glm::rotation(0.25 * glm::quarter_pi::<f32>() * rand_binomial(), &Z_UP)) * totoro.desired_forward;
-                            }
+                            //Check if the player is nearby
+                            if glm::distance(&player.tracked_segment.p1, &totoro.position) < totoro_awareness_radius {
+                                totoro.state = TotoroState::Startled;
+                            } else {
+                                let turn_speed = totoro_speed * 2.0;
+                                totoro.forward = glm::normalize(&lerp(&totoro.forward, &totoro.desired_forward, turn_speed * delta_time));
+                                
+                                if ai_time >= 1.0 {
+                                    totoro.desired_forward = glm::mat4_to_mat3(&glm::rotation(0.25 * glm::quarter_pi::<f32>() * rand_binomial(), &Z_UP)) * totoro.desired_forward;
+                                }
 
-                            let v = totoro.forward * totoro_speed;
-                            totoro.velocity = glm::vec3(v.x, v.y, totoro.velocity.z);
+                                let v = totoro.forward * totoro_speed;
+                                totoro.velocity = glm::vec3(v.x, v.y, totoro.velocity.z);
+                            }
                         }
+                    }
+                    TotoroState::Startled => {
+                        let new_forward = glm::normalize(&(player.tracked_segment.p1 - totoro.position));
+                        totoro.forward = new_forward;
+                        totoro.velocity = glm::vec3(0.0, 0.0, 100.0);
+                        totoro.state = TotoroState::Panicking;
+                    }
+                    TotoroState::Panicking => {
+
                     }
                     TotoroState::BrainDead => {}
                 }
@@ -1224,7 +1241,18 @@ fn main() {
                     }
 
                 }
-                ClickAction::MovePlayerSpawn => {                    
+                ClickAction::MoveSelectedTotoro => {
+                    if let Some(idx) = world_state.selected_totoro {
+                        let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
+                        if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
+                            if let Some(tot) = world_state.totoros.get_mut_element(idx) {
+                                tot.position = point;
+                                tot.home = point;
+                            }
+                        }
+                    }
+                }
+                ClickAction::MovePlayerSpawn => {
                     let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
                     if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
                         world_state.player_spawn = point;
@@ -1362,7 +1390,7 @@ fn main() {
 
             //Resolve player's attempt to stick to a wall
             if let Some(action) = &sticky_action {
-                let stick_sphere_radius = 0.1;
+                let stick_sphere_radius = 0.05;
                 match action {
                     StickData::Left(focus) => {
                         match player.stick_data {
@@ -1509,24 +1537,25 @@ fn main() {
                 let mut acc = 0;
                 if viewing_collision {acc += totoros.count();}
                 if viewing_player_spawn { acc += 1; }
+                acc += 2;       //Player's head/feet
                 acc
             };
 
             let mut color_buffer = vec![0.0; instances * 4];
             let mut transform_buffer = vec![0.0; instances * 16];
-            let mut current_item = 0;
+            let mut current_debug_sphere = 0;
             if viewing_collision {
                 for i in 0..totoros.len() {
                     if let Some(totoro) = &totoros[i] {
                         let sph = totoro.collision_sphere();
                         let mm = glm::translation(&sph.focus) * uniform_scale(-sph.radius);
-                        write_matrix_to_buffer(&mut transform_buffer, current_item, mm);
-                        write_vec4_to_buffer(&mut color_buffer, current_item, glm::vec4(0.0, 0.0, 0.5, 0.5));
+                        write_matrix_to_buffer(&mut transform_buffer, current_debug_sphere, mm);
+                        write_vec4_to_buffer(&mut color_buffer, current_debug_sphere, glm::vec4(0.0, 0.0, 0.5, 0.5));
 
                         match world_state.selected_totoro {
                             Some(idx) => {                                
                                 if idx == i {
-                                    entity.highlighted_item = Some(current_item);
+                                    entity.highlighted_item = Some(current_debug_sphere);
                                 }
                             }
                             None => {
@@ -1534,16 +1563,27 @@ fn main() {
                             }
                         }
 
-                        current_item += 1;
+                        current_debug_sphere += 1;
                     }
                 }
             }
 
             if viewing_player_spawn {
                 let player_spawn_matrix = glm::translation(&world_state.player_spawn) * uniform_scale(-0.3);
-                write_matrix_to_buffer(&mut transform_buffer, current_item, player_spawn_matrix);
-                write_vec4_to_buffer(&mut color_buffer, current_item, glm::vec4(0.0, 0.5, 0.0, 0.5));
-                current_item += 1;
+                write_matrix_to_buffer(&mut transform_buffer, current_debug_sphere, player_spawn_matrix);
+                write_vec4_to_buffer(&mut color_buffer, current_debug_sphere, glm::vec4(0.0, 0.5, 0.0, 0.5));
+                current_debug_sphere += 1;
+            }
+
+            if let Some(_) = &xr_instance {
+                let head_transform = glm::translation(&player.tracked_segment.p0) * uniform_scale(-0.2);
+                let foot_transform = glm::translation(&player.tracked_segment.p1) * uniform_scale(-0.2);
+                write_matrix_to_buffer(&mut transform_buffer, current_debug_sphere, head_transform);
+                write_vec4_to_buffer(&mut color_buffer, current_debug_sphere, glm::vec4(1.0, 0.7, 0.7, 0.4));
+                current_debug_sphere += 1;
+                write_matrix_to_buffer(&mut transform_buffer, current_debug_sphere, foot_transform);
+                write_vec4_to_buffer(&mut color_buffer, current_debug_sphere, glm::vec4(0.5, 0.5, 0.0, 0.4));
+                current_debug_sphere += 1;
             }
 
             entity.update_transform_buffer(&transform_buffer, DEBUG_TRANSFORM_ATTRIBUTE);
@@ -1715,23 +1755,29 @@ fn main() {
                                 scene_data.sun_yaw,
                                 scene_data.sun_color[0],
                                 scene_data.sun_color[1],
-                                scene_data.sun_color[2]
+                                scene_data.sun_color[2],
+                                world_state.player_spawn.x,
+                                world_state.player_spawn.y,
+                                world_state.player_spawn.z,
                             ];
 
+                            
+                            let size = size_of::<f32>() * (floats_to_write.len() + totoros.count() * 4) + size_of::<u32>();
+
                             //Convert to raw bytes and write to file
-                            let size = 4 * (floats_to_write.len() + totoros.count() * 3) + size_of::<u32>();
                             let mut bytes = Vec::with_capacity(size);
                             for i in 0..floats_to_write.len() {
                                 write_f32_to_buffer(&mut bytes, floats_to_write[i]);
                             }
 
-                            //Write totoro home positions
+                            //Write totoro data
                             write_u32_to_buffer(&mut bytes, totoros.count() as u32);
                             for i in 0..totoros.len() {
                                 if let Some(tot) = &totoros[i] {
                                     write_f32_to_buffer(&mut bytes, tot.home.x);
                                     write_f32_to_buffer(&mut bytes, tot.home.y);
                                     write_f32_to_buffer(&mut bytes, tot.home.z);
+                                    write_f32_to_buffer(&mut bytes, tot.scale);
                                 }
                             }
 
@@ -1796,10 +1842,12 @@ fn main() {
                         kill_totoro(&mut scene_data, &mut world_state.totoros, totoro_re_index, &mut world_state.selected_totoro, idx);
                     }
 
+                    imgui_ui.separator();
+                    do_radio_option(&imgui_ui, im_str!("Move totoro home"), &mut click_action, ClickAction::MoveSelectedTotoro);
+
                     token.end(&imgui_ui);
                 }
             }
-            
 
             //Shadow cascade viewer
             if showing_shadow_atlas {

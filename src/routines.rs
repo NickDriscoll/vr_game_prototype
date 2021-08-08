@@ -230,8 +230,6 @@ pub fn rand_binomial() -> f32 {
     rand::random::<f32>() - rand::random::<f32>()
 }
 
-
-
 pub fn load_lvl(level_name: &str, world_state: &mut WorldState, scene_data: &mut SceneData, texture_keeper: &mut TextureKeeper, terrain_program: GLuint) {    
     let level_load_error = |s: std::io::Error| {
         tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", level_name, s), MessageBoxIcon::Error);
@@ -302,11 +300,10 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
 
     match File::open(path) {
         Ok(mut file) => {
-
             let r = io::read_pascal_strings(&mut file, 1);
             let new_skybox = io_or_error(r, path)[0].clone();                                
 
-            let raw_floats = io_or_error(io::read_f32_data(&mut file, 6), path);
+            let raw_floats = io_or_error(io::read_f32_data(&mut file, 9), path);
 
             scene_data.ambient_strength = raw_floats[0];
             scene_data.sun_pitch = raw_floats[1];
@@ -314,12 +311,17 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
             scene_data.sun_color[0] = raw_floats[3];
             scene_data.sun_color[1] = raw_floats[4];
             scene_data.sun_color[2] = raw_floats[5];
+            world_state.player_spawn.x = raw_floats[6];
+            world_state.player_spawn.y = raw_floats[7];
+            world_state.player_spawn.z = raw_floats[8];
             
+            let floats_per_totoro = 4;
             let totoros_count = io_or_error(io::read_u32(&mut file), path);                
-            let raw_floats = io_or_error(io::read_f32_data(&mut file, totoros_count as usize * 3), path);
-            for i in (0..raw_floats.len()).step_by(3) {
-                let pos = glm::vec3(raw_floats[i], raw_floats[i + 1], raw_floats[i + 2]);
-                let tot = Totoro::new(pos, rand::random::<f32>() * 4.5 - 2.0);
+            let raw_floats = io_or_error(io::read_f32_data(&mut file, totoros_count as usize * floats_per_totoro), path);
+            for i in (0..raw_floats.len()).step_by(floats_per_totoro) {
+                let pos = glm::vec3(raw_floats[i], raw_floats[i + 1], raw_floats[i + 2]);                
+                let mut tot = Totoro::new(pos, rand::random::<f32>() * 4.5 - 2.0);
+                tot.scale = raw_floats[i + 3];;
                 world_state.totoros.insert(tot);
             }
 
