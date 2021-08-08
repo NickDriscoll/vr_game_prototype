@@ -61,6 +61,28 @@ impl RenderEntity {
         }
     }
 
+    pub unsafe fn init_new_instanced_buffer(&mut self, floats_per: usize, attribute: GLuint, attribute_buffer_idx: usize) {
+        gl::BindVertexArray(self.vao);
+
+        let data = vec![0.0f32; self.max_instances * floats_per];
+        let mut b = 0;
+        gl::GenBuffers(1, &mut b);
+        gl::BindBuffer(gl::ARRAY_BUFFER, b);
+        gl::BufferData(gl::ARRAY_BUFFER, (self.max_instances * floats_per * size_of::<GLfloat>()) as GLsizeiptr, &data[0] as *const f32 as *const c_void, gl::DYNAMIC_DRAW);
+        self.instanced_buffers[attribute_buffer_idx] = b;
+    
+        gl::VertexAttribPointer(
+            attribute,
+            floats_per as GLint,
+            gl::FLOAT,
+            gl::FALSE,
+            (floats_per * size_of::<GLfloat>()) as GLsizei,
+            ptr::null()
+        );
+        gl::EnableVertexAttribArray(attribute);
+        gl::VertexAttribDivisor(attribute, 1);
+    }
+
     pub fn from_ozy(path: &str, program: GLuint, instances: usize, instanced_attribute: GLuint, texture_keeper: &mut TextureKeeper, tex_params: &[(GLenum, GLenum)]) -> Self {
         match OzyMesh::load(&path) {
             Some(meshdata) => unsafe {

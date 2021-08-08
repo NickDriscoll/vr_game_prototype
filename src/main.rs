@@ -676,26 +676,7 @@ fn main() {
             &mut texture_keeper,
             &DEFAULT_TEX_PARAMS
         );
-        
-        gl::BindVertexArray(re.vao);
-
-        let data = vec![0.0f32; re.max_instances];
-        let mut b = 0;
-        gl::GenBuffers(1, &mut b);
-        gl::BindBuffer(gl::ARRAY_BUFFER, b);
-        gl::BufferData(gl::ARRAY_BUFFER, (re.max_instances * size_of::<GLfloat>()) as GLsizeiptr, &data[0] as *const f32 as *const c_void, gl::DYNAMIC_DRAW);
-        re.instanced_buffers[RenderEntity::HIGHLIGHTED_BUFFER_INDEX] = b;
-    
-        gl::VertexAttribPointer(
-            STANDARD_HIGHLIGHTED_ATTRIBUTE,
-            1,
-            gl::FLOAT,
-            gl::FALSE,
-            size_of::<GLfloat>() as GLsizei,
-            ptr::null()
-        );
-        gl::EnableVertexAttribArray(STANDARD_HIGHLIGHTED_ATTRIBUTE);
-        gl::VertexAttribDivisor(STANDARD_HIGHLIGHTED_ATTRIBUTE, 1);
+        re.init_new_instanced_buffer(1, STANDARD_HIGHLIGHTED_ATTRIBUTE, RenderEntity::HIGHLIGHTED_BUFFER_INDEX);
 
         scene_data.opaque_entities.insert(re)
     };
@@ -721,45 +702,9 @@ fn main() {
             DEBUG_TRANSFORM_ATTRIBUTE
         );
         re.cast_shadows = false;
-
-        gl::BindVertexArray(re.vao);
-
-        let data = vec![0.5f32; re.max_instances * 4];
-        let mut b = 0;
-        gl::GenBuffers(1, &mut b);
-        gl::BindBuffer(gl::ARRAY_BUFFER, b);
-        gl::BufferData(gl::ARRAY_BUFFER, (re.max_instances * 4 * size_of::<GLfloat>()) as GLsizeiptr, &data[0] as *const f32 as *const c_void, gl::DYNAMIC_DRAW);
-        re.instanced_buffers[RenderEntity::COLOR_BUFFER_INDEX] = b;
-    
-        gl::VertexAttribPointer(
-            DEBUG_COLOR_ATTRIBUTE,
-            4,
-            gl::FLOAT,
-            gl::FALSE,
-            (4 * size_of::<GLfloat>()) as GLsizei,
-            ptr::null()
-        );
-        gl::EnableVertexAttribArray(DEBUG_COLOR_ATTRIBUTE);
-        gl::VertexAttribDivisor(DEBUG_COLOR_ATTRIBUTE, 1);
-
-        let data = vec![0.0f32; re.max_instances];
-        let mut b = 0;
-        gl::GenBuffers(1, &mut b);
-        gl::BindBuffer(gl::ARRAY_BUFFER, b);
-        gl::BufferData(gl::ARRAY_BUFFER, (re.max_instances * size_of::<GLfloat>()) as GLsizeiptr, &data[0] as *const f32 as *const c_void, gl::DYNAMIC_DRAW);
-        re.instanced_buffers[RenderEntity::HIGHLIGHTED_BUFFER_INDEX] = b;
-    
-        gl::VertexAttribPointer(
-            DEBUG_HIGHLIGHTED_ATTRIBUTE,
-            1,
-            gl::FLOAT,
-            gl::FALSE,
-            size_of::<GLfloat>() as GLsizei,
-            ptr::null()
-        );
-        gl::EnableVertexAttribArray(DEBUG_HIGHLIGHTED_ATTRIBUTE);
-        gl::VertexAttribDivisor(DEBUG_HIGHLIGHTED_ATTRIBUTE, 1);
-
+        re.init_new_instanced_buffer(4, DEBUG_COLOR_ATTRIBUTE, RenderEntity::COLOR_BUFFER_INDEX);
+        re.init_new_instanced_buffer(1, DEBUG_HIGHLIGHTED_ATTRIBUTE, RenderEntity::HIGHLIGHTED_BUFFER_INDEX);
+        
         scene_data.transparent_entities.insert(re)
     };
 
