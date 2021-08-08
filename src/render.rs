@@ -156,15 +156,34 @@ impl RenderEntity {
     }
 
     unsafe fn write_buffer_to_GPU(&mut self, buffer: &[f32], attribute: GLuint, attribute_floats: usize, buffer_name_index: usize) {
-        if self.max_instances < self.active_instances as usize {
+        let mut current_buffer_size = 0;
+        gl::BindBuffer(gl::ARRAY_BUFFER, self.instanced_buffers[buffer_name_index]);
+        gl::GetBufferParameteriv(gl::ARRAY_BUFFER, gl::BUFFER_SIZE, &mut current_buffer_size);
+
+        if buffer.len() * size_of::<GLfloat>() > current_buffer_size as usize {
             let mut b = 0;
-            gl::DeleteBuffers(1, &self.instanced_buffers[Self::TRANSFORM_BUFFER_INDEX] as *const u32);
+            gl::DeleteBuffers(1, &self.instanced_buffers[buffer_name_index] as *const u32);
             gl::GenBuffers(1, &mut b);
             self.instanced_buffers[buffer_name_index] = b;
             
             gl::BindVertexArray(self.vao);
             gl::BindBuffer(gl::ARRAY_BUFFER, self.instanced_buffers[buffer_name_index]);
-            glutil::bind_new_transform_buffer(attribute);
+
+            //Bad branch bad
+            if attribute_floats == 16 {
+                glutil::bind_new_transform_buffer(attribute);
+            } else {                
+                gl::VertexAttribPointer(
+                    attribute,
+                    attribute_floats as GLint,
+                    gl::FLOAT,
+                    gl::FALSE,
+                    (attribute_floats * size_of::<GLfloat>()) as GLsizei,
+                    ptr::null()
+                );
+                gl::EnableVertexAttribArray(attribute);
+                gl::VertexAttribDivisor(attribute, 1);
+            }
 
             gl::BufferData(
                 gl::ARRAY_BUFFER,
@@ -193,11 +212,15 @@ impl RenderEntity {
     }
 
     pub fn update_color_buffer(&mut self, colors: &[f32], instanced_attribute: GLuint) {
+
+
         //Update GPU buffer storing transforms
         unsafe { self.write_buffer_to_GPU(colors, instanced_attribute, 4, Self::COLOR_BUFFER_INDEX); }
     }
 
     pub fn update_highlight_buffer(&mut self, bools: &[f32], instanced_attribute: GLuint) {
+
+
         //Update GPU buffer storing transforms
         unsafe { self.write_buffer_to_GPU(bools, instanced_attribute, 1, Self::HIGHLIGHTED_BUFFER_INDEX); }
     }
