@@ -49,7 +49,7 @@ impl RenderEntity {
         let transform_buffer = unsafe { glutil::create_instanced_transform_buffer(vao, instances, instanced_attribute) };
         RenderEntity {
             vao,
-            instanced_buffers: [0; Self::INSTANCED_BUFFERS_COUNT],
+            instanced_buffers: [0, 0, transform_buffer],
             index_count: index_count as GLint,
             active_instances: instances as GLint,
             max_instances: instances,
@@ -171,19 +171,11 @@ impl RenderEntity {
     }
 
     pub fn update_color_buffer(&mut self, colors: &[f32], instanced_attribute: GLuint) {
-        //Record the current active instance count
-        let new_instances = colors.len() as GLint / 4 as GLint;
-        self.active_instances = new_instances;
-
         //Update GPU buffer storing transforms
         unsafe { self.write_buffer_to_GPU(colors, instanced_attribute, 4, Self::COLOR_BUFFER_INDEX); }
     }
 
     pub fn update_highlight_buffer(&mut self, bools: &[f32], instanced_attribute: GLuint) {
-        //Record the current active instance count
-        let new_instances = bools.len() as GLint / 16 as GLint;
-        self.active_instances = new_instances;
-
         //Update GPU buffer storing transforms
         unsafe { self.write_buffer_to_GPU(bools, instanced_attribute, 1, Self::HIGHLIGHTED_BUFFER_INDEX); }
     }

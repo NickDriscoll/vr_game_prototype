@@ -718,6 +718,24 @@ fn main() {
         gl::EnableVertexAttribArray(DEBUG_COLOR_ATTRIBUTE);
         gl::VertexAttribDivisor(DEBUG_COLOR_ATTRIBUTE, 1);
 
+        let data = vec![0.0f32; re.max_instances];
+        let mut b = 0;
+        gl::GenBuffers(1, &mut b);
+        gl::BindBuffer(gl::ARRAY_BUFFER, b);
+        gl::BufferData(gl::ARRAY_BUFFER, (re.max_instances * size_of::<GLfloat>()) as GLsizeiptr, &data[0] as *const f32 as *const c_void, gl::DYNAMIC_DRAW);
+        re.instanced_buffers[RenderEntity::HIGHLIGHTED_BUFFER_INDEX] = b;
+    
+        gl::VertexAttribPointer(
+            DEBUG_HIGHLIGHTED_ATTRIBUTE,
+            1,
+            gl::FLOAT,
+            gl::FALSE,
+            size_of::<GLfloat>() as GLsizei,
+            ptr::null()
+        );
+        gl::EnableVertexAttribArray(DEBUG_HIGHLIGHTED_ATTRIBUTE);
+        gl::VertexAttribDivisor(DEBUG_HIGHLIGHTED_ATTRIBUTE, 1);
+
         scene_data.transparent_entities.insert(re)
     };
 
@@ -1521,7 +1539,7 @@ fn main() {
 
                     if let Some(idx) = world_state.selected_totoro {
                         if idx == i {
-
+                            highlighted_buffer[current_totoro] = 1.0;
                         }
                     }
 
