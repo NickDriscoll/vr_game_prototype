@@ -44,6 +44,7 @@ use crate::audio::{AudioCommand};
 use crate::gadget::*;
 use crate::structs::*;
 use crate::routines::*;
+use crate::render::*;
 
 #[cfg(windows)]
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
@@ -51,9 +52,6 @@ use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
 const EPSILON: f32 = 0.00001;
 const GRAVITY_VELOCITY_CAP: f32 = 10.0;        //m/s
 const ACCELERATION_GRAVITY: f32 = 20.0;        //20.0 m/s^2
-const STANDARD_INSTANCED_ATTRIBUTE: GLuint = 5;
-const DEBUG_COLOR_ATTRIBUTE: GLuint = 2;
-const DEBUG_TRANSFORM_ATTRIBUTE: GLuint = 3;
 
 //Default texture parameters for a 2D image texture
 const DEFAULT_TEX_PARAMS: [(GLenum, GLenum); 4] = [  
@@ -611,7 +609,7 @@ fn main() {
 
     //Initialize shadow data
     let cascade_size = 2048;
-    let shadow_rendertarget = unsafe { RenderTarget::new_shadow((cascade_size * render::SHADOW_CASCADES as GLint, cascade_size)) };
+    let shadow_rendertarget = unsafe { RenderTarget::new_shadow((cascade_size * render::SHADOW_CASCADE_COUNT as GLint, cascade_size)) };
     let sun_shadow_map = CascadedShadowMap::new(shadow_rendertarget, shadow_program, cascade_size);
 
     //Initialize scene data struct
@@ -622,7 +620,7 @@ fn main() {
     let shadow_cascade_distances = {
         //Manually picking the cascade distances because math is hard
         //The shadow cascade distances are negative bc they apply to view space
-        let mut cascade_distances = [0.0; render::SHADOW_CASCADES + 1];
+        let mut cascade_distances = [0.0; render::SHADOW_CASCADE_COUNT + 1];
         cascade_distances[0] = -(render::NEAR_DISTANCE);
         cascade_distances[1] = -(render::NEAR_DISTANCE + 5.0);
         cascade_distances[2] = -(render::NEAR_DISTANCE + 15.0);
@@ -673,7 +671,7 @@ fn main() {
         "models/totoro.ozy",
         standard_program,
         64,
-        STANDARD_INSTANCED_ATTRIBUTE,
+        STANDARD_TRANSFORM_ATTRIBUTE,
         &mut texture_keeper,
         &DEFAULT_TEX_PARAMS
     ));
@@ -707,7 +705,7 @@ fn main() {
         gl::GenBuffers(1, &mut b);
         gl::BindBuffer(gl::ARRAY_BUFFER, b);
         gl::BufferData(gl::ARRAY_BUFFER, (re.max_instances * 4 * size_of::<GLfloat>()) as GLsizeiptr, &data[0] as *const f32 as *const c_void, gl::DYNAMIC_DRAW);
-        re.color_buffer = b;
+        re.instanced_buffers[RenderEntity::COLOR_BUFFER_INDEX] = b;
     
         gl::VertexAttribPointer(
             DEBUG_COLOR_ATTRIBUTE,
@@ -730,8 +728,8 @@ fn main() {
 
     //Load gadget models
     let gadget_model_map = {
-        let wand_entity = RenderEntity::from_ozy("models/wand.ozy", standard_program, 2, STANDARD_INSTANCED_ATTRIBUTE, &mut texture_keeper, &DEFAULT_TEX_PARAMS);
-        let stick_entity = RenderEntity::from_ozy("models/stick.ozy", standard_program, 2, STANDARD_INSTANCED_ATTRIBUTE, &mut texture_keeper, &DEFAULT_TEX_PARAMS);
+        let wand_entity = RenderEntity::from_ozy("models/wand.ozy", standard_program, 2, STANDARD_TRANSFORM_ATTRIBUTE, &mut texture_keeper, &DEFAULT_TEX_PARAMS);
+        let stick_entity = RenderEntity::from_ozy("models/stick.ozy", standard_program, 2, STANDARD_TRANSFORM_ATTRIBUTE, &mut texture_keeper, &DEFAULT_TEX_PARAMS);
         let mut h = HashMap::new();
         h.insert(GadgetType::Net, wand_entity);
         h.insert(GadgetType::WaterCannon, stick_entity);
@@ -760,7 +758,7 @@ fn main() {
     let mut left_water_pillar_scale: glm::TVec3<f32> = glm::zero();
     let mut right_water_pillar_scale: glm::TVec3<f32> = glm::zero();
     let water_cylinder_path = "models/water_cylinder.ozy";
-    let water_cylinder_entity_index = scene_data.opaque_entities.insert(RenderEntity::from_ozy(water_cylinder_path, standard_program, 2, STANDARD_INSTANCED_ATTRIBUTE, &mut texture_keeper, &DEFAULT_TEX_PARAMS));
+    let water_cylinder_entity_index = scene_data.opaque_entities.insert(RenderEntity::from_ozy(water_cylinder_path, standard_program, 2, STANDARD_TRANSFORM_ATTRIBUTE, &mut texture_keeper, &DEFAULT_TEX_PARAMS));
 
     //Set up global flags lol
     let mut is_fullscreen = false;
@@ -775,6 +773,7 @@ fn main() {
     let mut turbo_clicking = false;
     let mut viewing_collision = false;
     let mut viewing_player_spawn = false;
+    let mut viewing_player_spheres = false;
     let mut showing_shadow_atlas = false;
     if let Some(_) = &xr_instance {
         hmd_pov = true;
@@ -1070,9 +1069,10 @@ fn main() {
         
                                 //Apply watergun force to player
                                 if !floats_equal(glm::length(&water_gun_force), 0.0) && remaining_water > 0.0 {
+                                    let drain_speed = 2.0;
                                     let update_force = water_gun_force * delta_time * MAX_WATER_PRESSURE;
                                     if !infinite_ammo {
-                                        remaining_water -= glm::length(&update_force) * 2.0;
+                                        remaining_water -= glm::length(&update_force) * drain_speed;
                                     }
                                     let xz_scale = remaining_water / Gadget::MAX_ENERGY;
                                     pillar_scales[i].x = xz_scale;
@@ -1105,6 +1105,8 @@ fn main() {
             }
         }
 
+        //Match the player's stuck hand to the stick position
+        //Apply gravity otherwise
         match &player.stick_data {
             Some(data) => {
                 match data {
@@ -1136,7 +1138,7 @@ fn main() {
         }
 
         //Totoro update
-        let totoro_speed = 3.0;
+        let totoro_speed = 2.0;
         let totoro_awareness_radius = 5.0;
         for i in 0..world_state.totoros.len() {
             if let Some(totoro) = world_state.totoros.get_mut_element(i) {
@@ -1180,9 +1182,12 @@ fn main() {
                         totoro.forward = new_forward;
                         totoro.velocity = glm::vec3(0.0, 0.0, 100.0);
                         totoro.state = TotoroState::Panicking;
+                        totoro.state_timer = elapsed_time;
                     }
                     TotoroState::Panicking => {
-
+                        if ai_time >= 1.0 {
+                            
+                        }
                     }
                     TotoroState::BrainDead => {}
                 }
@@ -1495,6 +1500,7 @@ fn main() {
         //Update the GPU instance buffer for the Totoros
         if let Some(entity) = scene_data.opaque_entities.get_mut_element(totoro_re_index) {
             let totoros = &world_state.totoros;
+            let mut highlighted_buffer = vec![0.0; totoros.count()];
             let mut transform_buffer = vec![0.0; totoros.count() * 16];
             let mut current_totoro = 0;
             for i in 0..totoros.len() {
@@ -1513,21 +1519,18 @@ fn main() {
                     let pos = [mm[12], mm[13], mm[14]];
                     send_or_error(&audio_sender, AudioCommand::SetSourcePosition(pos, i));
 
-                    match world_state.selected_totoro {
-                        Some(idx) => {                                
-                            if idx == i {
-                                entity.highlighted_item = Some(current_totoro);
-                            }
-                        }
-                        None => {
-                            entity.highlighted_item = None;
+                    if let Some(idx) = world_state.selected_totoro {
+                        if idx == i {
+
                         }
                     }
 
                     current_totoro += 1;
                 }
             }
-            entity.update_transform_buffer(&transform_buffer, STANDARD_INSTANCED_ATTRIBUTE);
+
+            entity.update_highlight_buffer(&highlighted_buffer, STANDARD_HIGHLIGHTED_ATTRIBUTE);
+            entity.update_transform_buffer(&transform_buffer, STANDARD_TRANSFORM_ATTRIBUTE);
         }
 
         //Update the GPU instance buffer for the debug spheres
@@ -1537,10 +1540,11 @@ fn main() {
                 let mut acc = 0;
                 if viewing_collision {acc += totoros.count();}
                 if viewing_player_spawn { acc += 1; }
-                acc += 2;       //Player's head/feet
+                if viewing_player_spheres { acc += 2; }
                 acc
             };
 
+            let mut highlighted_buffer = vec![0.0; instances];
             let mut color_buffer = vec![0.0; instances * 4];
             let mut transform_buffer = vec![0.0; instances * 16];
             let mut current_debug_sphere = 0;
@@ -1552,14 +1556,9 @@ fn main() {
                         write_matrix_to_buffer(&mut transform_buffer, current_debug_sphere, mm);
                         write_vec4_to_buffer(&mut color_buffer, current_debug_sphere, glm::vec4(0.0, 0.0, 0.5, 0.5));
 
-                        match world_state.selected_totoro {
-                            Some(idx) => {                                
-                                if idx == i {
-                                    entity.highlighted_item = Some(current_debug_sphere);
-                                }
-                            }
-                            None => {
-                                entity.highlighted_item = None;
+                        if let Some(idx) = world_state.selected_totoro {
+                            if idx == i {
+                                highlighted_buffer[current_debug_sphere] = 1.0;
                             }
                         }
 
@@ -1575,9 +1574,9 @@ fn main() {
                 current_debug_sphere += 1;
             }
 
-            if let Some(_) = &xr_instance {
-                let head_transform = glm::translation(&player.tracked_segment.p0) * uniform_scale(-0.2);
-                let foot_transform = glm::translation(&player.tracked_segment.p1) * uniform_scale(-0.2);
+            if viewing_player_spheres {
+                let head_transform = glm::translation(&player.tracked_segment.p0) * uniform_scale(-player.radius);
+                let foot_transform = glm::translation(&player.tracked_segment.p1) * uniform_scale(-player.radius);
                 write_matrix_to_buffer(&mut transform_buffer, current_debug_sphere, head_transform);
                 write_vec4_to_buffer(&mut color_buffer, current_debug_sphere, glm::vec4(1.0, 0.7, 0.7, 0.4));
                 current_debug_sphere += 1;
@@ -1586,6 +1585,7 @@ fn main() {
                 current_debug_sphere += 1;
             }
 
+            entity.update_highlight_buffer(&highlighted_buffer, DEBUG_HIGHLIGHTED_ATTRIBUTE);
             entity.update_transform_buffer(&transform_buffer, DEBUG_TRANSFORM_ATTRIBUTE);
             entity.update_color_buffer(&color_buffer, DEBUG_COLOR_ATTRIBUTE);
         }
@@ -1630,6 +1630,11 @@ fn main() {
                 imgui_ui.checkbox(im_str!("View shadow atlas"), &mut showing_shadow_atlas);
                 imgui_ui.checkbox(im_str!("View collision volumes"), &mut viewing_collision);
                 imgui_ui.checkbox(im_str!("View player spawn"), &mut viewing_player_spawn);
+
+                if let Some(_) = &xr_instance {
+                    imgui_ui.checkbox(im_str!("View player"), &mut viewing_player_spheres);
+                }
+
                 imgui_ui.separator();
 
                 imgui_ui.text(im_str!("Click action"));
@@ -1853,7 +1858,7 @@ fn main() {
             if showing_shadow_atlas {
                 let win = imgui::Window::new(im_str!("Shadow atlas"));
                 if let Some(win_token) = win.begin(&imgui_ui) {
-                    let im = imgui::Image::new(TextureId::new(scene_data.sun_shadow_map.rendertarget.texture as usize), [(cascade_size * render::SHADOW_CASCADES as i32 / 6) as f32, (cascade_size / 6) as f32]).uv1([1.0, -1.0]);
+                    let im = imgui::Image::new(TextureId::new(scene_data.sun_shadow_map.rendertarget.texture as usize), [(cascade_size * render::SHADOW_CASCADE_COUNT as i32 / 6) as f32, (cascade_size / 6) as f32]).uv1([1.0, -1.0]);
                     im.build(&imgui_ui);
 
                     win_token.end(&imgui_ui);

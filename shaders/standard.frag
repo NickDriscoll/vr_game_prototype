@@ -21,7 +21,7 @@ in vec4 shadow_space_pos[SHADOW_CASCADES];
 in vec3 f_world_pos;
 in vec2 scaled_uvs;
 in float clip_space_z;
-flat in int instance_id;
+in float f_highlighted;
 
 out vec4 frag_color;
 
@@ -152,7 +152,7 @@ void main() {
 
     //Optionally add rim-lighting
     vec3 rim_lighting = vec3(0.0);
-    if (highlighted_idx == instance_id) {
+    if (f_highlighted != 0.0) {
         float likeness = 1.0 - max(0.0, dot(view_direction, tangent_space_normal));
         float factor = smoothstep(0.5, 1.0, likeness);
         vec3 color = vec3(cos(5.0 * current_time) * 0.5 + 0.5, sin(6.0 * current_time) * 0.5 + 0.5, sin(8.0 * current_time) * 0.5 + 0.5);

@@ -8,7 +8,8 @@ layout (location = 3) in vec3 normal;
 layout (location = 4) in vec2 uv;
 
 //Instanced array
-layout (location = 5) in mat4 model_matrix;
+layout (location = 5) in float highlighted;
+layout (location = 6) in mat4 model_matrix;
 
 const int SHADOW_CASCADES = 6;
 
@@ -19,7 +20,7 @@ out vec4 shadow_space_pos[SHADOW_CASCADES];
 out vec3 f_world_pos;
 out vec2 scaled_uvs;
 out float clip_space_z;
-flat out int instance_id;
+out float f_highlighted;
 
 uniform mat4 view_projection;
 uniform mat4 shadow_matrices[SHADOW_CASCADES];
@@ -47,7 +48,7 @@ void main() {
     
     scaled_uvs = uv * uv_scale + uv_offset;
     
-    instance_id = gl_InstanceID;
+    f_highlighted = highlighted;
 
     gl_Position = view_projection * world_space_pos;
 

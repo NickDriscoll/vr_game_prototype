@@ -106,7 +106,8 @@ pub struct Totoro {
     pub forward: glm::TVec3<f32>,
     pub desired_forward: glm::TVec3<f32>,
     pub state: TotoroState,
-    pub state_timer: f32
+    pub state_timer: f32,
+    pub saw_player_last: f32
 }
 
 impl Totoro {
@@ -123,7 +124,8 @@ impl Totoro {
             forward,
             desired_forward: forward,
             state_timer: creation_time,
-            state: TotoroState::Relaxed
+            state: TotoroState::Relaxed,
+            saw_player_last: 0.0
         }
     }
 

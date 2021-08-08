@@ -126,13 +126,6 @@ pub fn kill_totoro(scene_data: &mut SceneData, totoros: &mut OptionVec<Totoro>, 
             *selected = None;
         }
     }
-    if let Some(ent) = scene_data.opaque_entities.get_mut_element(totoro_entity_index) {
-        if let Some(i) = ent.highlighted_item {
-            if i == idx {
-                ent.highlighted_item = None;
-            }
-        }
-    }
 }
 
 //Returns true if the difference between a and b is close enough to zero
@@ -275,8 +268,8 @@ pub fn load_lvl(level_name: &str, world_state: &mut WorldState, scene_data: &mut
                     }
                 };
 
-                let mut entity = RenderEntity::from_ozy(&format!("models/{}", ozy_name), terrain_program, matrices_count, STANDARD_INSTANCED_ATTRIBUTE, texture_keeper, &DEFAULT_TEX_PARAMS);
-                entity.update_transform_buffer(&matrix_floats, STANDARD_INSTANCED_ATTRIBUTE);                
+                let mut entity = RenderEntity::from_ozy(&format!("models/{}", ozy_name), terrain_program, matrices_count, STANDARD_TRANSFORM_ATTRIBUTE, texture_keeper, &DEFAULT_TEX_PARAMS);
+                entity.update_transform_buffer(&matrix_floats, STANDARD_TRANSFORM_ATTRIBUTE);                
                 world_state.terrain_re_indices.push(scene_data.opaque_entities.insert(entity));
             }                
         }

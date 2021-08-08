@@ -12,20 +12,26 @@ use gl::types::*;
 pub const NEAR_DISTANCE: f32 = 0.0625;
 pub const FAR_DISTANCE: f32 = 1000000.0;
 pub const MSAA_SAMPLES: u32 = 8;
-pub const SHADOW_CASCADES: usize = 6;
+pub const SHADOW_CASCADE_COUNT: usize = 6;
 pub const TEXTURE_MAP_COUNT: usize = 3;
+
+pub const STANDARD_HIGHLIGHTED_ATTRIBUTE: GLuint = 5;
+pub const STANDARD_TRANSFORM_ATTRIBUTE: GLuint = 6;
+
+pub const DEBUG_HIGHLIGHTED_ATTRIBUTE: GLuint = 2;
+pub const DEBUG_COLOR_ATTRIBUTE: GLuint = 3;
+pub const DEBUG_TRANSFORM_ATTRIBUTE: GLuint = 4;
+
 const CUBE_INDICES_COUNT: GLsizei = 36;
 
 //Represents all of the data necessary to render an object (potentially instanced) that exists in the 3D scene
 #[derive(Clone, Debug)]
 pub struct RenderEntity {
     pub vao: GLuint,
-    pub color_buffer: GLuint,
-    pub transform_buffer: GLuint,       //GPU buffer with one 4x4 homogenous transform per instance
+    pub instanced_buffers: [GLuint; Self::INSTANCED_BUFFERS_COUNT],         //GL names of instanced buffers
     pub index_count: GLint,
     pub active_instances: GLint,
 	pub max_instances: usize,
-    pub highlighted_item: Option<usize>,
     pub shader: GLuint,
     pub uv_offset: glm::TVec2<f32>,
     pub uv_scale: glm::TVec2<f32>,
@@ -34,20 +40,23 @@ pub struct RenderEntity {
 }
 
 impl RenderEntity {
+    pub const HIGHLIGHTED_BUFFER_INDEX: usize = 0;
+    pub const COLOR_BUFFER_INDEX: usize = 1;
+    pub const TRANSFORM_BUFFER_INDEX: usize = 2;
+    pub const INSTANCED_BUFFERS_COUNT: usize = 3;
+
     pub fn from_vao(vao: GLuint, program: GLuint, index_count: usize, instances: usize, instanced_attribute: GLuint) -> Self {
         let transform_buffer = unsafe { glutil::create_instanced_transform_buffer(vao, instances, instanced_attribute) };
         RenderEntity {
             vao,
-            transform_buffer,
-            color_buffer: 0,
+            instanced_buffers: [0; Self::INSTANCED_BUFFERS_COUNT],
             index_count: index_count as GLint,
             active_instances: instances as GLint,
             max_instances: instances,
-            highlighted_item: None,
             shader: program,
             uv_offset: glm::zero(),
             uv_scale: glm::zero(),
-            textures: [0; 3],
+            textures: [0; TEXTURE_MAP_COUNT],
             cast_shadows: true
         }
     }
@@ -96,12 +105,10 @@ impl RenderEntity {
                 let transform_buffer = glutil::create_instanced_transform_buffer(vao, instances, instanced_attribute);
                 RenderEntity {
                     vao,
-                    transform_buffer,
-                    color_buffer: 0,
+                    instanced_buffers: [0, 0, transform_buffer],
                     index_count: meshdata.vertex_array.indices.len() as GLint,
                     active_instances: instances as GLint,
                     max_instances: instances,
-                    highlighted_item: None,
                     shader: program,                    
                     textures: [albedo, normal, roughness],
                     uv_scale: glm::vec2(1.0, 1.0),
@@ -117,7 +124,7 @@ impl RenderEntity {
     }
 
     pub unsafe fn update_single_transform(&mut self, idx: usize, matrix: &glm::TMat4<f32>, attribute_size: usize) {
-        gl::BindBuffer(gl::ARRAY_BUFFER, self.transform_buffer);
+        gl::BindBuffer(gl::ARRAY_BUFFER, self.instanced_buffers[Self::TRANSFORM_BUFFER_INDEX]);
         gl::BufferSubData(
             gl::ARRAY_BUFFER,
             (attribute_size * idx * size_of::<GLfloat>()) as GLsizeiptr,
@@ -126,74 +133,59 @@ impl RenderEntity {
         );
     }
 
+    unsafe fn write_buffer_to_GPU(&mut self, buffer: &[f32], attribute: GLuint, attribute_floats: usize, buffer_name_index: usize) {
+        if self.max_instances < self.active_instances as usize {
+            let mut b = 0;
+            gl::DeleteBuffers(1, &self.instanced_buffers[Self::TRANSFORM_BUFFER_INDEX] as *const u32);
+            gl::GenBuffers(1, &mut b);
+            self.instanced_buffers[buffer_name_index] = b;
+            
+            gl::BindVertexArray(self.vao);
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.instanced_buffers[buffer_name_index]);
+            glutil::bind_new_transform_buffer(attribute);
+
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (self.active_instances as usize * attribute_floats * size_of::<GLfloat>()) as GLsizeiptr,
+                &buffer[0] as *const GLfloat as *const c_void,
+                gl::DYNAMIC_DRAW
+            );
+        } else if buffer.len() > 0 {
+            gl::BindBuffer(gl::ARRAY_BUFFER, self.instanced_buffers[buffer_name_index]);
+            gl::BufferSubData(
+                gl::ARRAY_BUFFER,
+                0 as GLsizeiptr,
+                (buffer.len() * size_of::<GLfloat>()) as GLsizeiptr,
+                &buffer[0] as *const GLfloat as *const c_void
+            );
+        }
+    }
+
     pub fn update_transform_buffer(&mut self, transforms: &[f32], instanced_attribute: GLuint) {
         //Record the current active instance count
         let new_instances = transforms.len() as GLint / 16 as GLint;
         self.active_instances = new_instances;
 
         //Update GPU buffer storing transforms
-		unsafe {
-            if self.max_instances < self.active_instances as usize {
-                let mut b = 0;
-                gl::DeleteBuffers(1, &self.transform_buffer as *const u32);
-                gl::GenBuffers(1, &mut b);
-                self.transform_buffer = b;
-                
-                gl::BindVertexArray(self.vao);
-                gl::BindBuffer(gl::ARRAY_BUFFER, self.transform_buffer);
-                glutil::bind_new_transform_buffer(instanced_attribute);
-
-                gl::BufferData(
-                    gl::ARRAY_BUFFER,
-                    (self.active_instances as usize * 16 * size_of::<GLfloat>()) as GLsizeiptr,
-                    &transforms[0] as *const GLfloat as *const c_void,
-                    gl::DYNAMIC_DRAW
-                );
-            } else if transforms.len() > 0 {
-                gl::BindBuffer(gl::ARRAY_BUFFER, self.transform_buffer);
-                gl::BufferSubData(
-                    gl::ARRAY_BUFFER,
-                    0 as GLsizeiptr,
-                    (transforms.len() * size_of::<GLfloat>()) as GLsizeiptr,
-                    &transforms[0] as *const GLfloat as *const c_void
-                );
-            }
-        }
+        unsafe { self.write_buffer_to_GPU(transforms, instanced_attribute, 16, Self::TRANSFORM_BUFFER_INDEX); }
     }
 
-    pub fn update_color_buffer(&mut self, transforms: &[f32], instanced_attribute: GLuint) {
+    pub fn update_color_buffer(&mut self, colors: &[f32], instanced_attribute: GLuint) {
         //Record the current active instance count
-        let new_instances = transforms.len() as GLint / 4 as GLint;
+        let new_instances = colors.len() as GLint / 4 as GLint;
         self.active_instances = new_instances;
 
         //Update GPU buffer storing transforms
-		unsafe {
-            if self.max_instances < self.active_instances as usize {
-                let mut b = 0;
-                gl::DeleteBuffers(1, &self.color_buffer as *const u32);
-                gl::GenBuffers(1, &mut b);
-                self.color_buffer = b;
-                
-                gl::BindVertexArray(self.vao);
-                gl::BindBuffer(gl::ARRAY_BUFFER, self.color_buffer);
-                glutil::bind_new_transform_buffer(instanced_attribute);
+        unsafe { self.write_buffer_to_GPU(colors, instanced_attribute, 4, Self::COLOR_BUFFER_INDEX); }
+    }
 
-                gl::BufferData(
-                    gl::ARRAY_BUFFER,
-                    (self.active_instances as usize * 4 * size_of::<GLfloat>()) as GLsizeiptr,
-                    &transforms[0] as *const GLfloat as *const c_void,
-                    gl::DYNAMIC_DRAW
-                );
-            } else if transforms.len() > 0 {
-                gl::BindBuffer(gl::ARRAY_BUFFER, self.color_buffer);
-                gl::BufferSubData(
-                    gl::ARRAY_BUFFER,
-                    0 as GLsizeiptr,
-                    (transforms.len() * size_of::<GLfloat>()) as GLsizeiptr,
-                    &transforms[0] as *const GLfloat as *const c_void
-                );
-            }
-        }
+    pub fn update_highlight_buffer(&mut self, bools: &[f32], instanced_attribute: GLuint) {
+        //Record the current active instance count
+        let new_instances = bools.len() as GLint / 16 as GLint;
+        self.active_instances = new_instances;
+
+        //Update GPU buffer storing transforms
+        unsafe { self.write_buffer_to_GPU(bools, instanced_attribute, 1, Self::HIGHLIGHTED_BUFFER_INDEX); }
     }
 }
 
@@ -201,8 +193,8 @@ pub struct CascadedShadowMap {
     pub rendertarget: RenderTarget,             //Rendertarget for the shadow atlas
     pub program: GLuint,                        //Associated program name
     pub resolution: GLint,                      //The individual cascades are always squares
-    pub matrices: [glm::TMat4<f32>; SHADOW_CASCADES],
-    pub clip_space_distances: [f32; SHADOW_CASCADES + 1]
+    pub matrices: [glm::TMat4<f32>; SHADOW_CASCADE_COUNT],
+    pub clip_space_distances: [f32; SHADOW_CASCADE_COUNT + 1]
 }
 
 impl CascadedShadowMap {
@@ -211,8 +203,8 @@ impl CascadedShadowMap {
             rendertarget,
             program,
             resolution,
-            matrices: [glm::identity(); SHADOW_CASCADES],
-            clip_space_distances: [0.0; SHADOW_CASCADES + 1]
+            matrices: [glm::identity(); SHADOW_CASCADE_COUNT],
+            clip_space_distances: [0.0; SHADOW_CASCADE_COUNT + 1]
         }
     }
 }
@@ -241,8 +233,8 @@ impl Default for SceneData {
             rendertarget,
             program: 0,
             resolution: 0,
-            matrices: [glm::identity(); SHADOW_CASCADES],
-            clip_space_distances: [0.0; SHADOW_CASCADES + 1],
+            matrices: [glm::identity(); SHADOW_CASCADE_COUNT],
+            clip_space_distances: [0.0; SHADOW_CASCADE_COUNT + 1],
         };
 
         SceneData {
@@ -348,12 +340,6 @@ unsafe fn render_entity(opt_entity: &Option<RenderEntity>, scene_data: &SceneDat
         glutil::bind_vector2(p, "uv_scale", &entity.uv_scale);
         glutil::bind_vector2(p, "uv_offset", &entity.uv_offset);
 
-        let highlight_idx = match entity.highlighted_item {
-            Some(idx) => { idx as GLint }
-            None => { -1 }
-        };
-        glutil::bind_int(p, "highlighted_idx", highlight_idx);
-
         //fragment flag stuff
         let flag_names = ["visualize_normals", "visualize_lod", "visualize_shadowed", "visualize_cascade_zone"];
         for name in flag_names.iter() {
@@ -380,7 +366,7 @@ unsafe fn render_entity(opt_entity: &Option<RenderEntity>, scene_data: &SceneDat
 pub unsafe fn cascaded_shadow_map(shadow_map: &CascadedShadowMap, entities: &[Option<RenderEntity>]) {
     shadow_map.rendertarget.framebuffer.bind();
     gl::UseProgram(shadow_map.program);
-    for i in 0..SHADOW_CASCADES {
+    for i in 0..SHADOW_CASCADE_COUNT {
         //Configure rendering for this cascade
         glutil::bind_matrix4(shadow_map.program, "view_projection", &shadow_map.matrices[i]);
         gl::Viewport(i as GLint * shadow_map.resolution, 0, shadow_map.resolution, shadow_map.resolution);
@@ -396,15 +382,15 @@ pub unsafe fn cascaded_shadow_map(shadow_map: &CascadedShadowMap, entities: &[Op
     }
 }
 
-pub fn compute_shadow_cascade_matrices(shadow_cascade_distances: &[f32; SHADOW_CASCADES + 1], shadow_view: &glm::TMat4<f32>, v_mat: &glm::TMat4<f32>, projection: &glm::TMat4<f32>) -> [glm::TMat4<f32>; SHADOW_CASCADES] {       
-    let mut out_mats = [glm::identity(); SHADOW_CASCADES];
+pub fn compute_shadow_cascade_matrices(shadow_cascade_distances: &[f32; SHADOW_CASCADE_COUNT + 1], shadow_view: &glm::TMat4<f32>, v_mat: &glm::TMat4<f32>, projection: &glm::TMat4<f32>) -> [glm::TMat4<f32>; SHADOW_CASCADE_COUNT] {       
+    let mut out_mats = [glm::identity(); SHADOW_CASCADE_COUNT];
 
     let shadow_from_view = shadow_view * glm::affine_inverse(*v_mat);
     let fovx = f32::atan(1.0 / projection[0]);
     let fovy = f32::atan(1.0 / projection[5]);
 
     //Loop computes the shadow matrices for this frame
-    for i in 0..SHADOW_CASCADES {
+    for i in 0..SHADOW_CASCADE_COUNT {
         //Near and far distances for this sub-frustum
         let z0 = shadow_cascade_distances[i];
         let z1 = shadow_cascade_distances[i + 1];
