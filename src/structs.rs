@@ -97,7 +97,15 @@ pub fn set_player_falling(player: &mut Player) {
     player.movement_state = MoveState::Falling;
 }
 
-//But what _is_ a Totoro?
+pub fn reset_player_position(world_state: &mut WorldState) {    
+    world_state.player.tracking_position = world_state.player_spawn;
+    world_state.player.tracking_velocity = glm::zero();
+    world_state.player.tracked_segment = LineSegment::zero();
+    world_state.player.last_tracked_segment = LineSegment::zero();
+    world_state.player.jumps_remaining = Player::MAX_JUMPS;
+    world_state.player.movement_state = MoveState::Falling;
+}
+
 pub struct Totoro {
     pub position: glm::TVec3<f32>,
     pub velocity: glm::TVec3<f32>,
@@ -290,6 +298,7 @@ pub fn get_window_size(config: &Configuration) -> glm::TVec2<u32> {
 }
 
 pub struct WorldState {
+    pub player: Player,
     pub player_spawn: glm::TVec3<f32>,
     pub totoros: OptionVec<Totoro>,
     pub selected_totoro: Option<usize>,

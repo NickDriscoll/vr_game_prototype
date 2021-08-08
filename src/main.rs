@@ -653,13 +653,19 @@ fn main() {
         None => { "testmap" }
     };
 
+    //Player state
+    let mut player = Player::new(glm::zero());
+    let mut left_sticky_grab = false;
+    let mut right_sticky_grab = false;
+
     let terrain = Terrain::from_ozt(&format!("models/{}.ozt", level_name));
     println!("Loaded {} collision triangles from {}.ozt", terrain.indices.len() / 3, level_name);
     let mut world_state = WorldState {
+        player,
         player_spawn: glm::zero(),
         totoros: OptionVec::with_capacity(64),
         selected_totoro: None,
-        terrain: Terrain::from_ozt(&format!("models/{}.ozt", level_name)),
+        terrain,
         terrain_re_indices: Vec::new(),
         skybox_strings: Vec::new(),
         level_name: String::new(),
@@ -692,7 +698,7 @@ fn main() {
     let debug_sphere_re_index = unsafe {
         let segments = 16;
         let rings = 16;
-        let vao = ozy::prims::debug_sphere_vao(1.0, segments, rings, [0.0, 0.0, 1.0, 0.4]);
+        let vao = ozy::prims::debug_sphere_vao(1.0, segments, rings);
 
         let mut re = RenderEntity::from_vao(
             vao,
@@ -707,11 +713,6 @@ fn main() {
         
         scene_data.transparent_entities.insert(re)
     };
-
-    //Player state
-    let mut player = Player::new(world_state.player_spawn);
-    let mut left_sticky_grab = false;
-    let mut right_sticky_grab = false;
 
     //Load gadget models
     let gadget_model_map = {
@@ -940,16 +941,16 @@ fn main() {
                         let hand_space_vec = glm::vec4(state.current_state.x, state.current_state.y, 0.0, 0.0);
                         let magnitude = glm::length(&hand_space_vec);
                         if magnitude < DEADZONE_MAGNITUDE {
-                            if player.movement_state == MoveState::Grounded {                                
-                                player.tracking_velocity.x = 0.0;
-                                player.tracking_velocity.y = 0.0;
+                            if world_state.player.movement_state == MoveState::Grounded {                                
+                                world_state.player.tracking_velocity.x = 0.0;
+                                world_state.player.tracking_velocity.y = 0.0;
                             }
                         } else {
                             //World space untreated vector
                             let untreated = xrutil::pose_to_mat4(&pose, &world_from_tracking) * hand_space_vec;
                             let ugh = glm::normalize(&glm::vec3(untreated.x, untreated.y, 0.0)) * MOVEMENT_SPEED * magnitude;
-                            player.tracking_velocity = glm::vec3(ugh.x, ugh.y, player.tracking_velocity.z);
-                            player.movement_state = MoveState::Falling;
+                            world_state.player.tracking_velocity = glm::vec3(ugh.x, ugh.y, world_state.player.tracking_velocity.z);
+                            world_state.player.movement_state = MoveState::Falling;
                         }
                     }
                 }
@@ -989,9 +990,9 @@ fn main() {
                         match gadgets[i] {
                             GadgetType::Net => {
                                 if state.changed_since_last_sync && state.current_state == 1.0 {
-                                    if player.jumps_remaining > 0 {
-                                        player.tracking_velocity.z = 10.0;
-                                        player.jumps_remaining -= 1;
+                                    if world_state.player.jumps_remaining > 0 {
+                                        world_state.player.tracking_velocity.z = 10.0;
+                                        world_state.player.jumps_remaining -= 1;
                                     }
                                 }
                             }
@@ -1001,14 +1002,14 @@ fn main() {
                                         let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
                                         let grip_position = glm::vec4_to_vec3(&(hand_transform * glm::vec4(0.0, 0.0, 0.0, 1.0)));
                                         if i == 0 && !left_sticky_grab {
-                                            match player.stick_data {
+                                            match world_state.player.stick_data {
                                                 Some(StickData::Left(_)) => {}
                                                 _ => {
                                                     sticky_action = Some(StickData::Left(grip_position));
                                                 }
                                             }
                                         } else if i == 1 && !right_sticky_grab {
-                                            match player.stick_data {
+                                            match world_state.player.stick_data {
                                                 Some(StickData::Right(_)) => {}
                                                 _ => {
                                                     sticky_action = Some(StickData::Right(grip_position));
@@ -1024,12 +1025,12 @@ fn main() {
                                         if i == 0 { left_sticky_grab = false; }
                                         else if i == 1 { right_sticky_grab = false; }
 
-                                        match player.stick_data {
+                                        match &world_state.player.stick_data {
                                             Some(StickData::Left(_)) => {
-                                                if i == 0 { unstick(&mut player); }
+                                                if i == 0 { unstick(&mut world_state.player); }
                                             }
                                             Some(StickData::Right(_)) => {
-                                                if i == 1 { unstick(&mut player); }
+                                                if i == 1 { unstick(&mut world_state.player); }
                                             }
                                             None => {}
                                         }
@@ -1048,8 +1049,8 @@ fn main() {
                     
                                     if state.current_state > 0.0 {
                                         pillar_scales[i].y = 100.0;
-                                        if player.movement_state != MoveState::Falling {
-                                            set_player_falling(&mut player);
+                                        if world_state.player.movement_state != MoveState::Falling {
+                                            set_player_falling(&mut world_state.player);
                                         }
                                     }
                                 }
@@ -1064,7 +1065,7 @@ fn main() {
                                     let xz_scale = remaining_water / Gadget::MAX_ENERGY;
                                     pillar_scales[i].x = xz_scale;
                                     pillar_scales[i].z = xz_scale;
-                                    player.tracking_velocity += update_force;
+                                    world_state.player.tracking_velocity += update_force;
         
                                     if let Some(entity) = scene_data.opaque_entities.get_mut_element(water_cylinder_entity_index) {
                                         //Update the water gun's pillar of water
@@ -1083,42 +1084,42 @@ fn main() {
             //Emergency respawn button
             if let Some(state) = right_trackpad_force_state {
                 if state.changed_since_last_sync && state.current_state {
-                    reset_player_position(&mut player);
+                    reset_player_position(&mut world_state);
                 }
             }
 
-            if player.movement_state != MoveState::Falling {
+            if world_state.player.movement_state != MoveState::Falling {
                 remaining_water = Gadget::MAX_ENERGY;
             }
         }
 
         //Match the player's stuck hand to the stick position
         //Apply gravity otherwise
-        match &player.stick_data {
+        match &world_state.player.stick_data {
             Some(data) => {
                 match data {
                     StickData::Left(stick_point) => {
                         if let Some(pose) = xrutil::locate_space(&left_hand_aim_space, &tracking_space, last_xr_render_time) {
                             let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
                             let grip_position = glm::vec4_to_vec3(&(hand_transform * glm::vec4(0.0, 0.0, 0.0, 1.0)));
-                            player.tracking_position += stick_point - grip_position;
+                            world_state.player.tracking_position += stick_point - grip_position;
                         }
                     }                    
                     StickData::Right(stick_point) => {
                         if let Some(pose) = xrutil::locate_space(&right_hand_aim_space, &tracking_space, last_xr_render_time) {
                             let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
                             let grip_position = glm::vec4_to_vec3(&(hand_transform * glm::vec4(0.0, 0.0, 0.0, 1.0)));
-                            player.tracking_position += stick_point - grip_position;
+                            world_state.player.tracking_position += stick_point - grip_position;
                         }
                     }
                 }
             }
             None => {
                 //Apply gravity to the player's velocity
-                if player.movement_state != MoveState::Grounded {
-                    player.tracking_velocity.z -= ACCELERATION_GRAVITY * delta_time;
-                    if player.tracking_velocity.z > GRAVITY_VELOCITY_CAP {
-                        player.tracking_velocity.z = GRAVITY_VELOCITY_CAP;
+                if world_state.player.movement_state != MoveState::Grounded {
+                    world_state.player.tracking_velocity.z -= ACCELERATION_GRAVITY * delta_time;
+                    if world_state.player.tracking_velocity.z > GRAVITY_VELOCITY_CAP {
+                        world_state.player.tracking_velocity.z = GRAVITY_VELOCITY_CAP;
                     }
                 }
             }
@@ -1149,7 +1150,7 @@ fn main() {
                             totoro.state = TotoroState::Relaxed;
                         } else {
                             //Check if the player is nearby
-                            if glm::distance(&player.tracked_segment.p1, &totoro.position) < totoro_awareness_radius {
+                            if glm::distance(&world_state.player.tracked_segment.p1, &totoro.position) < totoro_awareness_radius {
                                 totoro.state = TotoroState::Startled;
                             } else {
                                 let turn_speed = totoro_speed * 2.0;
@@ -1165,7 +1166,7 @@ fn main() {
                         }
                     }
                     TotoroState::Startled => {
-                        let new_forward = glm::normalize(&(player.tracked_segment.p1 - totoro.position));
+                        let new_forward = glm::normalize(&(world_state.player.tracked_segment.p1 - totoro.position));
                         totoro.forward = new_forward;
                         totoro.velocity = glm::vec3(0.0, 0.0, 100.0);
                         totoro.state = TotoroState::Panicking;
@@ -1272,20 +1273,28 @@ fn main() {
 
         //Apply a speed limit to player movement
         const PLAYER_SPEED_LIMIT: f32 = 20.0;
-        let velocity_mag = glm::length(&player.tracking_velocity);
-        if velocity_mag > PLAYER_SPEED_LIMIT {
-            player.tracking_velocity = player.tracking_velocity / velocity_mag * PLAYER_SPEED_LIMIT;
+        {
+            let player = &mut world_state.player;
+            if player.tracking_velocity.x > PLAYER_SPEED_LIMIT {
+                player.tracking_velocity.x = PLAYER_SPEED_LIMIT;
+            }
+            if player.tracking_velocity.y > PLAYER_SPEED_LIMIT {
+                player.tracking_velocity.y = PLAYER_SPEED_LIMIT;
+            }
+            if player.tracking_velocity.z > PLAYER_SPEED_LIMIT {
+                player.tracking_velocity.z = PLAYER_SPEED_LIMIT;
+            }
         }
         
         //Update tracking space location
-        player.tracking_position += player.tracking_velocity * delta_time;
-        world_from_tracking = glm::translation(&player.tracking_position);
+        world_state.player.tracking_position += world_state.player.tracking_velocity * delta_time;
+        world_from_tracking = glm::translation(&world_state.player.tracking_position);
 
         //Collision handling section
 
         //The user is considered to be always standing on the ground in tracking space        
-        player.last_tracked_segment = player.tracked_segment.clone();
-        player.tracked_segment = xrutil::tracked_player_segment(&view_space, &tracking_space, last_xr_render_time, &world_from_tracking);
+        world_state.player.last_tracked_segment = world_state.player.tracked_segment.clone();
+        world_state.player.tracked_segment = xrutil::tracked_player_segment(&view_space, &tracking_space, last_xr_render_time, &world_from_tracking);
 
         //We try to do all work related to terrain collision here in order
         //to avoid iterating over all of the triangles more than once
@@ -1327,16 +1336,16 @@ fn main() {
             {
                 //Coarse test with sphere
                 let player_sphere = Sphere {
-                    focus: midpoint(&(player.tracked_segment.p0 + glm::vec3(0.0, 0.0, player.radius)), &player.tracked_segment.p1),
-                    radius: glm::distance(&(player.tracked_segment.p0 + glm::vec3(0.0, 0.0, player.radius)), &player.tracked_segment.p1)
+                    focus: midpoint(&(world_state.player.tracked_segment.p0 + glm::vec3(0.0, 0.0, world_state.player.radius)), &world_state.player.tracked_segment.p1),
+                    radius: glm::distance(&(world_state.player.tracked_segment.p0 + glm::vec3(0.0, 0.0, world_state.player.radius)), &world_state.player.tracked_segment.p1)
                 };
                 if glm::distance(&player_sphere.focus, &triangle_sphere.focus) < player_sphere.radius + triangle_sphere.radius {
                     let player_capsule = Capsule {
                         segment: LineSegment {
-                            p0: player.tracked_segment.p0,
-                            p1: player.tracked_segment.p1 + glm::vec3(0.0, 0.0, player.radius)
+                            p0: world_state.player.tracked_segment.p0,
+                            p1: world_state.player.tracked_segment.p1 + glm::vec3(0.0, 0.0, world_state.player.radius)
                         },
-                        radius: player.radius
+                        radius: world_state.player.radius
                     };
                     let capsule_ray = Ray {
                         origin: player_capsule.segment.p0,
@@ -1359,7 +1368,7 @@ fn main() {
                     let collision_resolution_vector = {
                         let s = Sphere {
                             focus: capsule_ref,
-                            radius: player.radius
+                            radius: world_state.player.radius
                         };
                         triangle_collide_sphere(&s, &triangle, &triangle_sphere)
                     };
@@ -1367,14 +1376,14 @@ fn main() {
                         if floats_equal(glm::dot(&glm::normalize(&vec), &triangle.normal), 1.0) {
                             let dot_z_up = glm::dot(&triangle.normal, &Z_UP);                        
                             if dot_z_up >= MIN_NORMAL_LIKENESS {
-                                let t = (glm::dot(&triangle.normal, &(triangle.a - capsule_ref)) + player.radius) / dot_z_up;
-                                player.tracking_position += Z_UP * t;
-                                ground_player(&mut player, &mut remaining_water);
+                                let t = (glm::dot(&triangle.normal, &(triangle.a - capsule_ref)) + world_state.player.radius) / dot_z_up;
+                                world_state.player.tracking_position += Z_UP * t;
+                                ground_player(&mut world_state.player, &mut remaining_water);
                             } else {
-                                player.tracking_position += vec;
+                                world_state.player.tracking_position += vec;
                             }
                         } else {
-                            player.tracking_position += vec;
+                            world_state.player.tracking_position += vec;
                         }
                     }
                 }
@@ -1385,7 +1394,7 @@ fn main() {
                 let stick_sphere_radius = 0.05;
                 match action {
                     StickData::Left(focus) => {
-                        match player.stick_data {
+                        match world_state.player.stick_data {
                             Some(StickData::Left(_)) => {}
                             _ => { 
                                 let sphere = Sphere {
@@ -1394,16 +1403,16 @@ fn main() {
                                 };
         
                                 if let Some((_, collision_point)) = triangle_sphere_collision_point(&sphere, &triangle, &triangle_sphere) {
-                                    player.tracking_position += collision_point - sphere.focus;
-                                    player.tracking_velocity = glm::zero();
-                                    player.stick_data = Some(StickData::Left(collision_point));
+                                    world_state.player.tracking_position += collision_point - sphere.focus;
+                                    world_state.player.tracking_velocity = glm::zero();
+                                    world_state.player.stick_data = Some(StickData::Left(collision_point));
                                     left_sticky_grab = true;
                                 }
                             }
                         }
                     }
                     StickData::Right(focus) => {
-                        match player.stick_data {
+                        match world_state.player.stick_data {
                             Some(StickData::Right(_)) => {}
                             _ => {
                                 let sphere = Sphere {
@@ -1412,9 +1421,9 @@ fn main() {
                                 };
 
                                 if let Some((_, collision_point)) = triangle_sphere_collision_point(&sphere, &triangle, &triangle_sphere) {
-                                    player.tracking_position += collision_point - sphere.focus;
-                                    player.tracking_velocity = glm::zero();
-                                    player.stick_data = Some(StickData::Right(collision_point));                                    
+                                    world_state.player.tracking_position += collision_point - sphere.focus;
+                                    world_state.player.tracking_velocity = glm::zero();
+                                    world_state.player.stick_data = Some(StickData::Right(collision_point));                                    
                                     right_sticky_grab = true;
                                 }
                             }
@@ -1446,7 +1455,7 @@ fn main() {
         }
 
         //After all collision processing has been completed, update the tracking space matrices once more
-        world_from_tracking = glm::translation(&player.tracking_position);
+        world_from_tracking = glm::translation(&world_state.player.tracking_position);
         tracking_from_world = glm::affine_inverse(world_from_tracking);
 
         //Tell the audio thread about the listener's current state
@@ -1459,8 +1468,8 @@ fn main() {
                         None => { glm::identity() }
                     };
 
-                    let pos = player.tracked_segment.p0;
-                    let vel = pos - player.last_tracked_segment.p0;
+                    let pos = world_state.player.tracked_segment.p0;
+                    let vel = pos - world_state.player.last_tracked_segment.p0;
                     let forward = glm::vec4_to_vec3(&(head_pose_mat * glm::vec4(0.0, 0.0, -1.0, 0.0)));
                     let up = glm::vec4_to_vec3(&(head_pose_mat * glm::vec4(0.0, 1.0, 0.0, 0.0)));
                     (vec_to_array(pos), vec_to_array(vel), vec_to_array(forward), vec_to_array(up))
@@ -1562,8 +1571,8 @@ fn main() {
             }
 
             if viewing_player_spheres {
-                let head_transform = glm::translation(&player.tracked_segment.p0) * uniform_scale(-player.radius);
-                let foot_transform = glm::translation(&player.tracked_segment.p1) * uniform_scale(-player.radius);
+                let head_transform = glm::translation(&world_state.player.tracked_segment.p0) * uniform_scale(-world_state.player.radius);
+                let foot_transform = glm::translation(&world_state.player.tracked_segment.p1) * uniform_scale(-world_state.player.radius);
                 write_matrix_to_buffer(&mut transform_buffer, current_debug_sphere, head_transform);
                 write_vec4_to_buffer(&mut color_buffer, current_debug_sphere, glm::vec4(1.0, 0.7, 0.7, 0.4));
                 current_debug_sphere += 1;
@@ -1679,7 +1688,7 @@ fn main() {
                 //Reset player position button
                 if let Some(_) = &xr_instance {
                     if imgui_ui.button(im_str!("Reset player position"), [0.0, 32.0]) {
-                        reset_player_position(&mut player);
+                        reset_player_position(&mut world_state);
                     }
                 }
 
@@ -1752,7 +1761,6 @@ fn main() {
                                 world_state.player_spawn.y,
                                 world_state.player_spawn.z,
                             ];
-
                             
                             let size = size_of::<f32>() * (floats_to_write.len() + totoros.count() * 4) + size_of::<u32>();
 

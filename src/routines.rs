@@ -161,15 +161,6 @@ pub fn handle_radio_flag<F: Eq + Default>(current_flag: &mut F, new_flag: F) {
     else { *current_flag = F::default(); }
 }
 
-pub fn reset_player_position(player: &mut Player) {    
-    player.tracking_position = glm::vec3(0.0, 0.0, 3.0);
-    player.tracking_velocity = glm::zero();
-    player.tracked_segment = LineSegment::zero();
-    player.last_tracked_segment = LineSegment::zero();
-    player.jumps_remaining = Player::MAX_JUMPS;
-    player.movement_state = MoveState::Falling;
-}
-
 pub fn resize_main_window(window: &mut Window, framebuffer: &mut Framebuffer, screen_state: &mut ScreenState, size: glm::TVec2<u32>, pos: (i32, i32), window_mode: WindowMode) {    
     framebuffer.size = (size.x as GLsizei, size.y as GLsizei);
     *screen_state = ScreenState::new(glm::vec2(size.x, size.y), glm::identity(), glm::half_pi(), NEAR_DISTANCE, FAR_DISTANCE);
