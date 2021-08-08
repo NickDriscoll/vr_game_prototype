@@ -667,14 +667,38 @@ fn main() {
     };
 
     //Load Totoro graphics
-    let totoro_re_index = scene_data.opaque_entities.insert(RenderEntity::from_ozy(
-        "models/totoro.ozy",
-        standard_program,
-        64,
-        STANDARD_TRANSFORM_ATTRIBUTE,
-        &mut texture_keeper,
-        &DEFAULT_TEX_PARAMS
-    ));
+    let totoro_re_index = unsafe {
+        let mut re = RenderEntity::from_ozy(
+            "models/totoro.ozy",
+            standard_program,
+            64,
+            STANDARD_TRANSFORM_ATTRIBUTE,
+            &mut texture_keeper,
+            &DEFAULT_TEX_PARAMS
+        );
+        
+        gl::BindVertexArray(re.vao);
+
+        let data = vec![0.0f32; re.max_instances];
+        let mut b = 0;
+        gl::GenBuffers(1, &mut b);
+        gl::BindBuffer(gl::ARRAY_BUFFER, b);
+        gl::BufferData(gl::ARRAY_BUFFER, (re.max_instances * size_of::<GLfloat>()) as GLsizeiptr, &data[0] as *const f32 as *const c_void, gl::DYNAMIC_DRAW);
+        re.instanced_buffers[RenderEntity::HIGHLIGHTED_BUFFER_INDEX] = b;
+    
+        gl::VertexAttribPointer(
+            STANDARD_HIGHLIGHTED_ATTRIBUTE,
+            1,
+            gl::FLOAT,
+            gl::FALSE,
+            size_of::<GLfloat>() as GLsizei,
+            ptr::null()
+        );
+        gl::EnableVertexAttribArray(STANDARD_HIGHLIGHTED_ATTRIBUTE);
+        gl::VertexAttribDivisor(STANDARD_HIGHLIGHTED_ATTRIBUTE, 1);
+
+        scene_data.opaque_entities.insert(re)
+    };
     
     {
         //Load the scene data from the level file
