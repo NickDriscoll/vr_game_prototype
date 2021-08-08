@@ -30,8 +30,7 @@ pub struct RenderEntity {
     pub vao: GLuint,
     pub instanced_buffers: [GLuint; Self::INSTANCED_BUFFERS_COUNT],         //GL names of instanced buffers
     pub index_count: GLint,
-    pub active_instances: GLint,
-	pub max_instances: usize,
+    pub active_instances: usize,
     pub shader: GLuint,
     pub uv_offset: glm::TVec2<f32>,
     pub uv_scale: glm::TVec2<f32>,
@@ -51,8 +50,7 @@ impl RenderEntity {
             vao,
             instanced_buffers: [0, 0, transform_buffer],
             index_count: index_count as GLint,
-            active_instances: instances as GLint,
-            max_instances: instances,
+            active_instances: instances,
             shader: program,
             uv_offset: glm::zero(),
             uv_scale: glm::zero(),
@@ -64,11 +62,11 @@ impl RenderEntity {
     pub unsafe fn init_new_instanced_buffer(&mut self, floats_per: usize, attribute: GLuint, attribute_buffer_idx: usize) {
         gl::BindVertexArray(self.vao);
 
-        let data = vec![0.0f32; self.max_instances * floats_per];
+        let data = vec![0.0f32; self.active_instances * floats_per];
         let mut b = 0;
         gl::GenBuffers(1, &mut b);
         gl::BindBuffer(gl::ARRAY_BUFFER, b);
-        gl::BufferData(gl::ARRAY_BUFFER, (self.max_instances * floats_per * size_of::<GLfloat>()) as GLsizeiptr, &data[0] as *const f32 as *const c_void, gl::DYNAMIC_DRAW);
+        gl::BufferData(gl::ARRAY_BUFFER, (self.active_instances * floats_per * size_of::<GLfloat>()) as GLsizeiptr, &data[0] as *const f32 as *const c_void, gl::DYNAMIC_DRAW);
         self.instanced_buffers[attribute_buffer_idx] = b;
     
         gl::VertexAttribPointer(
@@ -129,8 +127,7 @@ impl RenderEntity {
                     vao,
                     instanced_buffers: [0, 0, transform_buffer],
                     index_count: meshdata.vertex_array.indices.len() as GLint,
-                    active_instances: instances as GLint,
-                    max_instances: instances,
+                    active_instances: instances,
                     shader: program,                    
                     textures: [albedo, normal, roughness],
                     uv_scale: glm::vec2(1.0, 1.0),
@@ -204,7 +201,7 @@ impl RenderEntity {
 
     pub fn update_transform_buffer(&mut self, transforms: &[f32], instanced_attribute: GLuint) {
         //Record the current active instance count
-        let new_instances = transforms.len() as GLint / 16 as GLint;
+        let new_instances = transforms.len() / 16;
         self.active_instances = new_instances;
 
         //Update GPU buffer storing transforms
@@ -396,7 +393,7 @@ unsafe fn render_entity(opt_entity: &Option<RenderEntity>, scene_data: &SceneDat
         }            
 
         gl::BindVertexArray(entity.vao);
-        gl::DrawElementsInstanced(gl::TRIANGLES, entity.index_count, gl::UNSIGNED_SHORT, ptr::null(), entity.active_instances);
+        gl::DrawElementsInstanced(gl::TRIANGLES, entity.index_count, gl::UNSIGNED_SHORT, ptr::null(), entity.active_instances as GLint);
     }
 }
 
@@ -412,7 +409,7 @@ pub unsafe fn cascaded_shadow_map(shadow_map: &CascadedShadowMap, entities: &[Op
             if let Some(entity) = opt_entity {
                 if entity.cast_shadows {
                     gl::BindVertexArray(entity.vao);
-                    gl::DrawElementsInstanced(gl::TRIANGLES, entity.index_count, gl::UNSIGNED_SHORT, ptr::null(), entity.active_instances);
+                    gl::DrawElementsInstanced(gl::TRIANGLES, entity.index_count, gl::UNSIGNED_SHORT, ptr::null(), entity.active_instances as GLint);
                 }
             }
         }
