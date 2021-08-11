@@ -608,7 +608,7 @@ fn main() {
     let mut camera_collision = true;
 
     //Initialize shadow data
-    let cascade_size = 2048;
+    let cascade_size = 2048*2;
     let shadow_rendertarget = unsafe { RenderTarget::new_shadow((cascade_size * render::SHADOW_CASCADE_COUNT as GLint, cascade_size)) };
     let sun_shadow_map = CascadedShadowMap::new(shadow_rendertarget, shadow_program, cascade_size);
 
@@ -646,30 +646,34 @@ fn main() {
     let mut tracking_from_world = glm::affine_inverse(world_from_tracking);
 
     let mut screen_space_mouse = glm::zero();
-
-    //Initialize Level struct
-    let level_name = match config.string_options.get(Configuration::LEVEL_NAME) {
-        Some(name) => { name }
-        None => { "testmap" }
-    };
-
-    //Player state
-    let mut player = Player::new(glm::zero());
     let mut left_sticky_grab = false;
     let mut right_sticky_grab = false;
 
-    let terrain = Terrain::from_ozt(&format!("models/{}.ozt", level_name));
-    println!("Loaded {} collision triangles from {}.ozt", terrain.indices.len() / 3, level_name);
-    let mut world_state = WorldState {
-        player,
-        player_spawn: glm::zero(),
-        totoros: OptionVec::with_capacity(64),
-        selected_totoro: None,
-        terrain,
-        terrain_re_indices: Vec::new(),
-        skybox_strings: Vec::new(),
-        level_name: String::new(),
-        active_skybox_index: 0
+    let mut world_state = {
+        let level_name = match config.string_options.get(Configuration::LEVEL_NAME) {
+            Some(name) => { name }
+            None => { "testmap" }
+        };
+
+        let terrain = Terrain::from_ozt(&format!("models/{}.ozt", level_name));
+        println!("Loaded {} collision triangles from {}.ozt", terrain.indices.len() / 3, level_name);
+        let mut word = WorldState {
+            player: Player::new(glm::zero()),
+            player_spawn: glm::zero(),
+            totoros: OptionVec::with_capacity(64),
+            selected_totoro: None,
+            terrain,
+            terrain_re_indices: Vec::new(),
+            skybox_strings: Vec::new(),
+            level_name: String::new(),
+            active_skybox_index: 0
+        };
+
+        //Load the scene data from the level file
+        load_lvl(level_name, &mut word, &mut scene_data, &mut texture_keeper, standard_program);
+        load_ent(&format!("maps/{}.ent", level_name), &mut scene_data, &mut word);
+
+        word
     };
 
     //Load Totoro graphics
@@ -686,13 +690,6 @@ fn main() {
 
         scene_data.opaque_entities.insert(re)
     };
-    
-    {
-        //Load the scene data from the level file
-        load_lvl(level_name, &mut world_state, &mut scene_data, &mut texture_keeper, standard_program);
-        load_ent(&format!("maps/{}.ent", level_name), &mut scene_data, &mut world_state);        
-    };
-    drop(level_name);
 
     //Create debug sphere render entity
     let debug_sphere_re_index = unsafe {
@@ -1168,13 +1165,21 @@ fn main() {
                     TotoroState::Startled => {
                         let new_forward = glm::normalize(&(world_state.player.tracked_segment.p1 - totoro.position));
                         totoro.forward = new_forward;
-                        totoro.velocity = glm::vec3(0.0, 0.0, 100.0);
+                        totoro.velocity = glm::vec3(0.0, 0.0, 50.0);
                         totoro.state = TotoroState::Panicking;
                         totoro.state_timer = elapsed_time;
                     }
                     TotoroState::Panicking => {
                         if ai_time >= 1.0 {
+                            let mut new_forward = glm::normalize(&(totoro.position - world_state.player.tracked_segment.p1));
+                            new_forward.z = 0.0;
+                            new_forward = glm::normalize(&new_forward);
+                            totoro.desired_forward = glm::vec4_to_vec3(&(glm::rotation(rand_binomial(), &Z_UP) * glm::vec3_to_vec4(&new_forward)));
                             
+                            let turn_speed = totoro_speed * 2.0;
+                            totoro.forward = glm::normalize(&lerp(&totoro.forward, &totoro.desired_forward, turn_speed * delta_time));
+                            let v = totoro.forward * totoro_speed;
+                            totoro.velocity = glm::vec3(v.x, v.y, totoro.velocity.z);
                         }
                     }
                     TotoroState::BrainDead => {}
@@ -1594,7 +1599,7 @@ fn main() {
 
         //Draw ImGui
         if do_imgui {
-            fn do_radio_option<T: Eq + Default>(imgui_ui: &imgui::Ui, label: &imgui::ImStr, flag: &mut T, new_flag: T) {
+            fn do_radio_button<T: Eq + Default>(imgui_ui: &imgui::Ui, label: &imgui::ImStr, flag: &mut T, new_flag: T) {
                 if imgui_ui.radio_button_bool(label, *flag == new_flag) { handle_radio_flag(flag, new_flag); }
             }
 
@@ -1620,9 +1625,9 @@ fn main() {
 
                 //Do visualization radio selection
                 imgui_ui.text(im_str!("Debug visualization options:"));
-                do_radio_option(&imgui_ui, im_str!("Visualize normals"), &mut scene_data.fragment_flag, FragmentFlag::Normals);
-                do_radio_option(&imgui_ui, im_str!("Visualize how shadowed"), &mut scene_data.fragment_flag, FragmentFlag::Shadowed);
-                do_radio_option(&imgui_ui, im_str!("Visualize shadow cascades"), &mut scene_data.fragment_flag, FragmentFlag::CascadeZones);
+                do_radio_button(&imgui_ui, im_str!("Visualize normals"), &mut scene_data.fragment_flag, FragmentFlag::Normals);
+                do_radio_button(&imgui_ui, im_str!("Visualize how shadowed"), &mut scene_data.fragment_flag, FragmentFlag::Shadowed);
+                do_radio_button(&imgui_ui, im_str!("Visualize shadow cascades"), &mut scene_data.fragment_flag, FragmentFlag::CascadeZones);
                 imgui_ui.checkbox(im_str!("View shadow atlas"), &mut showing_shadow_atlas);
                 imgui_ui.checkbox(im_str!("View collision volumes"), &mut viewing_collision);
                 imgui_ui.checkbox(im_str!("View player spawn"), &mut viewing_player_spawn);
@@ -1634,14 +1639,16 @@ fn main() {
                 imgui_ui.separator();
 
                 imgui_ui.text(im_str!("Click action"));
-                do_radio_option(&imgui_ui, im_str!("Spawn totoro"), &mut click_action, ClickAction::SpawnTotoro);
-                do_radio_option(&imgui_ui, im_str!("Select totoro"), &mut click_action, ClickAction::SelectTotoro);
-                do_radio_option(&imgui_ui, im_str!("Delete totoro"), &mut click_action, ClickAction::DeleteTotoro);
-                do_radio_option(&imgui_ui, im_str!("Move player spawn"), &mut click_action, ClickAction::MovePlayerSpawn);
+                do_radio_button(&imgui_ui, im_str!("Spawn totoro"), &mut click_action, ClickAction::SpawnTotoro);
+                do_radio_button(&imgui_ui, im_str!("Select totoro"), &mut click_action, ClickAction::SelectTotoro);
+                do_radio_button(&imgui_ui, im_str!("Delete totoro"), &mut click_action, ClickAction::DeleteTotoro);
+                do_radio_button(&imgui_ui, im_str!("Move player spawn"), &mut click_action, ClickAction::MovePlayerSpawn);
                 imgui_ui.separator();
 
                 imgui_ui.text(im_str!("Environment controls:"));
                 Slider::new(im_str!("Ambient light")).range(RangeInclusive::new(0.0, 0.5)).build(&imgui_ui, &mut scene_data.ambient_strength);
+                Slider::new(im_str!("Specular lower bound")).range(RangeInclusive::new(1.0, 128.0)).build(&imgui_ui, &mut scene_data.shininess_lower_bound);
+                Slider::new(im_str!("Specular upper bound")).range(RangeInclusive::new(1.0, 128.0)).build(&imgui_ui, &mut scene_data.shininess_upper_bound);
                 Slider::new(im_str!("Sun pitch")).range(RangeInclusive::new(0.0, glm::pi::<f32>())).build(&imgui_ui, &mut scene_data.sun_pitch);
                 Slider::new(im_str!("Sun yaw")).range(RangeInclusive::new(0.0, glm::two_pi::<f32>())).build(&imgui_ui, &mut scene_data.sun_yaw);
                 let sun_color_editor = ColorEdit::new(im_str!("Sun color"), EditableColor::Float3(&mut scene_data.sun_color));
@@ -1783,7 +1790,7 @@ fn main() {
 
                             match file.write(&bytes) {
                                 Ok(n) => {
-                                    println!("Saved {}.ent ({}/{} bytes)", level_name, n, size);
+                                    println!("Saved {}.ent ({}/{} bytes)", world_state.level_name, n, size);
                                 }
                                 Err(e) => {
                                     save_error(e);
@@ -1843,7 +1850,7 @@ fn main() {
                     }
 
                     imgui_ui.separator();
-                    do_radio_option(&imgui_ui, im_str!("Move totoro home"), &mut click_action, ClickAction::MoveSelectedTotoro);
+                    do_radio_button(&imgui_ui, im_str!("Move totoro home"), &mut click_action, ClickAction::MoveSelectedTotoro);
 
                     token.end(&imgui_ui);
                 }

@@ -1,7 +1,5 @@
 #version 430 core
 
-const float SHININESS_LOWER_BOUND = 8.0;
-const float SHININESS_UPPER_BOUND = 128.0;
 const float LOD_DIST0 = 20.0;
 const float LOD_DIST1 = 40.0;
 const float LOD_DIST2 = 170.0;
@@ -43,6 +41,8 @@ uniform bool visualize_cascade_zone = false;
 
 uniform vec3 sun_color = vec3(1.0, 1.0, 1.0);
 uniform float ambient_strength = 0.0;
+uniform float shininess_lower_bound = 8.0;
+uniform float shininess_upper_bound = 128.0;
 uniform float cascade_distances[SHADOW_CASCADES];
 
 //For a given RenderEntity, this will be non-negative if one of the instances is to be highlighted
@@ -104,20 +104,22 @@ void main() {
             break;
         }
     }
+    //adj_shadow_space_pos = shadow_space_pos[4] * 0.5 + 0.5;
+    //shadow_cascade = 4;
 
     //Compute how shadowed if we are potentially shadowed
     if (shadow_cascade > -1) {
         if (true) {
             //Do PCF
             //Average the 5x5 block of shadow texels centered at this pixel
-            int bound = 1;
+            int bound = 3;
             vec2 texel_size = 1.0 / textureSize(shadow_map, 0);
             for (int x = -bound; x <= bound; x++) {
                 for (int y = -bound; y <= bound; y++) {
                     shadow += determine_shadowed(vec3(adj_shadow_space_pos.xy + vec2(x, y) * texel_size, adj_shadow_space_pos.z), tangent_space_normal, shadow_cascade);
                 }
             }
-            shadow /= 9.0;
+            shadow /= 49.0; //(2*bound + 1)^2
         } else {
             shadow = determine_shadowed(adj_shadow_space_pos.xyz, tangent_space_normal, shadow_cascade);
         }
@@ -147,7 +149,7 @@ void main() {
     vec3 view_direction = normalize(tangent_view_position - tangent_space_pos);
     vec3 halfway = normalize(view_direction + tangent_sun_direction);
     float specular_angle = max(0.0, dot(halfway, tangent_space_normal));
-    float shininess = (1.0 - roughness) * (SHININESS_UPPER_BOUND - SHININESS_LOWER_BOUND) + SHININESS_LOWER_BOUND;
+    float shininess = (1.0 - roughness) * (shininess_upper_bound - shininess_lower_bound) + shininess_lower_bound;
     float specular = pow(specular_angle, shininess);
 
     //Optionally add rim-lighting

@@ -249,6 +249,8 @@ pub struct SceneData {
     pub skybox_cubemap: GLuint,
     pub skybox_vao: GLuint,
     pub skybox_program: GLuint,
+    pub shininess_lower_bound: f32,
+    pub shininess_upper_bound: f32,
     pub sun_pitch: f32,
     pub sun_yaw: f32,
     pub sun_direction: glm::TVec3<f32>,
@@ -277,6 +279,8 @@ impl Default for SceneData {
             skybox_cubemap: 0,
             skybox_vao: ozy::prims::skybox_cube_vao(),
             skybox_program: 0,
+            shininess_lower_bound: 8.0,
+            shininess_upper_bound: 128.0,
             sun_pitch: 0.0,
             sun_yaw: 0.0,
             sun_direction: glm::zero(),
@@ -365,6 +369,8 @@ unsafe fn render_entity(opt_entity: &Option<RenderEntity>, scene_data: &SceneDat
         glutil::bind_matrix4(p, "view_projection", &view_data.view_projection);
         glutil::bind_vector3(p, "sun_direction", &scene_data.sun_direction);
         glutil::bind_vector3(p, "sun_color", &sun_c);
+        glutil::bind_float(p, "shininess_lower_bound", scene_data.shininess_lower_bound);
+        glutil::bind_float(p, "shininess_upper_bound", scene_data.shininess_upper_bound);
         glutil::bind_float(p, "ambient_strength", scene_data.ambient_strength);
         glutil::bind_float(p, "current_time", scene_data.current_time);
         glutil::bind_int(p, "shadow_map", TEXTURE_MAP_COUNT as GLint);
