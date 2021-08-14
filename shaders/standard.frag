@@ -43,6 +43,7 @@ uniform vec3 sun_color = vec3(1.0, 1.0, 1.0);
 uniform float ambient_strength = 0.0;
 uniform float shininess_lower_bound = 8.0;
 uniform float shininess_upper_bound = 128.0;
+uniform float shadow_intensity = 0.1;
 uniform float cascade_distances[SHADOW_CASCADES];
 
 //For a given RenderEntity, this will be non-negative if one of the instances is to be highlighted
@@ -104,8 +105,6 @@ void main() {
             break;
         }
     }
-    //adj_shadow_space_pos = shadow_space_pos[4] * 0.5 + 0.5;
-    //shadow_cascade = 4;
 
     //Compute how shadowed if we are potentially shadowed
     if (shadow_cascade > -1) {
@@ -124,6 +123,7 @@ void main() {
             shadow = determine_shadowed(adj_shadow_space_pos.xyz, tangent_space_normal, shadow_cascade);
         }
     }
+    shadow *= shadow_intensity;
 
     if (visualize_cascade_zone) {
         if (shadow_cascade == 0) {

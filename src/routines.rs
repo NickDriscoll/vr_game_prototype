@@ -287,7 +287,7 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
             let r = io::read_pascal_strings(&mut file, 1);
             let new_skybox = io_or_error(r, path)[0].clone();                                
 
-            let raw_floats = io_or_error(io::read_f32_data(&mut file, 9), path);
+            let raw_floats = io_or_error(io::read_f32_data(&mut file, 11), path);
 
             scene_data.ambient_strength = raw_floats[0];
             scene_data.sun_pitch = raw_floats[1];
@@ -295,9 +295,11 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
             scene_data.sun_color[0] = raw_floats[3];
             scene_data.sun_color[1] = raw_floats[4];
             scene_data.sun_color[2] = raw_floats[5];
-            world_state.player_spawn.x = raw_floats[6];
-            world_state.player_spawn.y = raw_floats[7];
-            world_state.player_spawn.z = raw_floats[8];
+            scene_data.shininess_lower_bound = raw_floats[6];
+            scene_data.shininess_upper_bound = raw_floats[7];
+            world_state.player_spawn.x = raw_floats[8];
+            world_state.player_spawn.y = raw_floats[9];
+            world_state.player_spawn.z = raw_floats[10];
             
             let floats_per_totoro = 4;
             let totoros_count = io_or_error(io::read_u32(&mut file), path);                
@@ -309,35 +311,8 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
                 world_state.totoros.insert(tot);
             }
 
-            world_state.skybox_strings = {
-                let mut v = Vec::new();
-                match read_dir("skyboxes/") {
-                    Ok(iter) => {
-                        let mut current_skybox = 0;
-                        for entry in iter {
-                            match entry {
-                                Ok(ent) => {
-                                    let name = ent.file_name().into_string().unwrap();
-                                    if name == new_skybox {
-                                        world_state.active_skybox_index = current_skybox;
-                                    }
-                                    v.push(im_str!("{}", name));
-                                }
-                                Err(e) => {
-                                    tfd::message_box_ok("Unable to read skybox entry", &format!("{}", e), MessageBoxIcon::Error);
-                                }
-                            }
-                            current_skybox += 1;
-                        }
-                    }
-                    Err(e) => {
-                        tfd::message_box_ok("Unable to read skybox directory", &format!("{}", e), MessageBoxIcon::Error);
-                    }
-                }
-                v
-            };
-
             //Create the skybox cubemap
+            scan_skybox_directory(world_state, &new_skybox);
             scene_data.skybox_cubemap = unsafe { 
                 gl::DeleteTextures(1, &mut scene_data.skybox_cubemap);
                 create_skybox_cubemap(world_state.skybox_strings[world_state.active_skybox_index].to_str())
@@ -347,34 +322,38 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
             tfd::message_box_ok("Error loading level data", &format!("Could not load level data:\n{}\nHave you saved the level data for this level yet?", e), MessageBoxIcon::Error);
 
             //We still want the skybox strings to get recomputed even if we can't load the ent file
-            world_state.active_skybox_index = 0;
-            world_state.skybox_strings = {
-                let mut v = Vec::new();
-                match read_dir("skyboxes/") {
-                    Ok(iter) => {
-                        let mut current_skybox = 0;
-                        for entry in iter {
-                            match entry {
-                                Ok(ent) => {
-                                    let name = ent.file_name().into_string().unwrap();
-                                    if name == "" {
-                                        world_state.active_skybox_index = current_skybox;
-                                    }
-                                    v.push(im_str!("{}", name));
-                                }
-                                Err(e) => {
-                                    tfd::message_box_ok("Unable to read skybox entry", &format!("{}", e), MessageBoxIcon::Error);
-                                }
-                            }
-                            current_skybox += 1;
-                        }
-                    }
-                    Err(e) => {
-                        tfd::message_box_ok("Unable to read skybox directory", &format!("{}", e), MessageBoxIcon::Error);
-                    }
-                }
-                v
-            };
+            scan_skybox_directory(world_state, "");
         }
     }
+}
+
+fn scan_skybox_directory(world_state: &mut WorldState, skybox_name: &str) {
+    world_state.active_skybox_index = 0;
+    world_state.skybox_strings = {
+        let mut v = Vec::new();
+        match read_dir("skyboxes/") {
+            Ok(iter) => {
+                let mut current_skybox = 0;
+                for entry in iter {
+                    match entry {
+                        Ok(ent) => {
+                            let name = ent.file_name().into_string().unwrap();
+                            if name == skybox_name {
+                                world_state.active_skybox_index = current_skybox;
+                            }
+                            v.push(im_str!("{}", name));
+                        }
+                        Err(e) => {
+                            tfd::message_box_ok("Unable to read skybox entry", &format!("{}", e), MessageBoxIcon::Error);
+                        }
+                    }
+                    current_skybox += 1;
+                }
+            }
+            Err(e) => {
+                tfd::message_box_ok("Unable to read skybox directory", &format!("{}", e), MessageBoxIcon::Error);
+            }
+        }
+        v
+    };
 }

@@ -209,14 +209,18 @@ impl RenderEntity {
     }
 
     pub fn update_color_buffer(&mut self, colors: &[f32], instanced_attribute: GLuint) {
-
+        //Record the current active instance count
+        let new_instances = colors.len() / 4;
+        self.active_instances = new_instances;
 
         //Update GPU buffer storing transforms
         unsafe { self.write_buffer_to_GPU(colors, instanced_attribute, 4, Self::COLOR_BUFFER_INDEX); }
     }
 
     pub fn update_highlight_buffer(&mut self, bools: &[f32], instanced_attribute: GLuint) {
-
+        //Record the current active instance count
+        let new_instances = bools.len();
+        self.active_instances = new_instances;
 
         //Update GPU buffer storing transforms
         unsafe { self.write_buffer_to_GPU(bools, instanced_attribute, 1, Self::HIGHLIGHTED_BUFFER_INDEX); }
@@ -256,6 +260,7 @@ pub struct SceneData {
     pub sun_direction: glm::TVec3<f32>,
     pub sun_color: [f32; 3],
     pub sun_shadow_map: CascadedShadowMap,
+    pub shadow_intensity: f32,
     pub ambient_strength: f32,
     pub current_time: f32,
     pub opaque_entities: OptionVec<RenderEntity>,
@@ -285,6 +290,7 @@ impl Default for SceneData {
             sun_yaw: 0.0,
             sun_direction: glm::zero(),
             sun_color: [1.0, 1.0, 1.0],
+            shadow_intensity: 1.0,
             ambient_strength: 0.2,
             sun_shadow_map,
             current_time: 0.0,
@@ -326,7 +332,7 @@ impl ViewData {
     }
 }
 
-//This is the function that renders the 3D objects in the scene
+//This is the function that renders the 3D scene
 pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
     //Main scene rendering
     gl::ActiveTexture(gl::TEXTURE0 + ozy::render::TEXTURE_MAP_COUNT as GLenum);
@@ -349,6 +355,7 @@ pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
     gl::UseProgram(scene_data.skybox_program);
     glutil::bind_matrix4(scene_data.skybox_program, "view_projection", &skybox_view_projection);
     glutil::bind_vector3(scene_data.skybox_program, "sun_color", &sun_c);
+    glutil::bind_vector3(scene_data.skybox_program, "sun_direction", &scene_data.sun_direction);
     gl::BindTexture(gl::TEXTURE_CUBE_MAP, scene_data.skybox_cubemap);
     gl::BindVertexArray(scene_data.skybox_vao);
     gl::DrawElements(gl::TRIANGLES, CUBE_INDICES_COUNT, gl::UNSIGNED_SHORT, ptr::null());
@@ -372,6 +379,7 @@ unsafe fn render_entity(opt_entity: &Option<RenderEntity>, scene_data: &SceneDat
         glutil::bind_float(p, "shininess_lower_bound", scene_data.shininess_lower_bound);
         glutil::bind_float(p, "shininess_upper_bound", scene_data.shininess_upper_bound);
         glutil::bind_float(p, "ambient_strength", scene_data.ambient_strength);
+        glutil::bind_float(p, "shadow_intensity", scene_data.shadow_intensity);
         glutil::bind_float(p, "current_time", scene_data.current_time);
         glutil::bind_int(p, "shadow_map", TEXTURE_MAP_COUNT as GLint);
         glutil::bind_int(p, "complex_normals", scene_data.complex_normals as GLint);

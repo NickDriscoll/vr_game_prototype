@@ -11,7 +11,7 @@ pub const DEFAULT_BGM_PATH: &str = "music/cryptic_relics.mp3";
 
 const IDEAL_FRAMES_QUEUED: ALint = 5;
 
-//Represents the kinds of messages the audio system can receive from the 
+//Represents the kinds of messages the audio system can receive from the main thread
 pub enum AudioCommand {
     SetListenerPosition([f32; 3]),
     SetListenerVelocity([f32; 3]),
@@ -194,12 +194,12 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                 bgm_source.unqueue_buffer().unwrap();
             }
 
-            if bgm_source.state() != SourceState::Playing && playing_bgm && bgm_source.buffers_queued() >= IDEAL_FRAMES_QUEUED {
+            if bgm_source.state() != SourceState::Playing && playing_bgm && bgm_source.buffers_queued() == IDEAL_FRAMES_QUEUED {
                 bgm_source.play();
                 playing_bgm = false;
             }
 
-            //Sleeping to avoid throttling a CPU core
+            //Sleeping to avoid throttling the CPU core
             thread::sleep(Duration::from_millis(10));
         }
     });

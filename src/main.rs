@@ -1649,6 +1649,7 @@ fn main() {
                 Slider::new(im_str!("Ambient light")).range(RangeInclusive::new(0.0, 0.5)).build(&imgui_ui, &mut scene_data.ambient_strength);
                 Slider::new(im_str!("Specular lower bound")).range(RangeInclusive::new(1.0, 128.0)).build(&imgui_ui, &mut scene_data.shininess_lower_bound);
                 Slider::new(im_str!("Specular upper bound")).range(RangeInclusive::new(1.0, 128.0)).build(&imgui_ui, &mut scene_data.shininess_upper_bound);
+                Slider::new(im_str!("Shadow intensity")).range(RangeInclusive::new(0.0, 1.0)).build(&imgui_ui, &mut scene_data.shadow_intensity);
                 Slider::new(im_str!("Sun pitch")).range(RangeInclusive::new(0.0, glm::pi::<f32>())).build(&imgui_ui, &mut scene_data.sun_pitch);
                 Slider::new(im_str!("Sun yaw")).range(RangeInclusive::new(0.0, glm::two_pi::<f32>())).build(&imgui_ui, &mut scene_data.sun_yaw);
                 let sun_color_editor = ColorEdit::new(im_str!("Sun color"), EditableColor::Float3(&mut scene_data.sun_color));
@@ -1764,9 +1765,11 @@ fn main() {
                                 scene_data.sun_color[0],
                                 scene_data.sun_color[1],
                                 scene_data.sun_color[2],
+                                scene_data.shininess_lower_bound,
+                                scene_data.shininess_upper_bound,
                                 world_state.player_spawn.x,
                                 world_state.player_spawn.y,
-                                world_state.player_spawn.z,
+                                world_state.player_spawn.z
                             ];
                             
                             let size = size_of::<f32>() * (floats_to_write.len() + totoros.count() * 4) + size_of::<u32>();
