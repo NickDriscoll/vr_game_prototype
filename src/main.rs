@@ -50,7 +50,7 @@ use crate::render::*;
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
 
 const EPSILON: f32 = 0.00001;
-const GRAVITY_VELOCITY_CAP: f32 = 10.0;        //m/s
+const VELOCITY_CAP: f32 = 10.0;        //m/s
 const ACCELERATION_GRAVITY: f32 = 20.0;        //20.0 m/s^2
 
 //Default texture parameters for a 2D image texture
@@ -1115,11 +1115,19 @@ fn main() {
                 //Apply gravity to the player's velocity
                 if world_state.player.movement_state != MoveState::Grounded {
                     world_state.player.tracking_velocity.z -= ACCELERATION_GRAVITY * delta_time;
-                    if world_state.player.tracking_velocity.z > GRAVITY_VELOCITY_CAP {
-                        world_state.player.tracking_velocity.z = GRAVITY_VELOCITY_CAP;
-                    }
                 }
             }
+        }
+
+        //Apply speed limit
+        if world_state.player.tracking_velocity.x > VELOCITY_CAP {
+            world_state.player.tracking_velocity.x = VELOCITY_CAP;
+        }
+        if world_state.player.tracking_velocity.y > VELOCITY_CAP {
+            world_state.player.tracking_velocity.y = VELOCITY_CAP;
+        }
+        if world_state.player.tracking_velocity.z > VELOCITY_CAP {
+            world_state.player.tracking_velocity.z = VELOCITY_CAP;
         }
 
         //Totoro update
@@ -1187,8 +1195,8 @@ fn main() {
 
                 //Apply gravity
                 totoro.velocity.z -= ACCELERATION_GRAVITY * delta_time;
-                if totoro.velocity.z > GRAVITY_VELOCITY_CAP {
-                    totoro.velocity.z = GRAVITY_VELOCITY_CAP;
+                if totoro.velocity.z > VELOCITY_CAP {
+                    totoro.velocity.z = VELOCITY_CAP;
                 }
 
                 //Apply totoro velocity to position
@@ -1254,6 +1262,17 @@ fn main() {
                     let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
                     if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
                         world_state.player_spawn = point;
+                    }
+                }
+                ClickAction::PlacePointLight => {
+                    let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
+                    if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
+                        let light = PointLight {
+                            position: point,
+                            color: [1.0, 1.0, 1.0],
+                            radius: 10.0
+                        };
+                        scene_data.point_lights.insert(light);
                     }
                 }
                 ClickAction::FlickTotoro => {
@@ -1441,11 +1460,13 @@ fn main() {
             let totoros = &mut world_state.totoros;
             for i in 0..totoros.len() {
                 if let Some(totoro) = totoros.get_mut_element(i) {
-                    if let Some(vec) = triangle_collide_sphere(&totoro.collision_sphere(), &triangle, &triangle_sphere) {
+                    let tot_sphere = totoro.collision_sphere();
+
+                    if let Some(vec) = triangle_collide_sphere(&tot_sphere, &triangle, &triangle_sphere) {
                         if floats_equal(glm::dot(&glm::normalize(&vec), &triangle.normal), 1.0) {
                             let dot_z_up = glm::dot(&triangle.normal, &Z_UP);                        
                             if dot_z_up >= MIN_NORMAL_LIKENESS {
-                                let t = (glm::dot(&triangle.normal, &(triangle.a - totoro.collision_sphere().focus)) + totoro.collision_sphere().radius) / dot_z_up;
+                                let t = (glm::dot(&triangle.normal, &(triangle.a - tot_sphere.focus)) + tot_sphere.radius) / dot_z_up;
                                 totoro.position += Z_UP * t;
                                 totoro.velocity.z = 0.0;
                             } else {
@@ -1591,6 +1612,7 @@ fn main() {
             entity.update_color_buffer(&color_buffer, DEBUG_COLOR_ATTRIBUTE);
         }
 
+        //Compute sun direction from pitch and yaw
         scene_data.sun_direction = glm::vec4_to_vec3(&(
             glm::rotation(scene_data.sun_yaw, &Z_UP) *
             glm::rotation(scene_data.sun_pitch, &glm::vec3(0.0, 1.0, 0.0)) *

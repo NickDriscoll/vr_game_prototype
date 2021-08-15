@@ -247,6 +247,12 @@ impl CascadedShadowMap {
     }
 }
 
+pub struct PointLight {
+    pub position: glm::TVec3<f32>,
+    pub color: [f32; 3],
+    pub radius: f32
+}
+
 pub struct SceneData {
     pub fragment_flag: FragmentFlag,
     pub complex_normals: bool,
@@ -263,6 +269,7 @@ pub struct SceneData {
     pub shadow_intensity: f32,
     pub ambient_strength: f32,
     pub current_time: f32,
+    pub point_lights: OptionVec<PointLight>,
     pub opaque_entities: OptionVec<RenderEntity>,
     pub transparent_entities: OptionVec<RenderEntity>
 }
@@ -294,6 +301,7 @@ impl Default for SceneData {
             ambient_strength: 0.2,
             sun_shadow_map,
             current_time: 0.0,
+            point_lights: OptionVec::new(),
             opaque_entities: OptionVec::new(),
             transparent_entities: OptionVec::new()
         }

@@ -3,7 +3,6 @@ use std::fs::File;
 use std::io::BufReader;
 use std::io::prelude::*;
 use ozy::collision::*;
-use ozy::routines::uniform_scale;
 use crate::gadget::Gadget;
 use crate::*;
 
@@ -21,7 +20,8 @@ pub enum ClickAction {
     FlickTotoro,
     DeleteTotoro,
     MovePlayerSpawn,
-    MoveSelectedTotoro
+    MoveSelectedTotoro,
+    PlacePointLight
 }
 
 impl Default for ClickAction {

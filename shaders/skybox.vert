@@ -1,11 +1,13 @@
 #version 330 core
 layout (location = 0) in vec3 position;
 
+out vec3 f_dir;
 out vec3 tex_coord;
 
 uniform mat4 view_projection;
 
 void main() {
+    f_dir = position;
     //Rotate the uv coords so that they're correct for right-handed z-up
     tex_coord = vec3(position.x, position.z, -position.y);
     vec4 screen_space_pos = view_projection * vec4(position, 1.0);
