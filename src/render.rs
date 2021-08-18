@@ -265,6 +265,7 @@ pub struct SceneData {
     pub sun_yaw: f32,
     pub sun_direction: glm::TVec3<f32>,
     pub sun_color: [f32; 3],
+    pub sun_size: f32,
     pub sun_shadow_map: CascadedShadowMap,
     pub shadow_intensity: f32,
     pub ambient_strength: f32,
@@ -297,6 +298,7 @@ impl Default for SceneData {
             sun_yaw: 0.0,
             sun_direction: glm::zero(),
             sun_color: [1.0, 1.0, 1.0],
+            sun_size: 0.999,
             shadow_intensity: 1.0,
             ambient_strength: 0.2,
             sun_shadow_map,
@@ -364,6 +366,7 @@ pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
     glutil::bind_matrix4(scene_data.skybox_program, "view_projection", &skybox_view_projection);
     glutil::bind_vector3(scene_data.skybox_program, "sun_color", &sun_c);
     glutil::bind_vector3(scene_data.skybox_program, "sun_direction", &scene_data.sun_direction);
+    glutil::bind_float(scene_data.skybox_program, "sun_size", scene_data.sun_size);
     gl::BindTexture(gl::TEXTURE_CUBE_MAP, scene_data.skybox_cubemap);
     gl::BindVertexArray(scene_data.skybox_vao);
     gl::DrawElements(gl::TRIANGLES, CUBE_INDICES_COUNT, gl::UNSIGNED_SHORT, ptr::null());
@@ -395,6 +398,10 @@ unsafe fn render_entity(opt_entity: &Option<RenderEntity>, scene_data: &SceneDat
         glutil::bind_vector3(p, "view_position", &view_data.view_position);
         glutil::bind_vector2(p, "uv_scale", &entity.uv_scale);
         glutil::bind_vector2(p, "uv_offset", &entity.uv_offset);
+
+        glutil::bind_int(p, "skybox", 4);
+        gl::ActiveTexture(gl::TEXTURE0 + 4);
+        gl::BindTexture(gl::TEXTURE_CUBE_MAP, scene_data.skybox_cubemap);
 
         //fragment flag stuff
         let flag_names = ["visualize_normals", "visualize_lod", "visualize_shadowed", "visualize_cascade_zone"];

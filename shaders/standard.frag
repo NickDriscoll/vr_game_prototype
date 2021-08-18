@@ -14,7 +14,9 @@ const float SHADOW_CASCADES_RECIPROCAL = 1.0 / SHADOW_CASCADES;
 
 in vec3 tangent_sun_direction;
 in vec3 tangent_view_position;
+in vec3 world_view_position;
 in vec3 tangent_space_pos;
+in vec3 surface_normal;
 in vec4 shadow_space_pos[SHADOW_CASCADES];
 in vec3 f_world_pos;
 in vec2 scaled_uvs;
@@ -33,6 +35,8 @@ uniform sampler2D roughness_tex;
 uniform sampler2D shadow_map;                       //Shadow map texture
 uniform vec3 view_position;                         //World space position of the camera
 uniform bool complex_normals = false;               //Flag that controls whether or not we sample the normal from the normal map
+
+uniform samplerCube skybox;
 
 //Debug visualization flags
 uniform bool visualize_normals = false;
@@ -146,21 +150,30 @@ void main() {
 
     //Compute specular light w/ blinn-phong
     float roughness = texture(roughness_tex, scaled_uvs).x;
-    vec3 view_direction = normalize(tangent_view_position - tangent_space_pos);
-    vec3 halfway = normalize(view_direction + tangent_sun_direction);
+    vec3 tangent_view_direction = normalize(tangent_view_position - tangent_space_pos);
+    vec3 halfway = normalize(tangent_view_direction + tangent_sun_direction);
     float specular_angle = max(0.0, dot(halfway, tangent_space_normal));
     float shininess = (1.0 - roughness) * (shininess_upper_bound - shininess_lower_bound) + shininess_lower_bound;
     float specular = pow(specular_angle, shininess);
 
+    //Get some light from the skybox
+    vec3 f_surface_normal = normalize(surface_normal);
+    vec3 world_view_direction = normalize(world_view_position - f_world_pos);
+    vec3 sky_sampler = reflect(world_view_direction, f_surface_normal);
+    sky_sampler = sky_sampler.xzy * vec3(1.0, 1.0, -1.0);
+    sky_sampler *= -1.0;
+    vec3 sky_contribution = texture(skybox, sky_sampler).xyz;
+
     //Optionally add rim-lighting
     vec3 rim_lighting = vec3(0.0);
     if (f_highlighted != 0.0) {
-        float likeness = 1.0 - max(0.0, dot(view_direction, tangent_space_normal));
+        float likeness = 1.0 - max(0.0, dot(tangent_view_direction, tangent_space_normal));
         float factor = smoothstep(0.5, 1.0, likeness);
         vec3 color = vec3(cos(5.0 * current_time) * 0.5 + 0.5, sin(6.0 * current_time) * 0.5 + 0.5, sin(8.0 * current_time) * 0.5 + 0.5);
         rim_lighting = factor * color;
     }
 
-    vec3 final_color = sun_color * ((specular + diffuse) * (1.0 - shadow) + ambient_strength) * albedo + rim_lighting;
+    vec3 final_color = sun_color * ((specular + diffuse) * (1.0 - shadow) + ambient_strength) * albedo + rim_lighting + sky_contribution * 0.05;
+    //vec3 final_color = sky_contribution;
     frag_color = vec4(final_color, 1.0);
 }

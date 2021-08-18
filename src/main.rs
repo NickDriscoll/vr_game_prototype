@@ -1674,6 +1674,7 @@ fn main() {
                 Slider::new(im_str!("Shadow intensity")).range(RangeInclusive::new(0.0, 1.0)).build(&imgui_ui, &mut scene_data.shadow_intensity);
                 Slider::new(im_str!("Sun pitch")).range(RangeInclusive::new(0.0, glm::pi::<f32>())).build(&imgui_ui, &mut scene_data.sun_pitch);
                 Slider::new(im_str!("Sun yaw")).range(RangeInclusive::new(0.0, glm::two_pi::<f32>())).build(&imgui_ui, &mut scene_data.sun_yaw);
+                Slider::new(im_str!("Sun size")).range(RangeInclusive::new(0.0, 1.0)).build(&imgui_ui, &mut scene_data.sun_size);
                 let sun_color_editor = ColorEdit::new(im_str!("Sun color"), EditableColor::Float3(&mut scene_data.sun_color));
                 sun_color_editor.build(&imgui_ui);
 
