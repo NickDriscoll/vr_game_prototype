@@ -69,13 +69,14 @@ pub unsafe fn create_skybox_cubemap(sky_name: &str) -> GLuint {
 	gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
 	gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_WRAP_R, gl::CLAMP_TO_EDGE as i32);
 	gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-	gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+	gl::TexParameteri(gl::TEXTURE_CUBE_MAP, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR as i32);
 
 	//Place each piece of the skybox on the correct face
     //gl::TEXTURE_CUBEMAP_POSITIVE_X + i gets you the correct cube face
 	for i in 0..6 {
+        let target = gl::TEXTURE_CUBE_MAP_POSITIVE_X + i as u32;
 		let image_data = glutil::image_data_from_path(paths[i], ColorSpace::Gamma);
-		gl::TexImage2D(gl::TEXTURE_CUBE_MAP_POSITIVE_X + i as u32,
+		gl::TexImage2D(target,
 					   0,
 					   image_data.internal_format as i32,
 					   image_data.width as i32,
@@ -85,6 +86,7 @@ pub unsafe fn create_skybox_cubemap(sky_name: &str) -> GLuint {
 					   gl::UNSIGNED_BYTE,
 			  		   &image_data.data[0] as *const u8 as *const c_void);
 	}
+    gl::GenerateMipmap(gl::TEXTURE_CUBE_MAP);
 	cubemap
 }
 

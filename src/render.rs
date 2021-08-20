@@ -399,7 +399,7 @@ unsafe fn render_entity(opt_entity: &Option<RenderEntity>, scene_data: &SceneDat
         glutil::bind_vector2(p, "uv_scale", &entity.uv_scale);
         glutil::bind_vector2(p, "uv_offset", &entity.uv_offset);
 
-        glutil::bind_int(p, "skybox", 4);
+        glutil::bind_int(p, "skybox_sampler", 4);
         gl::ActiveTexture(gl::TEXTURE0 + 4);
         gl::BindTexture(gl::TEXTURE_CUBE_MAP, scene_data.skybox_cubemap);
 

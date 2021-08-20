@@ -608,7 +608,7 @@ fn main() {
     let mut camera_collision = true;
 
     //Initialize shadow data
-    let cascade_size = 2048*2;
+    let cascade_size = 2048;
     let shadow_rendertarget = unsafe { RenderTarget::new_shadow((cascade_size * render::SHADOW_CASCADE_COUNT as GLint, cascade_size)) };
     let sun_shadow_map = CascadedShadowMap::new(shadow_rendertarget, shadow_program, cascade_size);
 
