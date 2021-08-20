@@ -1904,6 +1904,8 @@ fn main() {
 
         //Rendering
         unsafe {
+            let shadow_view = glm::look_at(&(scene_data.sun_direction * 20.0), &glm::zero(), &Z_UP);
+
             //Setting up OpenGL state for 3D rendering
             gl::Enable(gl::DEPTH_TEST);         //Depth test
             gl::Enable(gl::CULL_FACE);          //Backface culling
@@ -1956,15 +1958,6 @@ fn main() {
                             }
 
                             if let Some(pose) = xrutil::locate_space(&view_space, &tracking_space, wait_info.predicted_display_time) {
-                                //Render shadow map
-                                let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);
-                                let projection = *screen_state.get_clipping_from_view();
-
-                                //Compute the view_projection matrices for the shadow maps
-                                let shadow_view = glm::look_at(&(scene_data.sun_direction * 20.0), &glm::zero(), &Z_UP);
-                                scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, &v_mat, &projection);
-                                render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.opaque_entities.as_slice());
-
                                 for i in 0..views.len() {
                                     let image_index = swapchains[i].acquire_image().unwrap();
                                     swapchains[i].wait_image(xr::Duration::INFINITE).unwrap();
@@ -1989,6 +1982,10 @@ fn main() {
                                         0.0, 0.0, -(far_value + near_value) / (far_value - near_value), -2.0 * far_value * near_value / (far_value - near_value),
                                         0.0, 0.0, -1.0, 0.0
                                     );
+
+                                    //Render the CSM given this eye's view and projection matrices
+                                    scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, &eye_view_matrix, &perspective);
+                                    render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.opaque_entities.as_slice());
     
                                     //Actually rendering
                                     sc_rendertarget.bind();   //Rendering into an MSAA rendertarget
@@ -2010,6 +2007,8 @@ fn main() {
                                 }
 
                                 //Draw the companion view if we're showing HMD POV
+                                let projection = *screen_state.get_clipping_from_view();
+                                let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);
                                 if hmd_pov {
                                     let v_world_pos = xrutil::pose_to_mat4(&pose, &world_from_tracking);
                                     let view_state = ViewData::new(
@@ -2074,7 +2073,6 @@ fn main() {
                 //Render shadows
                 let projection = *screen_state.get_clipping_from_view();
                 let v_mat = screen_state.get_view_from_world();
-                let shadow_view = glm::look_at(&(scene_data.sun_direction * 20.0), &glm::zero(), &Z_UP);
                 scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, v_mat, &projection);
                 render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.opaque_entities.as_slice());
 

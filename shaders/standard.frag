@@ -12,6 +12,12 @@ const vec3 LOD_COLOR4 = vec3(0.0, 0.0, 1.0);
 const int SHADOW_CASCADES = 6;
 const float SHADOW_CASCADES_RECIPROCAL = 1.0 / SHADOW_CASCADES;
 
+struct PointLight {
+    vec3 position;
+    vec3 color;
+    float radius;
+};
+
 in vec3 tangent_sun_direction;
 in vec3 tangent_view_position;
 in vec3 world_view_position;
@@ -50,7 +56,7 @@ uniform float shininess_upper_bound = 128.0;
 uniform float shadow_intensity = 0.1;
 uniform float cascade_distances[SHADOW_CASCADES];
 
-//For a given RenderEntity, this will be non-negative if one of the instances is to be highlighted
+//For a given draw call, this will be non-negative if one of the instances is to be highlighted
 uniform int highlighted_idx = -1;
 
 vec4 simple_diffuse(vec3 color, float diffuse, float ambient) {
@@ -114,15 +120,15 @@ void main() {
     if (shadow_cascade > -1) {
         if (true) {
             //Do PCF
-            //Average the 5x5 block of shadow texels centered at this pixel
-            int bound = 3;
+            //Average the 3x3 block of shadow texels centered at this pixel
+            int bound = 1;
             vec2 texel_size = 1.0 / textureSize(shadow_map, 0);
             for (int x = -bound; x <= bound; x++) {
                 for (int y = -bound; y <= bound; y++) {
                     shadow += determine_shadowed(vec3(adj_shadow_space_pos.xy + vec2(x, y) * texel_size, adj_shadow_space_pos.z), tangent_space_normal, shadow_cascade);
                 }
             }
-            shadow /= 49.0; //(2*bound + 1)^2
+            shadow /= 9.0; //(2*bound + 1)^2
         } else {
             shadow = determine_shadowed(adj_shadow_space_pos.xyz, tangent_space_normal, shadow_cascade);
         }
@@ -163,7 +169,7 @@ void main() {
         vec3 world_view_direction = normalize(f_world_pos - world_view_position);
         vec3 sky_sample_vector = reflect(world_view_direction, f_surface_normal);
         sky_sample_vector = sky_sample_vector.xzy * vec3(1.0, 1.0, -1.0);
-        float sky_percentage = mix(0.01, 0.5, roughness);
+        float sky_percentage = mix(0.001, 0.25, roughness);
         float mip_level = mix(1.0, 5.0, roughness);
         sky_contribution = textureLod(skybox_sampler, sky_sample_vector, mip_level).xyz * sky_percentage;
     }
@@ -177,7 +183,9 @@ void main() {
         rim_lighting = factor * color;
     }
 
-    vec3 final_color = sun_color * ((specular + diffuse) * (1.0 - shadow) + sky_contribution + ambient_strength) * albedo + rim_lighting;
-    //vec3 final_color = sky_contribution;
+    //Sun + skybox contribution
+    vec3 environment_lighting = sun_color * ((specular + diffuse) * (1.0 - shadow) + sky_contribution * (1.0 - shadow * 0.7) + ambient_strength);
+
+    vec3 final_color = environment_lighting * albedo + rim_lighting;
     frag_color = vec4(final_color, 1.0);
 }

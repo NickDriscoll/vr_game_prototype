@@ -11,12 +11,6 @@ layout (location = 4) in vec2 uv;
 layout (location = 5) in float highlighted;
 layout (location = 6) in mat4 model_matrix;
 
-struct PointLight {
-    vec3 position;
-    vec3 color;
-    float radius;
-};
-
 const int SHADOW_CASCADES = 6;
 
 out vec3 tangent_sun_direction;
