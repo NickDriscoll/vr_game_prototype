@@ -9,7 +9,7 @@ const vec3 LOD_COLOR1 = vec3(1.0, 0.57, 0.0);
 const vec3 LOD_COLOR2 = vec3(0.0, 1.0, 0.0);
 const vec3 LOD_COLOR3 = vec3(1.0, 0.0, 1.0);
 const vec3 LOD_COLOR4 = vec3(0.0, 0.0, 1.0);
-const int SHADOW_CASCADES = 6;
+const int SHADOW_CASCADES = 5;
 const float SHADOW_CASCADES_RECIPROCAL = 1.0 / SHADOW_CASCADES;
 
 struct PointLight {
@@ -75,7 +75,9 @@ float determine_shadowed(vec3 f_shadow_pos, vec3 tan_normal, int cascade) {
 
 void main() {
     //Sample the albedo map for the fragment's base color
-    vec3 albedo = texture(albedo_tex, scaled_uvs).xyz;
+    vec4 albedo_sample = texture(albedo_tex, scaled_uvs);
+    vec3 albedo = albedo_sample.xyz;
+    float alpha = albedo_sample.a;
 
     //Compute this frag's tangent space normal
     vec3 tangent_space_normal;
@@ -134,16 +136,17 @@ void main() {
         }
     }
     shadow *= shadow_intensity;
+    float shadow_factor = 1.0 - shadow;
 
     if (visualize_cascade_zone) {
         if (shadow_cascade == 0) {
-            frag_color = simple_diffuse(LOD_COLOR0, diffuse * (1.0 - shadow), ambient_strength);
+            frag_color = simple_diffuse(LOD_COLOR0, diffuse * shadow_factor, ambient_strength);
         } else if (shadow_cascade == 1) {
-            frag_color = simple_diffuse(LOD_COLOR1, diffuse * (1.0 - shadow), ambient_strength);
+            frag_color = simple_diffuse(LOD_COLOR1, diffuse * shadow_factor, ambient_strength);
         } else if (shadow_cascade == 2) {
-            frag_color = simple_diffuse(LOD_COLOR2, diffuse * (1.0 - shadow), ambient_strength);
+            frag_color = simple_diffuse(LOD_COLOR2, diffuse * shadow_factor, ambient_strength);
         } else if (shadow_cascade == 3) {
-            frag_color = simple_diffuse(LOD_COLOR3, diffuse * (1.0 - shadow), ambient_strength);
+            frag_color = simple_diffuse(LOD_COLOR3, diffuse * shadow_factor, ambient_strength);
         }
         return;
     }
@@ -169,8 +172,8 @@ void main() {
         vec3 world_view_direction = normalize(f_world_pos - world_view_position);
         vec3 sky_sample_vector = reflect(world_view_direction, f_surface_normal);
         sky_sample_vector = sky_sample_vector.xzy * vec3(1.0, 1.0, -1.0);
-        float sky_percentage = mix(0.25, 0.001, roughness);
-        float mip_level = mix(1.0, 5.0, roughness);
+        float sky_percentage = mix(0.001, 0.25, shininess / 128.0);
+        float mip_level = mix(5.0, 1.0, shininess / 128.0);
         sky_contribution = textureLod(skybox_sampler, sky_sample_vector, mip_level).xyz * sky_percentage;
     }
 
@@ -184,8 +187,8 @@ void main() {
     }
 
     //Sun + skybox contribution
-    vec3 environment_lighting = sun_color * ((specular + diffuse) * (1.0 - shadow) + sky_contribution * (1.0 - shadow * 0.7) + ambient_strength);
+    vec3 environment_lighting = sun_color * ((specular + diffuse) * shadow_factor + sky_contribution + ambient_strength);
 
     vec3 final_color = environment_lighting * albedo + rim_lighting;
-    frag_color = vec4(final_color, 1.0);
+    frag_color = vec4(final_color, alpha);
 }

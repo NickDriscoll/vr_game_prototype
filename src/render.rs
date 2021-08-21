@@ -2,7 +2,7 @@ use std::ptr;
 use std::mem::size_of;
 use std::os::raw::c_void;
 use ozy::io::OzyMesh;
-use ozy::render::{RenderTarget, TextureKeeper};
+use ozy::render::{Framebuffer, RenderTarget, TextureKeeper};
 use ozy::structs::OptionVec;
 use ozy::glutil::ColorSpace;
 use ozy::{glutil};
@@ -12,7 +12,7 @@ use gl::types::*;
 pub const NEAR_DISTANCE: f32 = 0.0625;
 pub const FAR_DISTANCE: f32 = 1000000.0;
 pub const MSAA_SAMPLES: u32 = 8;
-pub const SHADOW_CASCADE_COUNT: usize = 6;
+pub const SHADOW_CASCADE_COUNT: usize = 5;
 pub const TEXTURE_MAP_COUNT: usize = 3;
 
 pub const STANDARD_HIGHLIGHTED_ATTRIBUTE: GLuint = 5;
@@ -343,8 +343,10 @@ impl ViewData {
 }
 
 //This is the function that renders the 3D scene
-pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
+pub unsafe fn main_scene(framebuffer: &Framebuffer, scene_data: &SceneData, view_data: &ViewData) {
     //Main scene rendering
+    framebuffer.bind();
+    gl::DepthMask(gl::TRUE);
     gl::ActiveTexture(gl::TEXTURE0 + ozy::render::TEXTURE_MAP_COUNT as GLenum);
     gl::BindTexture(gl::TEXTURE_2D, scene_data.sun_shadow_map.rendertarget.texture);
 
@@ -372,15 +374,17 @@ pub unsafe fn main_scene(scene_data: &SceneData, view_data: &ViewData) {
     gl::DrawElements(gl::TRIANGLES, CUBE_INDICES_COUNT, gl::UNSIGNED_SHORT, ptr::null());
 
     //Render transparent geometry
+    gl::DepthMask(gl::FALSE);
     for opt_entity in scene_data.transparent_entities.iter() {
         render_entity(opt_entity, scene_data, view_data);
     }
 }
 
 unsafe fn render_entity(opt_entity: &Option<RenderEntity>, scene_data: &SceneData, view_data: &ViewData) {
-    let texture_map_names = ["albedo_tex", "normal_tex", "roughness_tex", "shadow_map"];
-    let sun_c = glm::vec3(scene_data.sun_color[0], scene_data.sun_color[1], scene_data.sun_color[2]);
     if let Some(entity) = opt_entity {
+        let texture_map_names = ["albedo_tex", "normal_tex", "roughness_tex", "shadow_map"];
+        let sun_c = glm::vec3(scene_data.sun_color[0], scene_data.sun_color[1], scene_data.sun_color[2]);
+
         let p = entity.shader;
         gl::UseProgram(p);
         glutil::bind_matrix4_array(p, "shadow_matrices", &scene_data.sun_shadow_map.matrices);
@@ -426,7 +430,8 @@ unsafe fn render_entity(opt_entity: &Option<RenderEntity>, scene_data: &SceneDat
     }
 }
 
-pub unsafe fn cascaded_shadow_map(shadow_map: &CascadedShadowMap, entities: &[Option<RenderEntity>]) {
+pub unsafe fn cascaded_shadow_map(shadow_map: &CascadedShadowMap, entities: &[Option<RenderEntity>]) {    
+    gl::DepthMask(gl::TRUE);
     shadow_map.rendertarget.framebuffer.bind();
     gl::UseProgram(shadow_map.program);
     for i in 0..SHADOW_CASCADE_COUNT {

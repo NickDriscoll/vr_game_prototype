@@ -627,7 +627,7 @@ fn main() {
         cascade_distances[3] = -(render::NEAR_DISTANCE + 25.0);
         cascade_distances[4] = -(render::NEAR_DISTANCE + 75.0);
         cascade_distances[5] = -(render::NEAR_DISTANCE + 125.0);
-        cascade_distances[6] = -(render::NEAR_DISTANCE + 300.0);
+        //cascade_distances[6] = -(render::NEAR_DISTANCE + 300.0);
 
         //Compute the clip space distances and save them in the scene_data struct
         for i in 0..cascade_distances.len() {
@@ -640,6 +640,21 @@ fn main() {
 
     //Initialize texture caching struct
     let mut texture_keeper = TextureKeeper::new();
+
+    //Load Totoro graphics
+    let totoro_re_index = unsafe {
+        let mut re = RenderEntity::from_ozy(
+            "models/totoro.ozy",
+            standard_program,
+            64,
+            STANDARD_TRANSFORM_ATTRIBUTE,
+            &mut texture_keeper,
+            &DEFAULT_TEX_PARAMS
+        );
+        re.init_new_instanced_buffer(1, STANDARD_HIGHLIGHTED_ATTRIBUTE, RenderEntity::HIGHLIGHTED_BUFFER_INDEX);
+
+        scene_data.opaque_entities.insert(re)
+    };
     
     //Matrices for relating tracking space and world space
     let mut world_from_tracking = glm::identity();
@@ -676,25 +691,10 @@ fn main() {
         word
     };
 
-    //Load Totoro graphics
-    let totoro_re_index = unsafe {
-        let mut re = RenderEntity::from_ozy(
-            "models/totoro.ozy",
-            standard_program,
-            64,
-            STANDARD_TRANSFORM_ATTRIBUTE,
-            &mut texture_keeper,
-            &DEFAULT_TEX_PARAMS
-        );
-        re.init_new_instanced_buffer(1, STANDARD_HIGHLIGHTED_ATTRIBUTE, RenderEntity::HIGHLIGHTED_BUFFER_INDEX);
-
-        scene_data.opaque_entities.insert(re)
-    };
-
     //Create debug sphere render entity
     let debug_sphere_re_index = unsafe {
-        let segments = 16;
-        let rings = 16;
+        let segments = 10;
+        let rings = 10;
         let vao = ozy::prims::debug_sphere_vao(1.0, segments, rings);
 
         let mut re = RenderEntity::from_vao(
@@ -1988,13 +1988,12 @@ fn main() {
                                     render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.opaque_entities.as_slice());
     
                                     //Actually rendering
-                                    sc_rendertarget.bind();   //Rendering into an MSAA rendertarget
                                     let view_data = ViewData::new(
                                         glm::vec3(eye_world_matrix[12], eye_world_matrix[13], eye_world_matrix[14]),
                                         eye_view_matrix,
                                         perspective
                                     );
-                                    render::main_scene(&scene_data, &view_data);
+                                    render::main_scene(&sc_rendertarget.framebuffer, &scene_data, &view_data);
     
                                     //Blit the MSAA image into the swapchain image
                                     let color_texture = sc_images[i][image_index as usize];
@@ -2017,7 +2016,7 @@ fn main() {
                                         projection
                                     );
                                     default_framebuffer.bind();
-                                    render::main_scene(&scene_data, &view_state);
+                                    render::main_scene(&default_framebuffer, &scene_data, &view_state);
                                 }
                             }                           
 
@@ -2082,8 +2081,7 @@ fn main() {
                     *screen_state.get_view_from_world(),
                     *screen_state.get_clipping_from_view()
                 );
-                default_framebuffer.bind();
-                render::main_scene(&scene_data, &freecam_viewdata);
+                render::main_scene(&default_framebuffer, &scene_data, &freecam_viewdata);
             }
 
             //Take a screenshot here as to not get the dev gui in it
