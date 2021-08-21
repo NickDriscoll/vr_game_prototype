@@ -1983,7 +1983,7 @@ fn main() {
                                         0.0, 0.0, -1.0, 0.0
                                     );
 
-                                    //Render the CSM given this eye's view and projection matrices
+                                    //Render the CSM for this eye
                                     scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, &eye_view_matrix, &perspective);
                                     render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.opaque_entities.as_slice());
     

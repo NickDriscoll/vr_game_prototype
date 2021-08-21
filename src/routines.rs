@@ -287,7 +287,7 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
     match File::open(path) {
         Ok(mut file) => {
             let r = io::read_pascal_strings(&mut file, 1);
-            let new_skybox = io_or_error(r, path)[0].clone();                                
+            let new_skybox = io_or_error(r, path)[0].clone();
 
             let raw_floats = io_or_error(io::read_f32_data(&mut file, 11), path);
 

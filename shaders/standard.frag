@@ -162,14 +162,14 @@ void main() {
     float shininess = (1.0 - roughness) * (shininess_upper_bound - shininess_lower_bound) + shininess_lower_bound;
     float specular = pow(specular_angle, shininess);
 
-    //Get some light from the skybox_sampler
+    //Get some light from the skybox
     vec3 sky_contribution = vec3(0.0);
     {
         vec3 f_surface_normal = normalize(surface_normal);
         vec3 world_view_direction = normalize(f_world_pos - world_view_position);
         vec3 sky_sample_vector = reflect(world_view_direction, f_surface_normal);
         sky_sample_vector = sky_sample_vector.xzy * vec3(1.0, 1.0, -1.0);
-        float sky_percentage = mix(0.001, 0.25, roughness);
+        float sky_percentage = mix(0.25, 0.001, roughness);
         float mip_level = mix(1.0, 5.0, roughness);
         sky_contribution = textureLod(skybox_sampler, sky_sample_vector, mip_level).xyz * sky_percentage;
     }
