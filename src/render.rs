@@ -32,6 +32,7 @@ pub struct RenderEntity {
     pub index_count: GLint,
     pub active_instances: usize,
     pub shader: GLuint,
+    pub uv_velocity: glm::TVec2<f32>,
     pub uv_offset: glm::TVec2<f32>,
     pub uv_scale: glm::TVec2<f32>,
     pub textures: [GLuint; TEXTURE_MAP_COUNT],
@@ -52,6 +53,7 @@ impl RenderEntity {
             index_count: index_count as GLint,
             active_instances: instances,
             shader: program,
+            uv_velocity: glm::zero(),
             uv_offset: glm::zero(),
             uv_scale: glm::zero(),
             textures: [0; TEXTURE_MAP_COUNT],
@@ -130,6 +132,7 @@ impl RenderEntity {
                     active_instances: instances,
                     shader: program,                    
                     textures: [albedo, normal, roughness],
+                    uv_velocity: glm::vec2(meshdata.uv_velocity[0], meshdata.uv_velocity[1]),
                     uv_scale: glm::vec2(1.0, 1.0),
                     uv_offset: glm::vec2(0.0, 0.0),
                     cast_shadows: true
@@ -400,6 +403,7 @@ unsafe fn render_entity(opt_entity: &Option<RenderEntity>, scene_data: &SceneDat
         glutil::bind_int(p, "complex_normals", scene_data.complex_normals as GLint);
         glutil::bind_float_array(p, "cascade_distances", &scene_data.sun_shadow_map.clip_space_distances[1..]);
         glutil::bind_vector3(p, "view_position", &view_data.view_position);
+        glutil::bind_vector2(p, "uv_velocity", &entity.uv_velocity);
         glutil::bind_vector2(p, "uv_scale", &entity.uv_scale);
         glutil::bind_vector2(p, "uv_offset", &entity.uv_offset);
 

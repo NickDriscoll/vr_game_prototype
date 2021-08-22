@@ -24,10 +24,12 @@ out vec2 scaled_uvs;
 out float clip_space_z;
 out float f_highlighted;
 
+uniform float current_time;
 uniform mat4 view_projection;
 uniform mat4 shadow_matrices[SHADOW_CASCADES];
 uniform vec3 sun_direction;
 uniform vec3 view_position;
+uniform vec2 uv_velocity = vec2(0.0, 0.0);
 uniform vec2 uv_scale = vec2(1.0, 1.0);
 uniform vec2 uv_offset = vec2(0.0, 0.0);
 
@@ -50,7 +52,7 @@ void main() {
     world_view_position = view_position;
     f_world_pos = vec3(world_space_pos);
     
-    scaled_uvs = uv * uv_scale + uv_offset;
+    scaled_uvs = uv * uv_scale + current_time * uv_velocity + uv_offset;
     
     f_highlighted = highlighted;
     surface_normal = N;
