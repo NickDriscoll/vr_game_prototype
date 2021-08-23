@@ -678,7 +678,8 @@ fn main() {
             totoros: OptionVec::with_capacity(64),
             selected_totoro: None,
             terrain,
-            terrain_re_indices: Vec::new(),
+            opaque_terrain_indices: Vec::new(),
+            transparent_terrain_indices: Vec::new(),
             skybox_strings: Vec::new(),
             level_name: String::new(),
             active_skybox_index: 0
@@ -2085,7 +2086,10 @@ fn main() {
             }
 
             //Take a screenshot here as to not get the dev gui in it
-            screenshot(&screen_state, &mut screenshot_this_frame);
+            if screenshot_this_frame {
+                take_screenshot(&screen_state);
+                screenshot_this_frame = false;
+            }
 
             //Render 2D elements
             gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);  //Make sure we're not doing wireframe rendering
@@ -2154,7 +2158,10 @@ fn main() {
             }
 
             //Take a screenshot here as to get the dev gui in it
-            screenshot(&screen_state, &mut full_screenshot_this_frame);
+            if full_screenshot_this_frame {
+                take_screenshot(&screen_state);
+                full_screenshot_this_frame = false;
+            }
         }
 
         window.swap_buffers();  //Display the rendered frame to the window

@@ -36,7 +36,8 @@ pub struct RenderEntity {
     pub uv_offset: glm::TVec2<f32>,
     pub uv_scale: glm::TVec2<f32>,
     pub textures: [GLuint; TEXTURE_MAP_COUNT],
-    pub cast_shadows: bool
+    pub cast_shadows: bool,
+    pub transparent: bool
 }
 
 impl RenderEntity {
@@ -57,7 +58,8 @@ impl RenderEntity {
             uv_offset: glm::zero(),
             uv_scale: glm::zero(),
             textures: [0; TEXTURE_MAP_COUNT],
-            cast_shadows: true
+            cast_shadows: true,
+            transparent: false
         }
     }
 
@@ -97,7 +99,7 @@ impl RenderEntity {
                     normal = texture_keeper.fetch_texture(&meshdata.texture_name, "normal", &tex_params, ColorSpace::Linear);
                     roughness = texture_keeper.fetch_texture(&meshdata.texture_name, "roughness", &tex_params, ColorSpace::Linear);
                 } else {
-                    let tex_params = [
+                    let simple_tex_params = [
                         (gl::TEXTURE_WRAP_S, gl::REPEAT),
                         (gl::TEXTURE_WRAP_T, gl::REPEAT),
                         (gl::TEXTURE_MIN_FILTER, gl::NEAREST),
@@ -108,19 +110,19 @@ impl RenderEntity {
                     //The UV data on the mesh will choose which color goes where
                     gl::GenTextures(1, &mut albedo);
                     gl::BindTexture(gl::TEXTURE_2D, albedo);
-                    glutil::apply_texture_parameters(&tex_params);
+                    glutil::apply_texture_parameters(&simple_tex_params);
                     gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA32F as GLint, (meshdata.colors.len() / 4) as GLint, 1, 0, gl::RGBA, gl::FLOAT, &meshdata.colors[0] as *const f32 as *const c_void);
 
                     //Normal map
                     gl::GenTextures(1, &mut normal);
                     gl::BindTexture(gl::TEXTURE_2D, normal);
-                    glutil::apply_texture_parameters(&tex_params);
+                    glutil::apply_texture_parameters(&simple_tex_params);
                     gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA32F as GLint, 1, 1, 0, gl::RGBA, gl::FLOAT, &[0.5f32, 0.5, 1.0, 0.0] as *const f32 as *const c_void);
 
                     //Roughness map
                     gl::GenTextures(1, &mut roughness);
                     gl::BindTexture(gl::TEXTURE_2D, roughness);
-                    glutil::apply_texture_parameters(&tex_params);
+                    glutil::apply_texture_parameters(&simple_tex_params);
                     gl::TexImage2D(gl::TEXTURE_2D, 0, gl::R32F as GLint, 1, 1, 0, gl::RED, gl::FLOAT, &[0.5f32] as *const f32 as *const c_void);
                 }
 
@@ -135,7 +137,8 @@ impl RenderEntity {
                     uv_velocity: glm::vec2(meshdata.uv_velocity[0], meshdata.uv_velocity[1]),
                     uv_scale: glm::vec2(1.0, 1.0),
                     uv_offset: glm::vec2(0.0, 0.0),
-                    cast_shadows: true
+                    cast_shadows: true,
+                    transparent: meshdata.is_transparent
                 }
             }
             None => {

@@ -303,7 +303,8 @@ pub struct WorldState {
     pub totoros: OptionVec<Totoro>,
     pub selected_totoro: Option<usize>,
     pub terrain: Terrain,
-    pub terrain_re_indices: Vec<usize>,     //Indices of the terrain's graphics data in a RenderEntities array
+    pub opaque_terrain_indices: Vec<usize>,     //Indices of the terrain's graphics data in a RenderEntities array
+    pub transparent_terrain_indices: Vec<usize>,     //Indices of the terrain's graphics data in a RenderEntities array
     pub skybox_strings: Vec<ImString>,
     pub level_name: String,
     pub active_skybox_index: usize

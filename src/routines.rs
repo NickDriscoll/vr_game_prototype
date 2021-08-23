@@ -21,34 +21,38 @@ use crate::structs::*;
 use crate::*;
 
 //Saves a screenshot of the current framebuffer to disk
-pub unsafe fn screenshot(screen_state: &ScreenState, flag: &mut bool) {
-    if *flag {
-        let mut buffer = vec![0u8; (screen_state.get_window_size().x * screen_state.get_window_size().y) as usize * 4];
-        gl::ReadPixels(0, 0, screen_state.get_window_size().x as GLint, screen_state.get_window_size().y as GLint, gl::RGBA, gl::UNSIGNED_BYTE, buffer.as_mut_slice() as *mut [u8] as *mut c_void);
+pub unsafe fn take_screenshot(screen_state: &ScreenState) {
+    let mut buffer = vec![0u8; (screen_state.get_window_size().x * screen_state.get_window_size().y) as usize * 4];
+    gl::ReadPixels(
+        0,
+        0,
+        screen_state.get_window_size().x as GLint,
+        screen_state.get_window_size().y as GLint,
+        gl::RGBA,
+        gl::UNSIGNED_BYTE,
+        buffer.as_mut_slice() as *mut [u8] as *mut c_void
+    );
 
-        let dynamic_image = match ImageBuffer::from_raw(screen_state.get_window_size().x, screen_state.get_window_size().y, buffer) {
-            Some(im) => { Some(DynamicImage::ImageRgba8(im).flipv()) }
-            None => { 
-                println!("Unable to convert raw to image::DynamicImage");
-                None
-            }
-        };
+    let dynamic_image = match ImageBuffer::from_raw(screen_state.get_window_size().x, screen_state.get_window_size().y, buffer) {
+        Some(im) => { Some(DynamicImage::ImageRgba8(im).flipv()) }
+        None => { 
+            println!("Unable to convert raw to image::DynamicImage");
+            None
+        }
+    };
 
-        if let Some(dyn_image) = dynamic_image {
-            //Create the screenshot directory if there isn't one
-            let screenshot_dir = "screenshots";
-            if !Path::new(screenshot_dir).is_dir() {
-                if let Err(e) = fs::create_dir(screenshot_dir) {
-                    println!("Unable to create screenshot directory: {}", e);
-                }
-            }
-
-            if let Err(e) = dyn_image.save(format!("{}/{}.png", screenshot_dir, Local::now().format("%F_%H%M%S"))) {
-                println!("Error taking screenshot: {}", e);
+    if let Some(dyn_image) = dynamic_image {
+        //Create the screenshot directory if there isn't one
+        let screenshot_dir = "screenshots";
+        if !Path::new(screenshot_dir).is_dir() {
+            if let Err(e) = fs::create_dir(screenshot_dir) {
+                println!("Unable to create screenshot directory: {}", e);
             }
         }
 
-        *flag = false;
+        if let Err(e) = dyn_image.save(format!("{}/{}.png", screenshot_dir, Local::now().format("%F_%H%M%S"))) {
+            println!("Error taking screenshot: {}", e);
+        }
     }
 }
 
@@ -225,11 +229,17 @@ pub fn load_lvl(level_name: &str, world_state: &mut WorldState, scene_data: &mut
     world_state.level_name = String::from(level_name);
 
     //Load the scene data from the level file
-    for index in &world_state.terrain_re_indices {
-        scene_data.opaque_entities.delete(*index);
+    let index_arrays = [&mut world_state.opaque_terrain_indices, &mut world_state.transparent_terrain_indices];
+    let entity_arrays = [&mut scene_data.opaque_entities, &mut scene_data.transparent_entities];
+    for i in 0..index_arrays.len() {
+        for index in index_arrays[i].iter() {
+            entity_arrays[i].delete(*index);
+        }
+        index_arrays[i].clear();
     }
-    world_state.terrain_re_indices.clear();
+
     world_state.selected_totoro = None;
+
     match File::open(&format!("maps/{}.lvl", world_state.level_name)) {
         Ok(mut file) => {
             loop {
@@ -262,8 +272,13 @@ pub fn load_lvl(level_name: &str, world_state: &mut WorldState, scene_data: &mut
                 };
 
                 let mut entity = RenderEntity::from_ozy(&format!("models/{}", ozy_name), terrain_program, matrices_count, STANDARD_TRANSFORM_ATTRIBUTE, texture_keeper, &DEFAULT_TEX_PARAMS);
-                entity.update_transform_buffer(&matrix_floats, STANDARD_TRANSFORM_ATTRIBUTE);                
-                world_state.terrain_re_indices.push(scene_data.opaque_entities.insert(entity));
+                entity.update_transform_buffer(&matrix_floats, STANDARD_TRANSFORM_ATTRIBUTE);
+
+                if entity.transparent {                    
+                    world_state.transparent_terrain_indices.push(scene_data.transparent_entities.insert(entity));
+                } else {
+                    world_state.opaque_terrain_indices.push(scene_data.opaque_entities.insert(entity));
+                }                
             }                
         }
         Err(e) => { level_load_error(e); }
