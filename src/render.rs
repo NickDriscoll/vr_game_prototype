@@ -351,8 +351,8 @@ impl ViewData {
 //This is the function that renders the 3D scene
 pub unsafe fn main_scene(framebuffer: &Framebuffer, scene_data: &SceneData, view_data: &ViewData) {
     //Main scene rendering
-    framebuffer.bind();
     gl::DepthMask(gl::TRUE);
+    framebuffer.bind();
     gl::ActiveTexture(gl::TEXTURE0 + ozy::render::TEXTURE_MAP_COUNT as GLenum);
     gl::BindTexture(gl::TEXTURE_2D, scene_data.sun_shadow_map.rendertarget.texture);
 

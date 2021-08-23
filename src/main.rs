@@ -1179,7 +1179,7 @@ fn main() {
                         totoro.state_timer = elapsed_time;
                     }
                     TotoroState::Panicking => {
-                        if ai_time >= 1.0 {
+                        if ai_time >= 0.25 {
                             let mut new_forward = glm::normalize(&(totoro.position - world_state.player.tracked_segment.p1));
                             new_forward.z = 0.0;
                             new_forward = glm::normalize(&new_forward);

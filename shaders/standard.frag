@@ -168,7 +168,7 @@ void main() {
         vec3 sky_sample_vector = reflect(world_view_direction, f_surface_normal);
         sky_sample_vector = sky_sample_vector.xzy * vec3(1.0, 1.0, -1.0);
         float sky_percentage = mix(0.001, 0.25, shininess / 128.0);
-        float mip_level = mix(5.0, 1.0, shininess / 128.0);
+        float mip_level = mix(5.0, 2.0, shininess / 128.0);
         sky_contribution = textureLod(skybox_sampler, sky_sample_vector, mip_level).xyz * sky_percentage;
     }
 

@@ -47,7 +47,7 @@ void main() {
     }    
 
     tangent_space_pos = tangent_from_world * vec3(world_space_pos);
-    tangent_sun_direction = tangent_from_world * sun_direction;
+    tangent_sun_direction = normalize(tangent_from_world * sun_direction);
     tangent_view_position = tangent_from_world * view_position;
     world_view_position = view_position;
     f_world_pos = vec3(world_space_pos);

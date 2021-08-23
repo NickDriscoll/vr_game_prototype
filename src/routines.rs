@@ -324,7 +324,7 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
             for i in (0..raw_floats.len()).step_by(floats_per_totoro) {
                 let pos = glm::vec3(raw_floats[i], raw_floats[i + 1], raw_floats[i + 2]);                
                 let mut tot = Totoro::new(pos, rand::random::<f32>() * 4.5 - 2.0);
-                tot.scale = raw_floats[i + 3];;
+                tot.scale = raw_floats[i + 3];
                 world_state.totoros.insert(tot);
             }
 
