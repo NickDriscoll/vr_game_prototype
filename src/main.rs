@@ -638,6 +638,57 @@ fn main() {
         cascade_distances
     };
 
+    scene_data.point_lights_ubo = unsafe {
+        let floats_per_light = 7;
+        let mut ubo = 0;
+        gl::GenBuffers(1, &mut ubo);
+        gl::BindBuffer(gl::UNIFORM_BUFFER, ubo);
+
+        //Create the buffer
+        let mut buffer = vec![0.0; scene_data.point_lights.count() * floats_per_light];        
+        let mut current_light = 0;
+        for i in 0..scene_data.point_lights.len() {
+            if let Some(light) = &scene_data.point_lights[i] {
+                buffer[current_light] = light.position.x;
+                buffer[current_light + 1] = light.position.y;
+                buffer[current_light + 2] = light.position.z;
+                buffer[current_light + 3] = light.color[0];
+                buffer[current_light + 4] = light.color[1];
+                buffer[current_light + 5] = light.color[2];
+                buffer[current_light + 6] = light.radius;
+
+                current_light += 1;
+            }
+        }        
+
+        //Upload the buffer
+        let mut current_buffer_size = 0;
+        gl::GetBufferParameteriv(gl::ARRAY_BUFFER, gl::BUFFER_SIZE, &mut current_buffer_size);
+        if buffer.len() * size_of::<f32>() > current_buffer_size as usize {
+            let mut b = 0;
+            gl::DeleteBuffers(1, &ubo as *const u32);
+            gl::GenBuffers(1, &mut b);
+            ubo = b;
+            
+            gl::BindBuffer(gl::ARRAY_BUFFER, ubo);
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (scene_data.point_lights.count() * floats_per_light * size_of::<GLfloat>()) as GLsizeiptr,
+                &buffer[0] as *const GLfloat as *const c_void,
+                gl::DYNAMIC_DRAW
+            );
+        } else if buffer.len() > 0 {            
+            gl::BufferSubData(
+                gl::UNIFORM_BUFFER,
+                0 as GLsizeiptr,
+                (buffer.len() * size_of::<GLfloat>()) as GLsizeiptr,
+                &buffer[0] as *const GLfloat as *const c_void
+            );
+        }
+
+        ubo
+    };
+
     //Initialize texture caching struct
     let mut texture_keeper = TextureKeeper::new();
 

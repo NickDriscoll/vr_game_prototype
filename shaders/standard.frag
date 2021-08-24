@@ -21,7 +21,7 @@ struct PointLight {
 in vec3 tangent_sun_direction;
 in vec3 tangent_view_position;
 in vec3 world_view_position;
-in vec3 tangent_space_pos;
+in vec3 f_tan_pos;
 in vec3 surface_normal;
 in vec4 shadow_space_pos[SHADOW_CASCADES];
 in vec3 f_world_pos;
@@ -154,7 +154,7 @@ void main() {
 
     //Compute specular light w/ blinn-phong
     float roughness = texture(roughness_tex, scaled_uvs).x;
-    vec3 tangent_view_direction = normalize(tangent_view_position - tangent_space_pos);
+    vec3 tangent_view_direction = normalize(tangent_view_position - f_tan_pos);
     vec3 halfway = normalize(tangent_view_direction + tangent_sun_direction);
     float specular_angle = max(0.0, dot(halfway, tangent_space_normal));
     float shininess = (1.0 - roughness) * (shininess_upper_bound - shininess_lower_bound) + shininess_lower_bound;

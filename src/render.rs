@@ -169,10 +169,16 @@ impl RenderEntity {
             gl::GenBuffers(1, &mut b);
             self.instanced_buffers[buffer_name_index] = b;
             
-            gl::BindVertexArray(self.vao);
             gl::BindBuffer(gl::ARRAY_BUFFER, self.instanced_buffers[buffer_name_index]);
+            gl::BufferData(
+                gl::ARRAY_BUFFER,
+                (self.active_instances as usize * attribute_floats * size_of::<GLfloat>()) as GLsizeiptr,
+                &buffer[0] as *const GLfloat as *const c_void,
+                gl::DYNAMIC_DRAW
+            );
 
             //Bad branch bad
+            gl::BindVertexArray(self.vao);
             if attribute_floats == 16 {
                 glutil::bind_new_transform_buffer(attribute);
             } else {                
@@ -187,15 +193,7 @@ impl RenderEntity {
                 gl::EnableVertexAttribArray(attribute);
                 gl::VertexAttribDivisor(attribute, 1);
             }
-
-            gl::BufferData(
-                gl::ARRAY_BUFFER,
-                (self.active_instances as usize * attribute_floats * size_of::<GLfloat>()) as GLsizeiptr,
-                &buffer[0] as *const GLfloat as *const c_void,
-                gl::DYNAMIC_DRAW
-            );
         } else if buffer.len() > 0 {
-            gl::BindBuffer(gl::ARRAY_BUFFER, self.instanced_buffers[buffer_name_index]);
             gl::BufferSubData(
                 gl::ARRAY_BUFFER,
                 0 as GLsizeiptr,
@@ -277,6 +275,7 @@ pub struct SceneData {
     pub ambient_strength: f32,
     pub current_time: f32,
     pub point_lights: OptionVec<PointLight>,
+    pub point_lights_ubo: GLuint,
     pub opaque_entities: OptionVec<RenderEntity>,
     pub transparent_entities: OptionVec<RenderEntity>
 }
@@ -310,6 +309,7 @@ impl Default for SceneData {
             sun_shadow_map,
             current_time: 0.0,
             point_lights: OptionVec::new(),
+            point_lights_ubo: 0,
             opaque_entities: OptionVec::new(),
             transparent_entities: OptionVec::new()
         }

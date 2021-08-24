@@ -16,7 +16,7 @@ const int SHADOW_CASCADES = 5;
 out vec3 tangent_sun_direction;
 out vec3 tangent_view_position;
 out vec3 world_view_position;
-out vec3 tangent_space_pos;
+out vec3 f_tan_pos;
 out vec3 surface_normal;
 out vec4 shadow_space_pos[SHADOW_CASCADES];
 out vec3 f_world_pos;
@@ -46,7 +46,7 @@ void main() {
         shadow_space_pos[i] = shadow_matrices[i] * world_space_pos;
     }    
 
-    tangent_space_pos = tangent_from_world * vec3(world_space_pos);
+    f_tan_pos = tangent_from_world * vec3(world_space_pos);
     tangent_sun_direction = normalize(tangent_from_world * sun_direction);
     tangent_view_position = tangent_from_world * view_position;
     world_view_position = view_position;
