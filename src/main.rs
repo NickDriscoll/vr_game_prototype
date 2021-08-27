@@ -643,8 +643,15 @@ fn main() {
 
         //Add one test light
         let light = PointLight {
-            position: glm::vec3(1.0, 1.0, 1.0),
-            color: [1.0, 1.0, 0.0],
+            position: glm::vec3(1.0, 1.0, 5.0),
+            color: [0.0, 1.0, 0.0],
+            radius: 10.0
+        };
+        scene_data.point_lights.insert(light);
+
+        let light = PointLight {
+            position: glm::vec3(20.0, 4.0, 5.0),
+            color: [1.0, 0.5, 0.0],
             radius: 10.0
         };
         scene_data.point_lights.insert(light);
@@ -680,36 +687,9 @@ fn main() {
             gl::DYNAMIC_DRAW
         );
 
-
         //Bind the point light ubo
         gl::UseProgram(standard_program);
         gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, ubo);
-
-        /*
-        let mut current_buffer_size = 0;
-        gl::GetBufferParameteriv(gl::UNIFORM_BUFFER, gl::BUFFER_SIZE, &mut current_buffer_size);
-        if buffer.len() * size_of::<f32>() > current_buffer_size as usize {
-            let mut b = 0;
-            gl::DeleteBuffers(1, &ubo as *const u32);
-            gl::GenBuffers(1, &mut b);
-            ubo = b;
-            
-            gl::BindBuffer(gl::UNIFORM_BUFFER, ubo);
-            gl::BufferData(
-                gl::UNIFORM_BUFFER,
-                (scene_data.point_lights.count() * floats_per_light * size_of::<GLfloat>()) as GLsizeiptr,
-                &buffer[0] as *const GLfloat as *const c_void,
-                gl::DYNAMIC_DRAW
-            );
-        } else if buffer.len() > 0 {
-            gl::BufferSubData(
-                gl::UNIFORM_BUFFER,
-                0 as GLsizeiptr,
-                (buffer.len() * size_of::<GLfloat>()) as GLsizeiptr,
-                &buffer[0] as *const GLfloat as *const c_void
-            );
-        }
-        */
 
         ubo
     };
@@ -1647,10 +1627,11 @@ fn main() {
         if let Some(entity) = scene_data.transparent_entities.get_mut_element(debug_sphere_re_index) {
             let totoros = &world_state.totoros;
             let instances =  {
-                let mut acc = 1;
+                let mut acc = 0;
                 if viewing_collision {acc += totoros.count();}
                 if viewing_player_spawn { acc += 1; }
                 if viewing_player_spheres { acc += 2; }
+                acc += scene_data.point_lights.count();
                 acc
             };
 
@@ -1695,12 +1676,14 @@ fn main() {
                 current_debug_sphere += 1;
             }
 
-            if let Some(light) = &scene_data.point_lights[0] {
-                let light_transform = glm::translation(&light.position) * uniform_scale(-0.2);
-                write_matrix_to_buffer(&mut transform_buffer, current_debug_sphere, light_transform);
-                write_vec4_to_buffer(&mut color_buffer, current_debug_sphere, glm::vec4(1.0, 1.0, 0.0, 0.4));
-
-                current_debug_sphere += 1;
+            for i in 0..scene_data.point_lights.len() {
+                if let Some(light) = &scene_data.point_lights[i] {
+                    let light_transform = glm::translation(&light.position) * uniform_scale(-0.2);
+                    write_matrix_to_buffer(&mut transform_buffer, current_debug_sphere, light_transform);
+                    write_vec4_to_buffer(&mut color_buffer, current_debug_sphere, glm::vec4(1.0, 1.0, 0.0, 0.4));
+    
+                    current_debug_sphere += 1;
+                }
             }
 
             entity.update_highlight_buffer(&highlighted_buffer, DEBUG_HIGHLIGHTED_ATTRIBUTE);
