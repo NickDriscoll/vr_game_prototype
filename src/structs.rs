@@ -2,15 +2,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::prelude::*;
-use ozy::collision::*;
-use crate::gadget::Gadget;
 use crate::*;
-
-#[derive(PartialEq, Eq)]
-pub enum MoveState {
-    Grounded,
-    Falling
-}
 
 #[derive(PartialEq, Eq)]
 pub enum ClickAction {
@@ -21,31 +13,31 @@ pub enum ClickAction {
     DeleteTotoro,
     MovePlayerSpawn,
     MoveSelectedTotoro,
-    PlacePointLight
+    CreatePointLight,
+    SelectPointLight,
+    MovePointLight,
+    DeletePointLight
 }
 
 impl Default for ClickAction {
     fn default() -> Self { ClickAction::None }
 }
 
-pub struct MouseState {
-    
-    /*
-    let mut mouselook_enabled = false;
-    let mut mouse_clicked = false;
-    */
+pub struct Mouse {
+    pub clicked: bool,
+    pub was_clicked: bool,
+    pub screen_space_pos: glm::TVec2<f32>
 }
 
 pub struct Camera {
     pub position: glm::TVec3<f32>,
     pub last_position: glm::TVec3<f32>,
-    pub collision_radius: f32
+    pub radius: f32,
+    pub screen_state: ScreenState
 
     //Camera state
     /*
     let mut mouselook_enabled = false;
-    let mut mouse_clicked = false;
-    let mut was_mouse_clicked = false;
     let mut camera_position = glm::vec3(0.0, -8.0, 5.5);
     let mut last_camera_position = camera_position;
     let mut camera_input: glm::TVec3<f32> = glm::zero();             //This is a unit vector in view space that represents the input camera movement vector
@@ -54,105 +46,6 @@ pub struct Camera {
     let camera_hit_sphere_radius = 0.5;
     let mut camera_collision = true;
     */
-}
-
-pub struct Player {
-    pub tracking_position: glm::TVec3<f32>,
-    pub tracking_velocity: glm::TVec3<f32>,
-    pub tracked_segment: LineSegment,
-    pub last_tracked_segment: LineSegment,
-    pub movement_state: MoveState,
-    pub stick_data: Option<StickData>,
-    pub radius: f32,
-    pub jumps_remaining: usize,
-    pub was_holding_jump: bool
-}
-
-impl Player {
-    pub const MAX_JUMPS: usize = 1;
-
-    pub fn new(pos: glm::TVec3<f32>) -> Self {
-        Player {
-            tracking_position: pos,
-            tracking_velocity: glm::zero(),            
-            tracked_segment: LineSegment::zero(),
-            last_tracked_segment: LineSegment::zero(),
-            movement_state: MoveState::Falling,
-            stick_data: None,
-            radius: 0.15,
-            jumps_remaining: Player::MAX_JUMPS,
-            was_holding_jump: false
-        }
-    }
-}
-
-pub fn ground_player(player: &mut Player, max_energy: &mut f32) {    
-    player.tracking_velocity = glm::zero();
-    player.jumps_remaining = Player::MAX_JUMPS;
-    *max_energy = Gadget::MAX_ENERGY;
-}
-
-pub fn set_player_falling(player: &mut Player) {
-    player.jumps_remaining -= 1;
-    player.movement_state = MoveState::Falling;
-}
-
-pub fn reset_player_position(world_state: &mut WorldState) {    
-    world_state.player.tracking_position = world_state.player_spawn;
-    world_state.player.tracking_velocity = glm::zero();
-    world_state.player.tracked_segment = LineSegment::zero();
-    world_state.player.last_tracked_segment = LineSegment::zero();
-    world_state.player.jumps_remaining = Player::MAX_JUMPS;
-    world_state.player.movement_state = MoveState::Falling;
-}
-
-pub struct Totoro {
-    pub position: glm::TVec3<f32>,
-    pub velocity: glm::TVec3<f32>,
-    pub scale: f32,
-    pub home: glm::TVec3<f32>,
-    pub forward: glm::TVec3<f32>,
-    pub desired_forward: glm::TVec3<f32>,
-    pub state: TotoroState,
-    pub state_timer: f32,
-    pub saw_player_last: f32
-}
-
-impl Totoro {
-    pub fn new(position: glm::TVec3<f32>, creation_time: f32) -> Self {
-        //Generate random orientation and scale
-        let forward = glm::normalize(&glm::vec3(rand::random::<f32>() * 2.0 - 1.0, rand::random::<f32>() * 2.0 - 1.0, 0.0));
-        let scale = rand::random::<f32>() * 0.5 + 1.0;
-        
-        Totoro {
-            position,
-            velocity: glm::zero(),
-            scale,
-            home: position,
-            forward,
-            desired_forward: forward,
-            state_timer: creation_time,
-            state: TotoroState::Relaxed,
-            saw_player_last: 0.0
-        }
-    }
-
-    pub fn collision_sphere(&self) -> Sphere {
-        let radius = self.scale * 0.65;
-        Sphere {
-            radius,
-            focus: self.position + glm::vec3(0.0, 0.0, radius)
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum TotoroState {
-    Relaxed,
-    Meandering,
-    Startled,
-    Panicking,
-    BrainDead
 }
 
 #[derive(PartialEq, Eq)]
@@ -295,17 +188,4 @@ pub fn get_window_size(config: &Configuration) -> glm::TVec2<u32> {
             glm::vec2(1280, 720)
         }
     }
-}
-
-pub struct WorldState {
-    pub player: Player,
-    pub player_spawn: glm::TVec3<f32>,
-    pub totoros: OptionVec<Totoro>,
-    pub selected_totoro: Option<usize>,
-    pub terrain: Terrain,
-    pub opaque_terrain_indices: Vec<usize>,     //Indices of the terrain's graphics data in a RenderEntities array
-    pub transparent_terrain_indices: Vec<usize>,     //Indices of the terrain's graphics data in a RenderEntities array
-    pub skybox_strings: Vec<ImString>,
-    pub level_name: String,
-    pub active_skybox_index: usize
 }

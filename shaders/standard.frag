@@ -11,7 +11,7 @@ const vec3 LOD_COLOR3 = vec3(1.0, 0.0, 1.0);
 const vec3 LOD_COLOR4 = vec3(0.0, 0.0, 1.0);
 const int SHADOW_CASCADES = 5;
 const float SHADOW_CASCADES_RECIPROCAL = 1.0 / SHADOW_CASCADES;
-const int MAX_POINT_LIGHTS = 16;
+const int MAX_POINT_LIGHTS = 64;
 
 in vec3 tangent_sun_direction;
 in vec3 tangent_view_position;
@@ -77,6 +77,16 @@ float determine_shadowed(vec3 f_shadow_pos, vec3 tan_normal, int cascade) {
     return sampled_depth + bias < f_shadow_pos.z ? 1.0 : 0.0;
 }
 
+float lambertian_diffuse(vec3 light_direction, vec3 normal) {
+    return max(0.0, dot(light_direction, normal));
+}
+
+float blinn_phong_specular(vec3 view_direction, vec3 light_direction, vec3 normal, float shininess) {
+    vec3 halfway = normalize(view_direction + light_direction);
+    float spec_angle = max(0.0, dot(halfway, normal));
+    return pow(spec_angle, shininess);
+}
+
 void main() {
     //Compute this frag's tangent space normal
     vec3 tangent_space_normal;
@@ -94,7 +104,7 @@ void main() {
     }
 
     //Compute diffuse lighting
-    float sun_diffuse = max(0.0, dot(tangent_sun_direction, tangent_space_normal));
+    float sun_diffuse = lambertian_diffuse(tangent_sun_direction, tangent_space_normal);
 
     //Determine how shadowed the fragment is
     vec4 adj_shadow_space_pos;
@@ -163,9 +173,7 @@ void main() {
 
     //Compute specular light w/ blinn-phong
     vec3 tangent_view_direction = normalize(tangent_view_position - f_tan_pos);
-    vec3 sun_halfway = normalize(tangent_view_direction + tangent_sun_direction);
-    float specular_angle = max(0.0, dot(sun_halfway, tangent_space_normal));
-    float sun_specular = pow(specular_angle, f_shininess);
+    float sun_specular = blinn_phong_specular(tangent_view_direction, tangent_sun_direction, tangent_space_normal, f_shininess);
 
     //Compute lighting from point lights
     vec3 point_lights_contribution = vec3(0.0);
@@ -175,15 +183,14 @@ void main() {
         float radius = rs[i % 4];
 
         vec3 light_color = point_lights.colors[i];
-        vec3 tangent_light_direction = normalize(tangent_from_world * (point_lights.positions[i] - f_world_pos));
+        vec3 tangent_light_direction = tangent_from_world * (point_lights.positions[i] - f_world_pos);
+        float dist = length(tangent_light_direction);
+        tangent_light_direction = normalize(tangent_light_direction);
 
-        float diffuse = max(0.0, dot(tangent_light_direction, tangent_space_normal));
+        float diffuse = lambertian_diffuse(tangent_light_direction, tangent_space_normal);
+        float specular = blinn_phong_specular(tangent_view_direction, tangent_light_direction, tangent_space_normal, f_shininess);
 
-        vec3 halfway = normalize(tangent_view_direction + tangent_light_direction);
-        float spec_angle = max(0.0, dot(halfway, tangent_space_normal));
-        float specular = pow(spec_angle, f_shininess);
-
-        point_lights_contribution += light_color * (diffuse + specular);
+        point_lights_contribution += light_color * (diffuse + specular) / (dist * dist) * radius;
     }
 
     //Get some light from the skybox

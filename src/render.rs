@@ -1,6 +1,7 @@
 use std::ptr;
 use std::mem::size_of;
 use std::os::raw::c_void;
+use ozy::collision::Sphere;
 use ozy::io::OzyMesh;
 use ozy::render::{Framebuffer, RenderTarget, TextureKeeper};
 use ozy::structs::OptionVec;
@@ -8,13 +9,14 @@ use ozy::glutil::ColorSpace;
 use ozy::{glutil};
 use tfd::MessageBoxIcon;
 use gl::types::*;
+use crate::traits::Spherical;
 
 pub const NEAR_DISTANCE: f32 = 0.0625;
 pub const FAR_DISTANCE: f32 = 1000000.0;
 pub const MSAA_SAMPLES: u32 = 8;
 pub const SHADOW_CASCADE_COUNT: usize = 5;
 pub const TEXTURE_MAP_COUNT: usize = 3;
-pub const MAX_POINT_LIGHTS: usize = 16;
+pub const MAX_POINT_LIGHTS: usize = 64;
 
 pub const STANDARD_HIGHLIGHTED_ATTRIBUTE: GLuint = 5;
 pub const STANDARD_TRANSFORM_ATTRIBUTE: GLuint = 6;
@@ -258,6 +260,19 @@ pub struct PointLight {
     pub radius: f32
 }
 
+impl PointLight {
+    pub const COLLISION_RADIUS: f32 = 0.2;
+}
+
+impl Spherical for PointLight {
+    fn sphere(&self) -> Sphere {
+        Sphere {
+            focus: self.position,
+            radius: PointLight::COLLISION_RADIUS
+        }
+    }
+}
+
 pub struct SceneData {
     pub fragment_flag: FragmentFlag,
     pub complex_normals: bool,
@@ -277,6 +292,7 @@ pub struct SceneData {
     pub current_time: f32,
     pub point_lights: OptionVec<PointLight>,
     pub point_lights_ubo: GLuint,
+    pub selected_point_light: Option<usize>,
     pub opaque_entities: OptionVec<RenderEntity>,
     pub transparent_entities: OptionVec<RenderEntity>
 }
@@ -311,6 +327,7 @@ impl Default for SceneData {
             current_time: 0.0,
             point_lights: OptionVec::new(),
             point_lights_ubo: 0,
+            selected_point_light: None,
             opaque_entities: OptionVec::new(),
             transparent_entities: OptionVec::new()
         }

@@ -17,6 +17,9 @@ use ozy::render::{Framebuffer, ScreenState};
 use ozy::structs::OptionVec;
 use ozy::collision::*;
 
+use crate::traits::PositionAble;
+use crate::traits::Spherical;
+use crate::gamestate::*;
 use crate::structs::*;
 use crate::*;
 
@@ -94,22 +97,22 @@ pub unsafe fn create_skybox_cubemap(sky_name: &str) -> GLuint {
 	cubemap
 }
 
-pub fn get_clicked_totoro(totoros: &mut OptionVec<Totoro>, click_ray: &Ray) -> Option<(f32, usize)> {
+pub fn get_clicked_object<T: Spherical>(objects: &OptionVec<T>, click_ray: &Ray) -> Option<(f32, usize)> {
     let mut smallest_t = f32::INFINITY;
     let mut hit_index = None;
-    for i in 0..totoros.len() {
-        if let Some(tot) = &totoros[i] {
-            let tot_sphere = tot.collision_sphere();
+    for i in 0..objects.len() {
+        if let Some(thing) = &objects[i] {
+            let sphere = thing.sphere();
             //Translate the ray, such that the test can be performed on a sphere centered at the origin
             //This just simplifies the math
             let test_ray = Ray {
-                origin: click_ray.origin - tot_sphere.focus,
+                origin: click_ray.origin - sphere.focus,
                 direction: click_ray.direction
             };
 
             //Compute t
             let d_dot_p = glm::dot(&test_ray.direction, &test_ray.origin);
-            let sqrt_body = d_dot_p * d_dot_p - glm::dot(&test_ray.origin, &test_ray.origin) + tot_sphere.radius * tot_sphere.radius;
+            let sqrt_body = d_dot_p * d_dot_p - glm::dot(&test_ray.origin, &test_ray.origin) + sphere.radius * sphere.radius;
 
             //The sqrt body being negative indicates a miss
             if sqrt_body >= 0.0 {
@@ -125,11 +128,13 @@ pub fn get_clicked_totoro(totoros: &mut OptionVec<Totoro>, click_ray: &Ray) -> O
     hit_index
 }
 
-pub fn kill_totoro(totoros: &mut OptionVec<Totoro>, selected: &mut Option<usize>, idx: usize) {
-    totoros.delete(idx);
-    if let Some(i) = selected {
-        if *i == idx {
-            *selected = None;
+pub fn move_object<T: PositionAble>(objects: &mut OptionVec<T>, terrain: &Terrain, scene_data: &SceneData, camera: &Camera, mouse: &Mouse) {
+    if let Some(idx) = scene_data.selected_point_light {
+        let click_ray = compute_click_ray(&camera.screen_state, &mouse.screen_space_pos, &camera.position);
+        if let Some((_, point)) = ray_hit_terrain(terrain, &click_ray) {
+            if let Some(ob) = objects.get_mut_element(idx) {
+                ob.set_position(point + glm::vec3(0.0, 0.0, 2.0));
+            }
         }
     }
 }
@@ -222,7 +227,7 @@ pub fn rand_binomial() -> f32 {
     rand::random::<f32>() - rand::random::<f32>()
 }
 
-pub fn load_lvl(level_name: &str, world_state: &mut WorldState, scene_data: &mut SceneData, texture_keeper: &mut TextureKeeper, terrain_program: GLuint) {    
+pub fn load_lvl(level_name: &str, world_state: &mut WorldState, scene_data: &mut SceneData, texture_keeper: &mut TextureKeeper, standard_program: GLuint) {    
     let level_load_error = |s: std::io::Error| {
         tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", level_name, s), MessageBoxIcon::Error);
         exit(-1);
@@ -230,7 +235,6 @@ pub fn load_lvl(level_name: &str, world_state: &mut WorldState, scene_data: &mut
 
     world_state.level_name = String::from(level_name);
 
-    //Load the scene data from the level file
     let index_arrays = [&mut world_state.opaque_terrain_indices, &mut world_state.transparent_terrain_indices];
     let entity_arrays = [&mut scene_data.opaque_entities, &mut scene_data.transparent_entities];
     for i in 0..index_arrays.len() {
@@ -240,8 +244,7 @@ pub fn load_lvl(level_name: &str, world_state: &mut WorldState, scene_data: &mut
         index_arrays[i].clear();
     }
 
-    world_state.selected_totoro = None;
-
+    //Load the scene data from the level file
     match File::open(&format!("maps/{}.lvl", world_state.level_name)) {
         Ok(mut file) => {
             loop {
@@ -273,7 +276,7 @@ pub fn load_lvl(level_name: &str, world_state: &mut WorldState, scene_data: &mut
                     }
                 };
 
-                let mut entity = RenderEntity::from_ozy(&format!("models/{}", ozy_name), terrain_program, matrices_count, STANDARD_TRANSFORM_ATTRIBUTE, texture_keeper, &DEFAULT_TEX_PARAMS);
+                let mut entity = RenderEntity::from_ozy(&format!("models/{}", ozy_name), standard_program, matrices_count, STANDARD_TRANSFORM_ATTRIBUTE, texture_keeper, &DEFAULT_TEX_PARAMS);
                 entity.update_transform_buffer(&matrix_floats, STANDARD_TRANSFORM_ATTRIBUTE);
 
                 if entity.transparent {                    
@@ -300,13 +303,17 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
 
     //First, clear world data
     world_state.totoros.clear();
+    scene_data.point_lights.clear();
+    world_state.selected_totoro = None;
+    scene_data.selected_point_light = None;
 
     match File::open(path) {
         Ok(mut file) => {
+            let floats_at_start = 11;
             let r = io::read_pascal_strings(&mut file, 1);
             let new_skybox = io_or_error(r, path)[0].clone();
 
-            let raw_floats = io_or_error(io::read_f32_data(&mut file, 11), path);
+            let raw_floats = io_or_error(io::read_f32_data(&mut file, floats_at_start), path);
 
             scene_data.ambient_strength = raw_floats[0];
             scene_data.sun_pitch = raw_floats[1];

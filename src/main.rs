@@ -8,10 +8,11 @@ extern crate tinyfiledialogs as tfd;
 extern crate ozy_engine as ozy;
 
 mod audio;
-mod gadget;
+mod gamestate;
 mod structs;
 mod render;
 mod routines;
+mod traits;
 mod xrutil;
 
 use render::{compute_shadow_cascade_matrices, CascadedShadowMap, FragmentFlag, RenderEntity, SceneData, ViewData};
@@ -41,10 +42,11 @@ use ozy::structs::OptionVec;
 use ozy::collision::*;
 
 use crate::audio::{AudioCommand};
-use crate::gadget::*;
+use crate::gamestate::*;
 use crate::structs::*;
 use crate::routines::*;
 use crate::render::*;
+use crate::traits::Spherical;
 
 #[cfg(windows)]
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
@@ -595,10 +597,15 @@ fn main() {
         }
     };
 
+    //Mouse state
+    let mut mouse = Mouse {
+        clicked: false,
+        was_clicked: false,
+        screen_space_pos: glm::zero()
+    };
+
     //Camera state
     let mut mouselook_enabled = false;
-    let mut mouse_clicked = false;
-    let mut was_mouse_clicked = false;
     let mut camera_position = glm::vec3(0.0, -8.0, 5.5);
     let mut last_camera_position = camera_position;
     let mut camera_input: glm::TVec3<f32> = glm::zero();             //This is a unit vector in view space that represents the input camera movement vector
@@ -682,7 +689,7 @@ fn main() {
         //Upload the buffer
         gl::BufferData(
             gl::UNIFORM_BUFFER,
-            (render::MAX_POINT_LIGHTS * floats_per_light * size_of::<GLfloat>()) as GLsizeiptr,
+            (buffer.len() * size_of::<GLfloat>()) as GLsizeiptr,
             &buffer[0] as *const GLfloat as *const c_void,
             gl::DYNAMIC_DRAW
         );
@@ -717,7 +724,6 @@ fn main() {
     let mut world_from_tracking = glm::identity();
     let mut tracking_from_world = glm::affine_inverse(world_from_tracking);
 
-    let mut screen_space_mouse = glm::zero();
     let mut left_sticky_grab = false;
     let mut right_sticky_grab = false;
 
@@ -817,6 +823,7 @@ fn main() {
     let mut viewing_player_spawn = false;
     let mut viewing_player_spheres = false;
     let mut showing_shadow_atlas = false;
+    let mut viewing_point_lights = false;
     if let Some(_) = &xr_instance {
         hmd_pov = true;
         do_vsync = false;
@@ -937,7 +944,7 @@ fn main() {
                         }
                         Action::Repeat => {}
                     }
-                    mouse_clicked = imgui_io.mouse_down[0];
+                    mouse.clicked = imgui_io.mouse_down[0];
                 }
                 WindowEvent::MouseButton(glfw::MouseButtonRight, glfw::Action::Press, ..) => {
                     imgui_io.mouse_down[1] = true;
@@ -953,10 +960,10 @@ fn main() {
                 }
                 WindowEvent::CursorPos(x, y) => {
                     imgui_io.mouse_pos = [x as f32, y as f32];
-                    screen_space_mouse = glm::vec2(x as f32, y as f32);
+                    mouse.screen_space_pos = glm::vec2(x as f32, y as f32);
                     if mouselook_enabled {
                         const CAMERA_SENSITIVITY_DAMPENING: f32 = 0.002;
-                        let offset = glm::vec2(screen_space_mouse.x as f32 - screen_state.get_window_size().x as f32 / 2.0, screen_space_mouse.y as f32 - screen_state.get_window_size().y as f32 / 2.0);
+                        let offset = glm::vec2(mouse.screen_space_pos.x as f32 - screen_state.get_window_size().x as f32 / 2.0, mouse.screen_space_pos.y as f32 - screen_state.get_window_size().y as f32 / 2.0);
                         camera_orientation += offset * CAMERA_SENSITIVITY_DAMPENING;
                         if camera_orientation.y < -glm::pi::<f32>() {
                             camera_orientation.y = -glm::pi::<f32>();
@@ -1239,7 +1246,7 @@ fn main() {
                     TotoroState::Startled => {
                         let new_forward = glm::normalize(&(world_state.player.tracked_segment.p1 - totoro.position));
                         totoro.forward = new_forward;
-                        totoro.velocity = glm::vec3(0.0, 0.0, 50.0);
+                        totoro.velocity = glm::vec3(0.0, 0.0, 10.0);
                         totoro.state = TotoroState::Panicking;
                         totoro.state_timer = elapsed_time;
                     }
@@ -1270,7 +1277,7 @@ fn main() {
 
                 //Kill if below a certain point
                 if totoro.position.z < -1000.0 {
-                    kill_totoro(&mut world_state.totoros, &mut world_state.selected_totoro, i);
+                    delete_object(&mut world_state.totoros, &mut world_state.selected_totoro, i);
                 }
             }
         }
@@ -1284,10 +1291,10 @@ fn main() {
         camera_position += camera_velocity * delta_time;
 
         //Do click action
-        if !imgui_wants_mouse && mouse_clicked && (!was_mouse_clicked || turbo_clicking) {
+        if !imgui_wants_mouse && mouse.clicked && (!mouse.was_clicked || turbo_clicking) {
             match click_action {
                 ClickAction::SpawnTotoro => {
-                    let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
+                    let click_ray = compute_click_ray(&screen_state, &mouse.screen_space_pos, &camera_position);
 
                     //Create Totoro if the ray hit
                     if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
@@ -1296,8 +1303,8 @@ fn main() {
                     }
                 }
                 ClickAction::SelectTotoro => {
-                    let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
-                    let hit_info = get_clicked_totoro(&mut world_state.totoros, &click_ray);
+                    let click_ray = compute_click_ray(&screen_state, &mouse.screen_space_pos, &camera_position);
+                    let hit_info = get_clicked_object(&world_state.totoros, &click_ray);
                     
                     match hit_info {
                         Some((_, idx)) => { world_state.selected_totoro = Some(idx); }
@@ -1305,17 +1312,24 @@ fn main() {
                     }
                 }
                 ClickAction::DeleteTotoro => {
-                    let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
-                    let hit_info = get_clicked_totoro(&mut world_state.totoros, &click_ray);
+                    let click_ray = compute_click_ray(&screen_state, &mouse.screen_space_pos, &camera_position);
+                    let hit_info = get_clicked_object(&world_state.totoros, &click_ray);
 
                     if let Some((_, idx)) = hit_info {
-                        kill_totoro(&mut world_state.totoros, &mut world_state.selected_totoro, idx);
+                        delete_object(&mut world_state.totoros, &mut world_state.selected_totoro, idx);
                     }
+                }
+                ClickAction::DeletePointLight => {
+                    let click_ray = compute_click_ray(&screen_state, &mouse.screen_space_pos, &camera_position);
+                    let hit_info = get_clicked_object(&scene_data.point_lights, &click_ray);
 
+                    if let Some((_, idx)) = hit_info {
+                        delete_object(&mut scene_data.point_lights, &mut scene_data.selected_point_light, idx);
+                    }
                 }
                 ClickAction::MoveSelectedTotoro => {
                     if let Some(idx) = world_state.selected_totoro {
-                        let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
+                        let click_ray = compute_click_ray(&screen_state, &mouse.screen_space_pos, &camera_position);
                         if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
                             if let Some(tot) = world_state.totoros.get_mut_element(idx) {
                                 tot.position = point;
@@ -1325,25 +1339,44 @@ fn main() {
                     }
                 }
                 ClickAction::MovePlayerSpawn => {
-                    let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
+                    let click_ray = compute_click_ray(&screen_state, &mouse.screen_space_pos, &camera_position);
                     if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
                         world_state.player_spawn = point;
                     }
                 }
-                ClickAction::PlacePointLight => {
-                    let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
-                    if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
-                        let light = PointLight {
-                            position: point,
-                            color: [1.0, 1.0, 1.0],
-                            radius: 10.0
-                        };
-                        scene_data.point_lights.insert(light);
+                ClickAction::CreatePointLight => {
+                    if scene_data.point_lights.count() < render::MAX_POINT_LIGHTS { 
+                        let click_ray = compute_click_ray(&screen_state, &mouse.screen_space_pos, &camera_position);
+                        if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
+                            let light = PointLight {
+                                position: point + glm::vec3(0.0, 0.0, 2.0),
+                                color: [rand::random(), rand::random(), rand::random()],
+                                radius: 10.0
+                            };
+                            scene_data.point_lights.insert(light);
+                        }
+                    }
+                }
+                ClickAction::SelectPointLight => {
+                    let click_ray = compute_click_ray(&screen_state, &mouse.screen_space_pos, &camera_position);
+                    match get_clicked_object(&scene_data.point_lights, &click_ray) {
+                        Some((_, idx)) => { scene_data.selected_point_light = Some(idx); }
+                        None => { scene_data.selected_point_light = None; }
+                    }
+                }
+                ClickAction::MovePointLight => {
+                    if let Some(idx) = scene_data.selected_point_light {
+                        let click_ray = compute_click_ray(&screen_state, &mouse.screen_space_pos, &camera_position);
+                        if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
+                            if let Some(light) = scene_data.point_lights.get_mut_element(idx) {
+                                light.position = point + glm::vec3(0.0, 0.0, 2.0);
+                            }
+                        }
                     }
                 }
                 ClickAction::FlickTotoro => {
-                    let click_ray = compute_click_ray(&screen_state, &screen_space_mouse, &camera_position);
-                    let hit_info = get_clicked_totoro(&mut world_state.totoros, &click_ray);
+                    let click_ray = compute_click_ray(&screen_state, &mouse.screen_space_pos, &camera_position);
+                    let hit_info = get_clicked_object(&world_state.totoros, &click_ray);
                             
                     if let Some((t_value, idx)) = hit_info {
                         if let Some(tot) = world_state.totoros.get_mut_element(idx) {
@@ -1526,7 +1559,7 @@ fn main() {
             let totoros = &mut world_state.totoros;
             for i in 0..totoros.len() {
                 if let Some(totoro) = totoros.get_mut_element(i) {
-                    let tot_sphere = totoro.collision_sphere();
+                    let tot_sphere = totoro.sphere();
 
                     if let Some(vec) = triangle_collide_sphere(&tot_sphere, &triangle, &triangle_sphere) {
                         if floats_equal(glm::dot(&glm::normalize(&vec), &triangle.normal), 1.0) {
@@ -1581,7 +1614,7 @@ fn main() {
         }
 
         last_camera_position = camera_position;
-        was_mouse_clicked = mouse_clicked;
+        mouse.was_clicked = mouse.clicked;
 
         //Pre-render phase
 
@@ -1642,7 +1675,7 @@ fn main() {
             if viewing_collision {
                 for i in 0..totoros.len() {
                     if let Some(totoro) = &totoros[i] {
-                        let sph = totoro.collision_sphere();
+                        let sph = totoro.sphere();
                         let mm = glm::translation(&sph.focus) * uniform_scale(-sph.radius);
                         write_matrix_to_buffer(&mut transform_buffer, current_debug_sphere, mm);
                         write_vec4_to_buffer(&mut color_buffer, current_debug_sphere, glm::vec4(0.0, 0.0, 0.5, 0.5));
@@ -1676,19 +1709,81 @@ fn main() {
                 current_debug_sphere += 1;
             }
 
-            for i in 0..scene_data.point_lights.len() {
-                if let Some(light) = &scene_data.point_lights[i] {
-                    let light_transform = glm::translation(&light.position) * uniform_scale(-0.2);
-                    write_matrix_to_buffer(&mut transform_buffer, current_debug_sphere, light_transform);
-                    write_vec4_to_buffer(&mut color_buffer, current_debug_sphere, glm::vec4(1.0, 1.0, 0.0, 0.4));
-    
-                    current_debug_sphere += 1;
+            if viewing_point_lights {
+                for i in 0..scene_data.point_lights.len() {
+                    if let Some(light) = &scene_data.point_lights[i] {
+                        let light_transform = glm::translation(&light.position) * uniform_scale(-PointLight::COLLISION_RADIUS);
+                        write_matrix_to_buffer(&mut transform_buffer, current_debug_sphere, light_transform);
+                        write_vec4_to_buffer(&mut color_buffer, current_debug_sphere, glm::vec4(light.color[0], light.color[1], light.color[2], 0.4));
+
+                        if let Some(idx) = scene_data.selected_point_light {
+                            if idx == i {
+                                highlighted_buffer[current_debug_sphere] = 1.0;
+                            }
+                        }
+        
+                        current_debug_sphere += 1;
+                    }
                 }
             }
 
             entity.update_highlight_buffer(&highlighted_buffer, DEBUG_HIGHLIGHTED_ATTRIBUTE);
             entity.update_transform_buffer(&transform_buffer, DEBUG_TRANSFORM_ATTRIBUTE);
             entity.update_color_buffer(&color_buffer, DEBUG_COLOR_ATTRIBUTE);
+        }
+
+        //Update the uniform buffer object of point lights
+        unsafe {
+            let floats_per_light = 9;
+            
+            //Create the buffer
+            let mut buffer = vec![0.0; render::MAX_POINT_LIGHTS * floats_per_light];        
+            let mut current_light = 0;
+            for i in 0..scene_data.point_lights.len() {
+                if let Some(light) = &scene_data.point_lights[i] {
+                    buffer[current_light * 4] = light.position.x;
+                    buffer[current_light * 4 + 1] = light.position.y;
+                    buffer[current_light * 4 + 2] = light.position.z;
+    
+                    buffer[(current_light + render::MAX_POINT_LIGHTS) * 4] = light.color[0];
+                    buffer[(current_light + render::MAX_POINT_LIGHTS) * 4 + 1] = light.color[1];
+                    buffer[(current_light + render::MAX_POINT_LIGHTS) * 4 + 2] = light.color[2];
+                    
+                    buffer[(2 * render::MAX_POINT_LIGHTS) * 4 + current_light] = light.radius;
+    
+                    current_light += 1;
+                }
+            }
+            
+            let mut current_buffer_size = 0;
+            gl::BindBuffer(gl::UNIFORM_BUFFER, scene_data.point_lights_ubo);
+            gl::GetBufferParameteriv(gl::ARRAY_BUFFER, gl::BUFFER_SIZE, &mut current_buffer_size);
+    
+            if buffer.len() * size_of::<GLfloat>() > current_buffer_size as usize {
+                let mut b = 0;
+                gl::DeleteBuffers(1, &scene_data.point_lights_ubo as *const u32);
+                gl::GenBuffers(1, &mut b);
+                scene_data.point_lights_ubo = b;
+                
+                gl::BindBuffer(gl::UNIFORM_BUFFER, scene_data.point_lights_ubo);
+                gl::BufferData(
+                    gl::UNIFORM_BUFFER,
+                    (buffer.len() * size_of::<GLfloat>()) as GLsizeiptr,
+                    &buffer[0] as *const GLfloat as *const c_void,
+                    gl::DYNAMIC_DRAW
+                );
+                
+                //Bind the point light ubo
+                gl::UseProgram(standard_program);
+                gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, scene_data.point_lights_ubo);
+            } else if buffer.len() > 0 {
+                gl::BufferSubData(
+                    gl::UNIFORM_BUFFER,
+                    0 as GLsizeiptr,
+                    (buffer.len() * size_of::<GLfloat>()) as GLsizeiptr,
+                    &buffer[0] as *const GLfloat as *const c_void
+                );
+            }
         }
 
         //Compute sun direction from pitch and yaw
@@ -1700,10 +1795,12 @@ fn main() {
 
         //Draw ImGui
         if do_imgui {
+            let drag_speed = 0.02;
             let win = imgui::Window::new(im_str!("Hacking window"));
             if let Some(win_token) = win.begin(&imgui_ui) {
                 imgui_ui.text(im_str!("Frametime: {:.2}ms\tFPS: {:.2}\tFrame: {}", delta_time * 1000.0, framerate, frame_count));
                 imgui_ui.text(im_str!("Totoros spawned: {}", world_state.totoros.count()));
+                imgui_ui.text(im_str!("Point lights count: {}/{}", scene_data.point_lights.count(), render::MAX_POINT_LIGHTS));
                 imgui_ui.checkbox(im_str!("Wireframe view"), &mut wireframe);
                 imgui_ui.checkbox(im_str!("TRUE wireframe view"), &mut true_wireframe);
                 imgui_ui.checkbox(im_str!("Complex normals"), &mut scene_data.complex_normals);
@@ -1727,6 +1824,7 @@ fn main() {
                 do_radio_button(&imgui_ui, im_str!("Visualize shadow cascades"), &mut scene_data.fragment_flag, FragmentFlag::CascadeZones);
                 imgui_ui.checkbox(im_str!("View shadow atlas"), &mut showing_shadow_atlas);
                 imgui_ui.checkbox(im_str!("View collision volumes"), &mut viewing_collision);
+                imgui_ui.checkbox(im_str!("View point lights"), &mut viewing_point_lights);
                 imgui_ui.checkbox(im_str!("View player spawn"), &mut viewing_player_spawn);
 
                 if let Some(_) = &xr_instance {
@@ -1736,9 +1834,12 @@ fn main() {
                 imgui_ui.separator();
 
                 imgui_ui.text(im_str!("Click action"));
-                do_radio_button(&imgui_ui, im_str!("Spawn totoro"), &mut click_action, ClickAction::SpawnTotoro);
+                do_radio_button(&imgui_ui, im_str!("Create totoro"), &mut click_action, ClickAction::SpawnTotoro);
                 do_radio_button(&imgui_ui, im_str!("Select totoro"), &mut click_action, ClickAction::SelectTotoro);
+                do_radio_button(&imgui_ui, im_str!("Create light source"), &mut click_action, ClickAction::CreatePointLight);
+                do_radio_button(&imgui_ui, im_str!("Select light source"), &mut click_action, ClickAction::SelectPointLight);
                 do_radio_button(&imgui_ui, im_str!("Delete totoro"), &mut click_action, ClickAction::DeleteTotoro);
+                do_radio_button(&imgui_ui, im_str!("Delete point light"), &mut click_action, ClickAction::DeletePointLight);
                 do_radio_button(&imgui_ui, im_str!("Move player spawn"), &mut click_action, ClickAction::MovePlayerSpawn);
                 imgui_ui.separator();
 
@@ -1750,8 +1851,7 @@ fn main() {
                 Slider::new(im_str!("Sun pitch")).range(RangeInclusive::new(0.0, glm::pi::<f32>())).build(&imgui_ui, &mut scene_data.sun_pitch);
                 Slider::new(im_str!("Sun yaw")).range(RangeInclusive::new(0.0, glm::two_pi::<f32>())).build(&imgui_ui, &mut scene_data.sun_yaw);
                 Slider::new(im_str!("Sun size")).range(RangeInclusive::new(0.0, 1.0)).build(&imgui_ui, &mut scene_data.sun_size);
-                let sun_color_editor = ColorEdit::new(im_str!("Sun color"), EditableColor::Float3(&mut scene_data.sun_color));
-                sun_color_editor.build(&imgui_ui);
+                ColorEdit::new(im_str!("Sun color"), EditableColor::Float3(&mut scene_data.sun_color)).build(&imgui_ui);
 
                 let mut skybox_strs = Vec::with_capacity(world_state.skybox_strings.len());
                 for i in 0..world_state.skybox_strings.len() {
@@ -1930,7 +2030,10 @@ fn main() {
             if let Some(idx) = world_state.selected_totoro {
                 let tot = world_state.totoros.get_mut_element(idx).unwrap();
                 if let Some(token) = imgui::Window::new(&im_str!("Totoro #{} control panel###totoro_panel", idx)).begin(&imgui_ui) {
-                    imgui_ui.text(im_str!("Position ({:.3}, {:.3}, {:.3})", tot.position.x, tot.position.y, tot.position.z));
+                    imgui_ui.text(im_str!("Position"));
+                    imgui::Drag::new(im_str!("X")).speed(drag_speed).build(&imgui_ui, &mut tot.position.x);
+                    imgui::Drag::new(im_str!("Y")).speed(drag_speed).build(&imgui_ui, &mut tot.position.y);
+                    imgui::Drag::new(im_str!("Z")).speed(drag_speed).build(&imgui_ui, &mut tot.position.z);
                     imgui_ui.text(im_str!("Velocity ({:.3}, {:.3}, {:.3})", tot.velocity.x, tot.velocity.y, tot.velocity.z));
                     imgui_ui.text(im_str!("AI state: {:?}", tot.state));
                     imgui_ui.text(im_str!("AI timer state: {}", elapsed_time - tot.state_timer));
@@ -1947,11 +2050,36 @@ fn main() {
                     imgui_ui.same_line(0.0);
 
                     if imgui_ui.button(im_str!("Kill"), [0.0, 32.0]) {
-                        kill_totoro(&mut world_state.totoros, &mut world_state.selected_totoro, idx);
+                        delete_object(&mut world_state.totoros, &mut world_state.selected_totoro, idx);
                     }
 
                     imgui_ui.separator();
                     do_radio_button(&imgui_ui, im_str!("Move totoro home"), &mut click_action, ClickAction::MoveSelectedTotoro);
+
+                    token.end(&imgui_ui);
+                }
+            }
+
+            //Do selected point light window
+            if let Some(idx) = scene_data.selected_point_light {
+                let light = scene_data.point_lights.get_mut_element(idx).unwrap();
+                if let Some(token) = imgui::Window::new(&im_str!("Point light #{} control panel###point_light_panel", idx)).begin(&imgui_ui) {
+                    imgui_ui.text(im_str!("Position"));
+                    imgui::Drag::new(im_str!("X")).speed(drag_speed).build(&imgui_ui, &mut light.position.x);
+                    imgui::Drag::new(im_str!("Y")).speed(drag_speed).build(&imgui_ui, &mut light.position.y);
+                    imgui::Drag::new(im_str!("Z")).speed(drag_speed).build(&imgui_ui, &mut light.position.z);
+                            
+                    imgui_ui.separator();
+                    imgui::Slider::new(im_str!("Radius")).range(RangeInclusive::new(0.1, 50.0)).build(&imgui_ui, &mut light.radius);
+                    
+                    ColorEdit::new(im_str!("Light color"), EditableColor::Float3(&mut light.color)).build(&imgui_ui);
+
+                    imgui_ui.separator();
+                    do_radio_button(&imgui_ui, im_str!("Reposition light"), &mut click_action, ClickAction::MovePointLight);
+                    if imgui_ui.button(im_str!("Delete this light"), [0.0, 32.0]) {
+                        scene_data.point_lights.delete(idx);
+                        scene_data.selected_point_light = None;
+                    }
 
                     token.end(&imgui_ui);
                 }
