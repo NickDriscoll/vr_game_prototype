@@ -14,6 +14,7 @@ pub const FAR_DISTANCE: f32 = 1000000.0;
 pub const MSAA_SAMPLES: u32 = 8;
 pub const SHADOW_CASCADE_COUNT: usize = 5;
 pub const TEXTURE_MAP_COUNT: usize = 3;
+pub const MAX_POINT_LIGHTS: usize = 16;
 
 pub const STANDARD_HIGHLIGHTED_ATTRIBUTE: GLuint = 5;
 pub const STANDARD_TRANSFORM_ATTRIBUTE: GLuint = 6;
@@ -61,28 +62,6 @@ impl RenderEntity {
             cast_shadows: true,
             transparent: false
         }
-    }
-
-    pub unsafe fn init_new_instanced_buffer(&mut self, floats_per: usize, attribute: GLuint, attribute_buffer_idx: usize) {
-        gl::BindVertexArray(self.vao);
-
-        let data = vec![0.0f32; self.active_instances * floats_per];
-        let mut b = 0;
-        gl::GenBuffers(1, &mut b);
-        gl::BindBuffer(gl::ARRAY_BUFFER, b);
-        gl::BufferData(gl::ARRAY_BUFFER, (self.active_instances * floats_per * size_of::<GLfloat>()) as GLsizeiptr, &data[0] as *const f32 as *const c_void, gl::DYNAMIC_DRAW);
-        self.instanced_buffers[attribute_buffer_idx] = b;
-    
-        gl::VertexAttribPointer(
-            attribute,
-            floats_per as GLint,
-            gl::FLOAT,
-            gl::FALSE,
-            (floats_per * size_of::<GLfloat>()) as GLsizei,
-            ptr::null()
-        );
-        gl::EnableVertexAttribArray(attribute);
-        gl::VertexAttribDivisor(attribute, 1);
     }
 
     pub fn from_ozy(path: &str, program: GLuint, instances: usize, instanced_attribute: GLuint, texture_keeper: &mut TextureKeeper, tex_params: &[(GLenum, GLenum)]) -> Self {
@@ -146,6 +125,28 @@ impl RenderEntity {
                 panic!("Unable to load OzyMesh: {}", path);
             }
         }
+    }
+
+    pub unsafe fn init_new_instanced_buffer(&mut self, floats_per: usize, attribute: GLuint, attribute_buffer_idx: usize) {
+        gl::BindVertexArray(self.vao);
+
+        let data = vec![0.0f32; self.active_instances * floats_per];
+        let mut b = 0;
+        gl::GenBuffers(1, &mut b);
+        gl::BindBuffer(gl::ARRAY_BUFFER, b);
+        gl::BufferData(gl::ARRAY_BUFFER, (self.active_instances * floats_per * size_of::<GLfloat>()) as GLsizeiptr, &data[0] as *const f32 as *const c_void, gl::DYNAMIC_DRAW);
+        self.instanced_buffers[attribute_buffer_idx] = b;
+    
+        gl::VertexAttribPointer(
+            attribute,
+            floats_per as GLint,
+            gl::FLOAT,
+            gl::FALSE,
+            (floats_per * size_of::<GLfloat>()) as GLsizei,
+            ptr::null()
+        );
+        gl::EnableVertexAttribArray(attribute);
+        gl::VertexAttribDivisor(attribute, 1);
     }
 
     pub unsafe fn update_single_transform(&mut self, idx: usize, matrix: &glm::TMat4<f32>, attribute_size: usize) {
@@ -351,8 +352,9 @@ impl ViewData {
 //This is the function that renders the 3D scene
 pub unsafe fn main_scene(framebuffer: &Framebuffer, scene_data: &SceneData, view_data: &ViewData) {
     //Main scene rendering
-    gl::DepthMask(gl::TRUE);
+    gl::DepthMask(gl::TRUE);    //Enable depth writing
     framebuffer.bind();
+
     gl::ActiveTexture(gl::TEXTURE0 + ozy::render::TEXTURE_MAP_COUNT as GLenum);
     gl::BindTexture(gl::TEXTURE_2D, scene_data.sun_shadow_map.rendertarget.texture);
 
@@ -380,7 +382,7 @@ pub unsafe fn main_scene(framebuffer: &Framebuffer, scene_data: &SceneData, view
     gl::DrawElements(gl::TRIANGLES, CUBE_INDICES_COUNT, gl::UNSIGNED_SHORT, ptr::null());
 
     //Render transparent geometry
-    gl::DepthMask(gl::FALSE);
+    gl::DepthMask(gl::FALSE);               //Disable depth writing
     for opt_entity in scene_data.transparent_entities.iter() {
         render_entity(opt_entity, scene_data, view_data);
     }
@@ -404,6 +406,7 @@ unsafe fn render_entity(opt_entity: &Option<RenderEntity>, scene_data: &SceneDat
         glutil::bind_float(p, "current_time", scene_data.current_time);
         glutil::bind_int(p, "shadow_map", TEXTURE_MAP_COUNT as GLint);
         glutil::bind_int(p, "complex_normals", scene_data.complex_normals as GLint);
+        glutil::bind_int(p, "point_lights_count", scene_data.point_lights.count() as GLint);
         glutil::bind_float_array(p, "cascade_distances", &scene_data.sun_shadow_map.clip_space_distances[1..]);
         glutil::bind_vector3(p, "view_position", &view_data.view_position);
         glutil::bind_vector2(p, "uv_velocity", &entity.uv_velocity);

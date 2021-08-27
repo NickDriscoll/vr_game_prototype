@@ -50,7 +50,7 @@ use crate::render::*;
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
 
 const EPSILON: f32 = 0.00001;
-const VELOCITY_CAP: f32 = 10.0;        //m/s
+const VELOCITY_CAP: f32 = 50.0;        //m/s
 const ACCELERATION_GRAVITY: f32 = 20.0;        //20.0 m/s^2
 
 //Default texture parameters for a 2D image texture
@@ -639,45 +639,69 @@ fn main() {
     };
 
     scene_data.point_lights_ubo = unsafe {
-        let floats_per_light = 7;
+        let floats_per_light = 9;       //4N+4N+Ns
+
+        //Add one test light
+        let light = PointLight {
+            position: glm::vec3(1.0, 1.0, 1.0),
+            color: [1.0, 1.0, 0.0],
+            radius: 10.0
+        };
+        scene_data.point_lights.insert(light);
+
+        //Create the buffer
+        let mut buffer = vec![0.0; render::MAX_POINT_LIGHTS * floats_per_light];        
+        let mut current_light = 0;
+        for i in 0..scene_data.point_lights.len() {
+            if let Some(light) = &scene_data.point_lights[i] {
+                buffer[current_light * 4] = light.position.x;
+                buffer[current_light * 4 + 1] = light.position.y;
+                buffer[current_light * 4 + 2] = light.position.z;
+
+                buffer[(current_light + render::MAX_POINT_LIGHTS) * 4] = light.color[0];
+                buffer[(current_light + render::MAX_POINT_LIGHTS) * 4 + 1] = light.color[1];
+                buffer[(current_light + render::MAX_POINT_LIGHTS) * 4 + 2] = light.color[2];
+                
+                buffer[(2 * render::MAX_POINT_LIGHTS) * 4 + current_light] = light.radius;
+
+                current_light += 1;
+            }
+        }
+
         let mut ubo = 0;
         gl::GenBuffers(1, &mut ubo);
         gl::BindBuffer(gl::UNIFORM_BUFFER, ubo);
 
-        //Create the buffer
-        let mut buffer = vec![0.0; scene_data.point_lights.count() * floats_per_light];        
-        let mut current_light = 0;
-        for i in 0..scene_data.point_lights.len() {
-            if let Some(light) = &scene_data.point_lights[i] {
-                buffer[current_light] = light.position.x;
-                buffer[current_light + 1] = light.position.y;
-                buffer[current_light + 2] = light.position.z;
-                buffer[current_light + 3] = light.color[0];
-                buffer[current_light + 4] = light.color[1];
-                buffer[current_light + 5] = light.color[2];
-                buffer[current_light + 6] = light.radius;
-
-                current_light += 1;
-            }
-        }        
-
         //Upload the buffer
+        gl::BufferData(
+            gl::UNIFORM_BUFFER,
+            (render::MAX_POINT_LIGHTS * floats_per_light * size_of::<GLfloat>()) as GLsizeiptr,
+            &buffer[0] as *const GLfloat as *const c_void,
+            gl::DYNAMIC_DRAW
+        );
+
+
+        //Bind the point light ubo
+        gl::UseProgram(standard_program);
+        gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, ubo);
+
+        /*
         let mut current_buffer_size = 0;
-        gl::GetBufferParameteriv(gl::ARRAY_BUFFER, gl::BUFFER_SIZE, &mut current_buffer_size);
+        gl::GetBufferParameteriv(gl::UNIFORM_BUFFER, gl::BUFFER_SIZE, &mut current_buffer_size);
         if buffer.len() * size_of::<f32>() > current_buffer_size as usize {
             let mut b = 0;
             gl::DeleteBuffers(1, &ubo as *const u32);
             gl::GenBuffers(1, &mut b);
             ubo = b;
             
-            gl::BindBuffer(gl::ARRAY_BUFFER, ubo);
+            gl::BindBuffer(gl::UNIFORM_BUFFER, ubo);
             gl::BufferData(
-                gl::ARRAY_BUFFER,
+                gl::UNIFORM_BUFFER,
                 (scene_data.point_lights.count() * floats_per_light * size_of::<GLfloat>()) as GLsizeiptr,
                 &buffer[0] as *const GLfloat as *const c_void,
                 gl::DYNAMIC_DRAW
             );
-        } else if buffer.len() > 0 {            
+        } else if buffer.len() > 0 {
             gl::BufferSubData(
                 gl::UNIFORM_BUFFER,
                 0 as GLsizeiptr,
@@ -685,9 +709,11 @@ fn main() {
                 &buffer[0] as *const GLfloat as *const c_void
             );
         }
+        */
 
         ubo
     };
+
 
     //Initialize texture caching struct
     let mut texture_keeper = TextureKeeper::new();
@@ -722,7 +748,6 @@ fn main() {
         };
 
         let terrain = Terrain::from_ozt(&format!("models/{}.ozt", level_name));
-        println!("Loaded {} collision triangles from {}.ozt", terrain.indices.len() / 3, level_name);
         let mut word = WorldState {
             player: Player::new(glm::zero()),
             player_spawn: glm::zero(),
@@ -745,8 +770,8 @@ fn main() {
 
     //Create debug sphere render entity
     let debug_sphere_re_index = unsafe {
-        let segments = 10;
-        let rings = 10;
+        let segments = 32;
+        let rings = 32;
         let vao = ozy::prims::debug_sphere_vao(1.0, segments, rings);
 
         let mut re = RenderEntity::from_vao(
@@ -1175,11 +1200,20 @@ fn main() {
         if world_state.player.tracking_velocity.x > VELOCITY_CAP {
             world_state.player.tracking_velocity.x = VELOCITY_CAP;
         }
+        if world_state.player.tracking_velocity.x < -VELOCITY_CAP {
+            world_state.player.tracking_velocity.x = -VELOCITY_CAP;
+        }
         if world_state.player.tracking_velocity.y > VELOCITY_CAP {
             world_state.player.tracking_velocity.y = VELOCITY_CAP;
         }
+        if world_state.player.tracking_velocity.y < -VELOCITY_CAP {
+            world_state.player.tracking_velocity.y = -VELOCITY_CAP;
+        }
         if world_state.player.tracking_velocity.z > VELOCITY_CAP {
             world_state.player.tracking_velocity.z = VELOCITY_CAP;
+        }
+        if world_state.player.tracking_velocity.z < -VELOCITY_CAP {
+            world_state.player.tracking_velocity.z = -VELOCITY_CAP;
         }
 
         //Totoro update
@@ -1256,7 +1290,7 @@ fn main() {
 
                 //Kill if below a certain point
                 if totoro.position.z < -1000.0 {
-                    kill_totoro(&mut scene_data, &mut world_state.totoros, totoro_re_index, &mut world_state.selected_totoro, i);
+                    kill_totoro(&mut world_state.totoros, &mut world_state.selected_totoro, i);
                 }
             }
         }
@@ -1295,7 +1329,7 @@ fn main() {
                     let hit_info = get_clicked_totoro(&mut world_state.totoros, &click_ray);
 
                     if let Some((_, idx)) = hit_info {
-                        kill_totoro(&mut scene_data, &mut world_state.totoros, totoro_re_index, &mut world_state.selected_totoro, idx);
+                        kill_totoro(&mut world_state.totoros, &mut world_state.selected_totoro, idx);
                     }
 
                 }
@@ -1579,6 +1613,8 @@ fn main() {
             let mut current_totoro = 0;
             for i in 0..totoros.len() {
                 if let Some(totoro) = &totoros[i] {
+
+                    //Directly constructing the rotation matrix bc we get linear algebra
                     let cr = glm::cross(&Z_UP, &totoro.forward);
                     let rotation_mat = glm::mat4(
                         totoro.forward.x, cr.x, 0.0, 0.0,
@@ -1611,7 +1647,7 @@ fn main() {
         if let Some(entity) = scene_data.transparent_entities.get_mut_element(debug_sphere_re_index) {
             let totoros = &world_state.totoros;
             let instances =  {
-                let mut acc = 0;
+                let mut acc = 1;
                 if viewing_collision {acc += totoros.count();}
                 if viewing_player_spawn { acc += 1; }
                 if viewing_player_spheres { acc += 2; }
@@ -1659,6 +1695,14 @@ fn main() {
                 current_debug_sphere += 1;
             }
 
+            if let Some(light) = &scene_data.point_lights[0] {
+                let light_transform = glm::translation(&light.position) * uniform_scale(-0.2);
+                write_matrix_to_buffer(&mut transform_buffer, current_debug_sphere, light_transform);
+                write_vec4_to_buffer(&mut color_buffer, current_debug_sphere, glm::vec4(1.0, 1.0, 0.0, 0.4));
+
+                current_debug_sphere += 1;
+            }
+
             entity.update_highlight_buffer(&highlighted_buffer, DEBUG_HIGHLIGHTED_ATTRIBUTE);
             entity.update_transform_buffer(&transform_buffer, DEBUG_TRANSFORM_ATTRIBUTE);
             entity.update_color_buffer(&color_buffer, DEBUG_COLOR_ATTRIBUTE);
@@ -1673,10 +1717,6 @@ fn main() {
 
         //Draw ImGui
         if do_imgui {
-            fn do_radio_button<T: Eq + Default>(imgui_ui: &imgui::Ui, label: &imgui::ImStr, flag: &mut T, new_flag: T) {
-                if imgui_ui.radio_button_bool(label, *flag == new_flag) { handle_radio_flag(flag, new_flag); }
-            }
-
             let win = imgui::Window::new(im_str!("Hacking window"));
             if let Some(win_token) = win.begin(&imgui_ui) {
                 imgui_ui.text(im_str!("Frametime: {:.2}ms\tFPS: {:.2}\tFrame: {}", delta_time * 1000.0, framerate, frame_count));
@@ -1924,7 +1964,7 @@ fn main() {
                     imgui_ui.same_line(0.0);
 
                     if imgui_ui.button(im_str!("Kill"), [0.0, 32.0]) {
-                        kill_totoro(&mut scene_data, &mut world_state.totoros, totoro_re_index, &mut world_state.selected_totoro, idx);
+                        kill_totoro(&mut world_state.totoros, &mut world_state.selected_totoro, idx);
                     }
 
                     imgui_ui.separator();

@@ -11,12 +11,7 @@ const vec3 LOD_COLOR3 = vec3(1.0, 0.0, 1.0);
 const vec3 LOD_COLOR4 = vec3(0.0, 0.0, 1.0);
 const int SHADOW_CASCADES = 5;
 const float SHADOW_CASCADES_RECIPROCAL = 1.0 / SHADOW_CASCADES;
-
-struct PointLight {
-    vec3 position;
-    vec3 color;
-    float radius;
-};
+const int MAX_POINT_LIGHTS = 16;
 
 in vec3 tangent_sun_direction;
 in vec3 tangent_view_position;
@@ -25,9 +20,10 @@ in vec3 f_tan_pos;
 in vec3 surface_normal;
 in vec4 shadow_space_pos[SHADOW_CASCADES];
 in vec3 f_world_pos;
-in vec2 scaled_uvs;
+in vec2 f_uvs;
 in float clip_space_z;
 in float f_highlighted;
+in mat3 tangent_from_world;
 
 out vec4 frag_color;
 
@@ -59,6 +55,14 @@ uniform float cascade_distances[SHADOW_CASCADES];
 //For a given draw call, this will be non-negative if one of the instances is to be highlighted
 uniform int highlighted_idx = -1;
 
+layout (std140, binding = 0) uniform PointLights {
+    vec3 positions[MAX_POINT_LIGHTS];
+    vec3 colors[MAX_POINT_LIGHTS];
+
+    vec4 radii[MAX_POINT_LIGHTS / 4];
+} point_lights;
+uniform int point_lights_count = 0;
+
 vec4 simple_diffuse(vec3 color, float diffuse, float ambient) {
     return vec4((diffuse + ambient) * color, 1.0);
 }
@@ -77,7 +81,7 @@ void main() {
     //Compute this frag's tangent space normal
     vec3 tangent_space_normal;
     if (complex_normals) {
-        vec3 sampled_normal = texture(normal_tex, scaled_uvs).xyz;
+        vec3 sampled_normal = texture(normal_tex, f_uvs).xyz;
         tangent_space_normal = normalize(sampled_normal * 2.0 - 1.0);
     } else {
         tangent_space_normal = vec3(0.0, 0.0, 1.0);
@@ -90,7 +94,7 @@ void main() {
     }
 
     //Compute diffuse lighting
-    float diffuse = max(0.0, dot(tangent_sun_direction, tangent_space_normal));
+    float sun_diffuse = max(0.0, dot(tangent_sun_direction, tangent_space_normal));
 
     //Determine how shadowed the fragment is
     vec4 adj_shadow_space_pos;
@@ -125,7 +129,8 @@ void main() {
                     shadow += determine_shadowed(vec3(adj_shadow_space_pos.xy + vec2(x, y) * texel_size, adj_shadow_space_pos.z), tangent_space_normal, shadow_cascade);
                 }
             }
-            shadow /= 9.0; //(2*bound + 1)^2
+            float s = (2.0 * bound) + 1;
+            shadow /= s * s; //Total number of texels sampled: (2*bound + 1)^2
         } else {
             shadow = determine_shadowed(adj_shadow_space_pos.xyz, tangent_space_normal, shadow_cascade);
         }
@@ -135,13 +140,13 @@ void main() {
 
     if (visualize_cascade_zone) {
         if (shadow_cascade == 0) {
-            frag_color = simple_diffuse(LOD_COLOR0, diffuse * shadow_factor, ambient_strength);
+            frag_color = simple_diffuse(LOD_COLOR0, sun_diffuse * shadow_factor, ambient_strength);
         } else if (shadow_cascade == 1) {
-            frag_color = simple_diffuse(LOD_COLOR1, diffuse * shadow_factor, ambient_strength);
+            frag_color = simple_diffuse(LOD_COLOR1, sun_diffuse * shadow_factor, ambient_strength);
         } else if (shadow_cascade == 2) {
-            frag_color = simple_diffuse(LOD_COLOR2, diffuse * shadow_factor, ambient_strength);
+            frag_color = simple_diffuse(LOD_COLOR2, sun_diffuse * shadow_factor, ambient_strength);
         } else if (shadow_cascade == 3) {
-            frag_color = simple_diffuse(LOD_COLOR3, diffuse * shadow_factor, ambient_strength);
+            frag_color = simple_diffuse(LOD_COLOR3, sun_diffuse * shadow_factor, ambient_strength);
         }
         return;
     }
@@ -152,13 +157,34 @@ void main() {
         return;
     }
 
+    //Roughness is a [0, 1] value that gets mapped to [shininess_upper_bound, shininess_lower_bound]
+    float roughness = texture(roughness_tex, f_uvs).x;
+    float f_shininess = (1.0 - roughness) * (shininess_upper_bound - shininess_lower_bound) + shininess_lower_bound;
+
     //Compute specular light w/ blinn-phong
-    float roughness = texture(roughness_tex, scaled_uvs).x;
     vec3 tangent_view_direction = normalize(tangent_view_position - f_tan_pos);
-    vec3 halfway = normalize(tangent_view_direction + tangent_sun_direction);
-    float specular_angle = max(0.0, dot(halfway, tangent_space_normal));
-    float shininess = (1.0 - roughness) * (shininess_upper_bound - shininess_lower_bound) + shininess_lower_bound;
-    float specular = pow(specular_angle, shininess);
+    vec3 sun_halfway = normalize(tangent_view_direction + tangent_sun_direction);
+    float specular_angle = max(0.0, dot(sun_halfway, tangent_space_normal));
+    float sun_specular = pow(specular_angle, f_shininess);
+
+    //Compute lighting from point lights
+    vec3 point_lights_contribution = vec3(0.0);
+    for (int i = 0; i < point_lights_count; i++) {
+        int r_idx = i / 4;
+        float rs[4] = {point_lights.radii[r_idx].x, point_lights.radii[r_idx].y, point_lights.radii[r_idx].z, point_lights.radii[r_idx].w};
+        float radius = rs[i % 4];
+
+        vec3 light_color = point_lights.colors[i];
+        vec3 tangent_light_direction = normalize(tangent_from_world * (point_lights.positions[i] - f_world_pos));
+
+        float diffuse = max(0.0, dot(tangent_light_direction, tangent_space_normal));
+
+        vec3 halfway = normalize(tangent_view_direction + tangent_light_direction);
+        float spec_angle = max(0.0, dot(halfway, tangent_space_normal));
+        float specular = pow(spec_angle, f_shininess);
+
+        point_lights_contribution += light_color * (diffuse + specular);
+    }
 
     //Get some light from the skybox
     vec3 sky_contribution = vec3(0.0);
@@ -167,8 +193,8 @@ void main() {
         vec3 world_view_direction = normalize(f_world_pos - world_view_position);
         vec3 sky_sample_vector = reflect(world_view_direction, f_surface_normal);
         sky_sample_vector = sky_sample_vector.xzy * vec3(1.0, 1.0, -1.0);
-        float sky_percentage = mix(0.001, 0.25, shininess / 128.0);
-        float mip_level = mix(5.0, 2.0, shininess / 128.0);
+        float sky_percentage = mix(0.001, 0.25, f_shininess / 128.0);
+        float mip_level = mix(5.0, 2.0, f_shininess / 128.0);
         sky_contribution = textureLod(skybox_sampler, sky_sample_vector, mip_level).xyz * sky_percentage;
     }
 
@@ -182,12 +208,12 @@ void main() {
     }
 
     //Sun + skybox contribution
-    vec3 environment_lighting = sun_color * ((specular + diffuse) * shadow_factor + sky_contribution + ambient_strength);
+    vec3 environment_lighting = sun_color * ((sun_specular + sun_diffuse) * shadow_factor + sky_contribution + ambient_strength);
 
     //Sample the albedo map for the fragment's base color
-    vec4 albedo_sample = texture(albedo_tex, scaled_uvs);
+    vec4 albedo_sample = texture(albedo_tex, f_uvs);
     vec3 base_color = albedo_sample.xyz;
     float alpha = albedo_sample.a;
-    vec3 final_color = environment_lighting * base_color + rim_lighting;
+    vec3 final_color = (environment_lighting + point_lights_contribution) * base_color + rim_lighting;
     frag_color = vec4(final_color, alpha);
 }

@@ -119,7 +119,7 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                         if let Some(decoder) = &mut decoder {
                             bgm_source.stop();                            
                             decoder.reader_mut().seek(SeekFrom::Start(0)).unwrap();
-                            playing_bgm = true;
+                            //playing_bgm = true;
                         }
                     }
                     AudioCommand::PlayPause => {
@@ -143,8 +143,8 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
             if bgm_source.buffers_queued() < IDEAL_FRAMES_QUEUED {
                 if let Some(decoder) = &mut decoder {
                     match decoder.next_frame() {
-                        Ok(frame) => {                          //Mono
-                            if frame.channels == 1 {
+                        Ok(frame) => {                          
+                            if frame.channels == 1 {            //Mono
                                 let mut mono_samples = Vec::with_capacity(frame.data.len());
                                 for sample in frame.data {
                                     mono_samples.push(

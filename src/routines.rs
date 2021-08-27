@@ -125,7 +125,7 @@ pub fn get_clicked_totoro(totoros: &mut OptionVec<Totoro>, click_ray: &Ray) -> O
     hit_index
 }
 
-pub fn kill_totoro(scene_data: &mut SceneData, totoros: &mut OptionVec<Totoro>, totoro_entity_index: usize, selected: &mut Option<usize>, idx: usize) {
+pub fn kill_totoro(totoros: &mut OptionVec<Totoro>, selected: &mut Option<usize>, idx: usize) {
     totoros.delete(idx);
     if let Some(i) = selected {
         if *i == idx {
@@ -162,9 +162,11 @@ pub fn vec_to_array(vec: glm::TVec3<f32>) -> [f32; 3] {
 }
 
 //Sets a flag to a value or unsets the flag if it already is the value
-pub fn handle_radio_flag<F: Eq + Default>(current_flag: &mut F, new_flag: F) {
-    if *current_flag != new_flag { *current_flag = new_flag; }
-    else { *current_flag = F::default(); }
+pub fn do_radio_button<F: Eq + Default>(imgui_ui: &imgui::Ui, label: &imgui::ImStr, flag: &mut F, new_flag: F) {
+    if imgui_ui.radio_button_bool(label, *flag == new_flag) { 
+        if *flag != new_flag { *flag = new_flag; }
+        else { *flag = F::default(); }
+    }
 }
 
 pub fn resize_main_window(window: &mut Window, framebuffer: &mut Framebuffer, screen_state: &mut ScreenState, size: glm::TVec2<u32>, pos: (i32, i32), window_mode: WindowMode) {    
