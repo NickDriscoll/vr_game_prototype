@@ -11,7 +11,7 @@ const vec3 LOD_COLOR3 = vec3(1.0, 0.0, 1.0);
 const vec3 LOD_COLOR4 = vec3(0.0, 0.0, 1.0);
 const int SHADOW_CASCADES = 5;
 const float SHADOW_CASCADES_RECIPROCAL = 1.0 / SHADOW_CASCADES;
-const int MAX_POINT_LIGHTS = 64;
+const int MAX_POINT_LIGHTS = 128;
 
 in vec3 tangent_sun_direction;
 in vec3 tangent_view_position;
@@ -59,7 +59,7 @@ layout (std140, binding = 0) uniform PointLights {
     vec3 positions[MAX_POINT_LIGHTS];
     vec3 colors[MAX_POINT_LIGHTS];
 
-    vec4 radii[MAX_POINT_LIGHTS / 4];
+    vec4 radii[MAX_POINT_LIGHTS / 4];   //These are individual floats packed as vec4's to save memory
 } point_lights;
 uniform int point_lights_count = 0;
 
@@ -178,6 +178,7 @@ void main() {
     //Compute lighting from point lights
     vec3 point_lights_contribution = vec3(0.0);
     for (int i = 0; i < point_lights_count; i++) {
+        //Unpack the radius
         int r_idx = i / 4;
         float rs[4] = {point_lights.radii[r_idx].x, point_lights.radii[r_idx].y, point_lights.radii[r_idx].z, point_lights.radii[r_idx].w};
         float radius = rs[i % 4];
@@ -190,7 +191,7 @@ void main() {
         float diffuse = lambertian_diffuse(tangent_light_direction, tangent_space_normal);
         float specular = blinn_phong_specular(tangent_view_direction, tangent_light_direction, tangent_space_normal, f_shininess);
 
-        point_lights_contribution += light_color * (diffuse + specular) / (dist * dist) * radius;
+        point_lights_contribution += light_color * (diffuse + specular) * (radius * radius / (dist * dist + 0.01));
     }
 
     //Get some light from the skybox
@@ -206,12 +207,11 @@ void main() {
     }
 
     //Optionally add rim-lighting
-    vec3 rim_lighting = vec3(0.0);
+    vec4 rim_lighting = vec4(0.0);
     if (f_highlighted != 0.0) {
         float likeness = 1.0 - max(0.0, dot(tangent_view_direction, tangent_space_normal));
         float factor = smoothstep(0.5, 1.0, likeness);
-        vec3 color = vec3(cos(5.0 * current_time) * 0.5 + 0.5, sin(6.0 * current_time) * 0.5 + 0.5, sin(8.0 * current_time) * 0.5 + 0.5);
-        rim_lighting = factor * color;
+        rim_lighting = vec4(factor * vec3(cos(5.0 * current_time) * 0.5 + 0.5, sin(6.0 * current_time) * 0.5 + 0.5, sin(8.0 * current_time) * 0.5 + 0.5), 1.0);
     }
 
     //Sun + skybox contribution
@@ -221,6 +221,6 @@ void main() {
     vec4 albedo_sample = texture(albedo_tex, f_uvs);
     vec3 base_color = albedo_sample.xyz;
     float alpha = albedo_sample.a;
-    vec3 final_color = (environment_lighting + point_lights_contribution) * base_color + rim_lighting;
-    frag_color = vec4(final_color, alpha);
+    vec3 final_color = (environment_lighting + point_lights_contribution) * base_color;
+    frag_color = vec4(final_color, alpha) + rim_lighting;
 }

@@ -648,21 +648,6 @@ fn main() {
     scene_data.point_lights_ubo = unsafe {
         let floats_per_light = 9;       //4N+4N+Ns
 
-        //Add one test light
-        let light = PointLight {
-            position: glm::vec3(1.0, 1.0, 5.0),
-            color: [0.0, 1.0, 0.0],
-            radius: 10.0
-        };
-        scene_data.point_lights.insert(light);
-
-        let light = PointLight {
-            position: glm::vec3(20.0, 4.0, 5.0),
-            color: [1.0, 0.5, 0.0],
-            radius: 10.0
-        };
-        scene_data.point_lights.insert(light);
-
         //Create the buffer
         let mut buffer = vec![0.0; render::MAX_POINT_LIGHTS * floats_per_light];        
         let mut current_light = 0;
@@ -734,6 +719,7 @@ fn main() {
         };
 
         let terrain = Terrain::from_ozt(&format!("models/{}.ozt", level_name));
+        println!("Loaded {} collision triangles from {}.ozt", terrain.face_normals.len(), level_name);
         let mut word = WorldState {
             player: Player::new(glm::zero()),
             player_spawn: glm::zero(),
@@ -1351,7 +1337,7 @@ fn main() {
                             let light = PointLight {
                                 position: point + glm::vec3(0.0, 0.0, 2.0),
                                 color: [rand::random(), rand::random(), rand::random()],
-                                radius: 10.0
+                                radius: 3.0
                             };
                             scene_data.point_lights.insert(light);
                         }
@@ -2013,6 +1999,7 @@ fn main() {
 
                         //Load terrain data
                         world_state.terrain = Terrain::from_ozt(&format!("models/{}.ozt", lvl_name));
+                        println!("Loaded {} collision triangles from {}.ozt", world_state.terrain.face_normals.len(), world_state.level_name);
 
                         //Load entity data
                         load_ent(&format!("maps/{}.ent", lvl_name), &mut scene_data, &mut world_state);

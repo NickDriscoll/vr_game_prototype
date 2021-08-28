@@ -16,7 +16,7 @@ pub const FAR_DISTANCE: f32 = 1000000.0;
 pub const MSAA_SAMPLES: u32 = 8;
 pub const SHADOW_CASCADE_COUNT: usize = 5;
 pub const TEXTURE_MAP_COUNT: usize = 3;
-pub const MAX_POINT_LIGHTS: usize = 64;
+pub const MAX_POINT_LIGHTS: usize = 128;
 
 pub const STANDARD_HIGHLIGHTED_ATTRIBUTE: GLuint = 5;
 pub const STANDARD_TRANSFORM_ATTRIBUTE: GLuint = 6;
