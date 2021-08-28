@@ -352,17 +352,32 @@ fn main() {
         None => { glfw.window_hint(glfw::WindowHint::ContextVersion(4, 3)); }
     }
 
-    //Initialize screen state
-    let mut screen_state = {
-        let window_size = get_window_size(&config);
-        let fov_radians = glm::half_pi();
-        ScreenState::new(window_size, glm::identity(), fov_radians, NEAR_DISTANCE, FAR_DISTANCE)
+    //Camera state    
+    let mut camera = {
+        let position = glm::vec3(0.0, -8.0, 5.5);
+        let screen_state = {
+            let window_size = get_window_size(&config);
+            let fov_radians = glm::half_pi();
+            ScreenState::new(window_size, glm::identity(), fov_radians, NEAR_DISTANCE, FAR_DISTANCE)
+        };
+
+        Camera {
+            position,
+            last_position: position,
+            view_space_velocity: glm::zero(),
+            orientation: glm::vec2(0.0, -glm::half_pi::<f32>() * 0.6),
+            is_colliding: true,
+            using_mouselook: false,
+            screen_state,
+            radius: 0.5,
+            speed: 5.0
+        }
     };
 
     //Create the window
 	glfw.window_hint(WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
 	glfw.window_hint(WindowHint::Samples(Some(render::MSAA_SAMPLES)));
-    let (mut window, events) = match glfw.create_window(screen_state.get_window_size().x, screen_state.get_window_size().y, "THCATO", glfw::WindowMode::Windowed) {
+    let (mut window, events) = match glfw.create_window(camera.screen_state.get_window_size().x, camera.screen_state.get_window_size().y, "THCATO", glfw::WindowMode::Windowed) {
         Some(stuff) => { stuff }
         None => {
             panic!("Unable to create a window!");
@@ -559,7 +574,7 @@ fn main() {
     //Initialize default framebuffer
     let mut default_framebuffer = Framebuffer {
         name: 0,
-        size: (screen_state.get_window_size().x as GLsizei, screen_state.get_window_size().y as GLsizei),
+        size: (camera.screen_state.get_window_size().x as GLsizei, camera.screen_state.get_window_size().y as GLsizei),
         clear_flags: gl::DEPTH_BUFFER_BIT | gl::COLOR_BUFFER_BIT,
         cull_face: gl::BACK
     };
@@ -569,8 +584,8 @@ fn main() {
     imgui_context.style_mut().use_dark_colors();
     {
         let io = imgui_context.io_mut();
-        io.display_size[0] = screen_state.get_window_size().x as f32;
-        io.display_size[1] = screen_state.get_window_size().y as f32;
+        io.display_size[0] = camera.screen_state.get_window_size().x as f32;
+        io.display_size[1] = camera.screen_state.get_window_size().y as f32;
     }
 
     //Create and upload Dear IMGUI font atlas
@@ -604,16 +619,6 @@ fn main() {
         screen_space_pos: glm::zero()
     };
 
-    //Camera state
-    let mut mouselook_enabled = false;
-    let mut camera_position = glm::vec3(0.0, -8.0, 5.5);
-    let mut last_camera_position = camera_position;
-    let mut camera_input: glm::TVec3<f32> = glm::zero();             //This is a unit vector in view space that represents the input camera movement vector
-    let mut camera_orientation = glm::vec2(0.0, -glm::half_pi::<f32>() * 0.6);
-    let mut camera_speed = 5.0;
-    let camera_hit_sphere_radius = 0.5;
-    let mut camera_collision = true;
-
     //Initialize shadow data
     let cascade_size = 2048;
     let shadow_rendertarget = unsafe { RenderTarget::new_shadow((cascade_size * render::SHADOW_CASCADE_COUNT as GLint, cascade_size)) };
@@ -638,7 +643,7 @@ fn main() {
 
         //Compute the clip space distances and save them in the scene_data struct
         for i in 0..cascade_distances.len() {
-            let p = screen_state.get_clipping_from_view() * glm::vec4(0.0, 0.0, cascade_distances[i], 1.0);
+            let p = camera.screen_state.get_clipping_from_view() * glm::vec4(0.0, 0.0, cascade_distances[i], 1.0);
             scene_data.sun_shadow_map.clip_space_distances[i] = p.z;
         }
 
@@ -646,32 +651,14 @@ fn main() {
     };
 
     scene_data.point_lights_ubo = unsafe {
-        let floats_per_light = 9;       //4N+4N+Ns
-
-        //Create the buffer
-        let mut buffer = vec![0.0; render::MAX_POINT_LIGHTS * floats_per_light];        
-        let mut current_light = 0;
-        for i in 0..scene_data.point_lights.len() {
-            if let Some(light) = &scene_data.point_lights[i] {
-                buffer[current_light * 4] = light.position.x;
-                buffer[current_light * 4 + 1] = light.position.y;
-                buffer[current_light * 4 + 2] = light.position.z;
-
-                buffer[(current_light + render::MAX_POINT_LIGHTS) * 4] = light.color[0];
-                buffer[(current_light + render::MAX_POINT_LIGHTS) * 4 + 1] = light.color[1];
-                buffer[(current_light + render::MAX_POINT_LIGHTS) * 4 + 2] = light.color[2];
-                
-                buffer[(2 * render::MAX_POINT_LIGHTS) * 4 + current_light] = light.radius;
-
-                current_light += 1;
-            }
-        }
-
+        //Gen buffer
         let mut ubo = 0;
         gl::GenBuffers(1, &mut ubo);
         gl::BindBuffer(gl::UNIFORM_BUFFER, ubo);
 
         //Upload the buffer
+        let floats_per_light = 9;
+        let buffer = vec![0.0f32; MAX_POINT_LIGHTS * floats_per_light];
         gl::BufferData(
             gl::UNIFORM_BUFFER,
             (buffer.len() * size_of::<GLfloat>()) as GLsizeiptr,
@@ -883,16 +870,16 @@ fn main() {
                 WindowEvent::Key(key, _, Action::Press, _) => {
                     match key_directions.get(&key) {
                         Some(dir) => {
-                            camera_input += dir;
+                            camera.view_space_velocity += dir;
                         }
                         None => {
                             match key {
                                 Key::Escape => { do_imgui = !do_imgui; }
                                 Key::LeftShift => {
-                                    camera_speed *= 5.0;
+                                    camera.speed *= 5.0;
                                 }
                                 Key::LeftControl => {
-                                    camera_speed /= 5.0;
+                                    camera.speed /= 5.0;
                                 }
                                 Key::F2 => {
                                     full_screenshot_this_frame = true;
@@ -905,15 +892,15 @@ fn main() {
                 WindowEvent::Key(key, _, Action::Release, _) => {
                     match key_directions.get(&key) {
                         Some(dir) => {
-                            camera_input -= dir;
+                            camera.view_space_velocity -= dir;
                         }
                         None => {
                             match key {
                                 Key::LeftShift => {
-                                    camera_speed /= 5.0;
+                                    camera.speed /= 5.0;
                                 }
                                 Key::LeftControl => {
-                                    camera_speed *= 5.0;
+                                    camera.speed *= 5.0;
                                 }
                                 _ => {}
                             }
@@ -937,24 +924,24 @@ fn main() {
                 }
                 WindowEvent::MouseButton(glfw::MouseButtonRight, glfw::Action::Release, ..) => {
                     imgui_io.mouse_down[1] = false;
-                    if mouselook_enabled {
+                    if camera.using_mouselook {
                         window.set_cursor_mode(glfw::CursorMode::Normal);
                     } else {
                         window.set_cursor_mode(glfw::CursorMode::Hidden);
                     }
-                    mouselook_enabled = !mouselook_enabled;
+                    camera.using_mouselook = !camera.using_mouselook;
                 }
                 WindowEvent::CursorPos(x, y) => {
                     imgui_io.mouse_pos = [x as f32, y as f32];
                     mouse.screen_space_pos = glm::vec2(x as f32, y as f32);
-                    if mouselook_enabled {
+                    if camera.using_mouselook {
                         const CAMERA_SENSITIVITY_DAMPENING: f32 = 0.002;
-                        let offset = glm::vec2(mouse.screen_space_pos.x as f32 - screen_state.get_window_size().x as f32 / 2.0, mouse.screen_space_pos.y as f32 - screen_state.get_window_size().y as f32 / 2.0);
-                        camera_orientation += offset * CAMERA_SENSITIVITY_DAMPENING;
-                        if camera_orientation.y < -glm::pi::<f32>() {
-                            camera_orientation.y = -glm::pi::<f32>();
-                        } else if camera_orientation.y > 0.0 {
-                            camera_orientation.y = 0.0;
+                        let offset = glm::vec2(mouse.screen_space_pos.x as f32 - camera.screen_state.get_window_size().x as f32 / 2.0, mouse.screen_space_pos.y as f32 - camera.screen_state.get_window_size().y as f32 / 2.0);
+                        camera.orientation += offset * CAMERA_SENSITIVITY_DAMPENING;
+                        if camera.orientation.y < -glm::pi::<f32>() {
+                            camera.orientation.y = -glm::pi::<f32>();
+                        } else if camera.orientation.y > 0.0 {
+                            camera.orientation.y = 0.0;
                         }
                     }
                 }
@@ -1269,18 +1256,18 @@ fn main() {
         }
 
         //If the user is controlling the camera, force the mouse cursor into the center of the screen
-        if mouselook_enabled {
-            window.set_cursor_pos(screen_state.get_window_size().x as f64 / 2.0, screen_state.get_window_size().y as f64 / 2.0);
+        if camera.using_mouselook {
+            window.set_cursor_pos(camera.screen_state.get_window_size().x as f64 / 2.0, camera.screen_state.get_window_size().y as f64 / 2.0);
         }
 
-        let camera_velocity = camera_speed * glm::vec4_to_vec3(&(glm::affine_inverse(*screen_state.get_view_from_world()) * glm::vec3_to_vec4(&camera_input)));
-        camera_position += camera_velocity * delta_time;
+        let camera_velocity = camera.speed * glm::vec4_to_vec3(&(glm::affine_inverse(*camera.screen_state.get_view_from_world()) * glm::vec3_to_vec4(&camera.view_space_velocity)));
+        camera.position += camera_velocity * delta_time;
 
         //Do click action
         if !imgui_wants_mouse && mouse.clicked && (!mouse.was_clicked || turbo_clicking) {
             match click_action {
                 ClickAction::SpawnTotoro => {
-                    let click_ray = compute_click_ray(&screen_state, &mouse.screen_space_pos, &camera_position);
+                    let click_ray = compute_click_ray(&camera.screen_state, &mouse.screen_space_pos, &camera.position);
 
                     //Create Totoro if the ray hit
                     if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
@@ -1289,7 +1276,7 @@ fn main() {
                     }
                 }
                 ClickAction::SelectTotoro => {
-                    let click_ray = compute_click_ray(&screen_state, &mouse.screen_space_pos, &camera_position);
+                    let click_ray = compute_click_ray(&camera.screen_state, &mouse.screen_space_pos, &camera.position);
                     let hit_info = get_clicked_object(&world_state.totoros, &click_ray);
                     
                     match hit_info {
@@ -1298,7 +1285,7 @@ fn main() {
                     }
                 }
                 ClickAction::DeleteTotoro => {
-                    let click_ray = compute_click_ray(&screen_state, &mouse.screen_space_pos, &camera_position);
+                    let click_ray = compute_click_ray(&camera.screen_state, &mouse.screen_space_pos, &camera.position);
                     let hit_info = get_clicked_object(&world_state.totoros, &click_ray);
 
                     if let Some((_, idx)) = hit_info {
@@ -1306,7 +1293,7 @@ fn main() {
                     }
                 }
                 ClickAction::DeletePointLight => {
-                    let click_ray = compute_click_ray(&screen_state, &mouse.screen_space_pos, &camera_position);
+                    let click_ray = compute_click_ray(&camera.screen_state, &mouse.screen_space_pos, &camera.position);
                     let hit_info = get_clicked_object(&scene_data.point_lights, &click_ray);
 
                     if let Some((_, idx)) = hit_info {
@@ -1315,7 +1302,7 @@ fn main() {
                 }
                 ClickAction::MoveSelectedTotoro => {
                     if let Some(idx) = world_state.selected_totoro {
-                        let click_ray = compute_click_ray(&screen_state, &mouse.screen_space_pos, &camera_position);
+                        let click_ray = compute_click_ray(&camera.screen_state, &mouse.screen_space_pos, &camera.position);
                         if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
                             if let Some(tot) = world_state.totoros.get_mut_element(idx) {
                                 tot.position = point;
@@ -1325,14 +1312,14 @@ fn main() {
                     }
                 }
                 ClickAction::MovePlayerSpawn => {
-                    let click_ray = compute_click_ray(&screen_state, &mouse.screen_space_pos, &camera_position);
+                    let click_ray = compute_click_ray(&camera.screen_state, &mouse.screen_space_pos, &camera.position);
                     if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
                         world_state.player_spawn = point;
                     }
                 }
                 ClickAction::CreatePointLight => {
                     if scene_data.point_lights.count() < render::MAX_POINT_LIGHTS { 
-                        let click_ray = compute_click_ray(&screen_state, &mouse.screen_space_pos, &camera_position);
+                        let click_ray = compute_click_ray(&camera.screen_state, &mouse.screen_space_pos, &camera.position);
                         if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
                             let light = PointLight {
                                 position: point + glm::vec3(0.0, 0.0, 2.0),
@@ -1344,7 +1331,7 @@ fn main() {
                     }
                 }
                 ClickAction::SelectPointLight => {
-                    let click_ray = compute_click_ray(&screen_state, &mouse.screen_space_pos, &camera_position);
+                    let click_ray = compute_click_ray(&camera.screen_state, &mouse.screen_space_pos, &camera.position);
                     match get_clicked_object(&scene_data.point_lights, &click_ray) {
                         Some((_, idx)) => { scene_data.selected_point_light = Some(idx); }
                         None => { scene_data.selected_point_light = None; }
@@ -1352,7 +1339,7 @@ fn main() {
                 }
                 ClickAction::MovePointLight => {
                     if let Some(idx) = scene_data.selected_point_light {
-                        let click_ray = compute_click_ray(&screen_state, &mouse.screen_space_pos, &camera_position);
+                        let click_ray = compute_click_ray(&camera.screen_state, &mouse.screen_space_pos, &camera.position);
                         if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
                             if let Some(light) = scene_data.point_lights.get_mut_element(idx) {
                                 light.position = point + glm::vec3(0.0, 0.0, 2.0);
@@ -1361,7 +1348,7 @@ fn main() {
                     }
                 }
                 ClickAction::FlickTotoro => {
-                    let click_ray = compute_click_ray(&screen_state, &mouse.screen_space_pos, &camera_position);
+                    let click_ray = compute_click_ray(&camera.screen_state, &mouse.screen_space_pos, &camera.position);
                     let hit_info = get_clicked_object(&world_state.totoros, &click_ray);
                             
                     if let Some((t_value, idx)) = hit_info {
@@ -1429,14 +1416,14 @@ fn main() {
             };
 
             //Check if this triangle is hitting the camera
-            if camera_collision {
+            if camera.is_colliding {
                 let s = Sphere {
-                    focus: camera_position,
-                    radius: camera_hit_sphere_radius
+                    focus: camera.position,
+                    radius: camera.radius
                 };
 
                 if let Some(vec) = triangle_collide_sphere(&s, &triangle, &triangle_sphere) {
-                    camera_position += vec;
+                    camera.position += vec;
                 }
             }
 
@@ -1586,11 +1573,11 @@ fn main() {
                     (vec_to_array(pos), vec_to_array(vel), vec_to_array(forward), vec_to_array(up))
                 }
                 None => {
-                    let camera_vel = camera_position - last_camera_position;
-                    let camera_forward = glm::vec4_to_vec3(&(screen_state.get_world_from_view() * glm::vec4(0.0, 0.0, -1.0, 0.0)));
-                    let camera_up = glm::vec4_to_vec3(&(screen_state.get_world_from_view() * glm::vec4(0.0, 1.0, 0.0, 0.0)));
+                    let camera_vel = camera.position - camera.last_position;
+                    let camera_forward = glm::vec4_to_vec3(&(camera.screen_state.get_world_from_view() * glm::vec4(0.0, 0.0, -1.0, 0.0)));
+                    let camera_up = glm::vec4_to_vec3(&(camera.screen_state.get_world_from_view() * glm::vec4(0.0, 1.0, 0.0, 0.0)));
                     
-                    (vec_to_array(camera_position), vec_to_array(camera_vel), vec_to_array(camera_forward), vec_to_array(camera_up))
+                    (vec_to_array(camera.position), vec_to_array(camera_vel), vec_to_array(camera_forward), vec_to_array(camera_up))
                 }
             };
 
@@ -1599,7 +1586,7 @@ fn main() {
             send_or_error(&audio_sender, AudioCommand::SetListenerOrientation((listener_forward, listener_up)));
         }
 
-        last_camera_position = camera_position;
+        camera.last_position = camera.position;
         mouse.was_clicked = mouse.clicked;
 
         //Pre-render phase
@@ -1719,30 +1706,12 @@ fn main() {
         }
 
         //Update the uniform buffer object of point lights
-        unsafe {
-            let floats_per_light = 9;
-            
+        unsafe {            
             //Create the buffer
-            let mut buffer = vec![0.0; render::MAX_POINT_LIGHTS * floats_per_light];        
-            let mut current_light = 0;
-            for i in 0..scene_data.point_lights.len() {
-                if let Some(light) = &scene_data.point_lights[i] {
-                    buffer[current_light * 4] = light.position.x;
-                    buffer[current_light * 4 + 1] = light.position.y;
-                    buffer[current_light * 4 + 2] = light.position.z;
-    
-                    buffer[(current_light + render::MAX_POINT_LIGHTS) * 4] = light.color[0];
-                    buffer[(current_light + render::MAX_POINT_LIGHTS) * 4 + 1] = light.color[1];
-                    buffer[(current_light + render::MAX_POINT_LIGHTS) * 4 + 2] = light.color[2];
-                    
-                    buffer[(2 * render::MAX_POINT_LIGHTS) * 4 + current_light] = light.radius;
-    
-                    current_light += 1;
-                }
-            }
+            let buffer = create_point_light_buffer(&scene_data.point_lights);
             
-            let mut current_buffer_size = 0;
             gl::BindBuffer(gl::UNIFORM_BUFFER, scene_data.point_lights_ubo);
+            let mut current_buffer_size = 0;
             gl::GetBufferParameteriv(gl::ARRAY_BUFFER, gl::BUFFER_SIZE, &mut current_buffer_size);
     
             if buffer.len() * size_of::<GLfloat>() > current_buffer_size as usize {
@@ -1790,7 +1759,7 @@ fn main() {
                 imgui_ui.checkbox(im_str!("Wireframe view"), &mut wireframe);
                 imgui_ui.checkbox(im_str!("TRUE wireframe view"), &mut true_wireframe);
                 imgui_ui.checkbox(im_str!("Complex normals"), &mut scene_data.complex_normals);
-                imgui_ui.checkbox(im_str!("Camera collision"), &mut camera_collision);
+                imgui_ui.checkbox(im_str!("Camera collision"), &mut camera.is_colliding);
                 imgui_ui.checkbox(im_str!("Turbo clicking"), &mut turbo_clicking);
                 if let Some(_) = &xr_instance {
                     imgui_ui.checkbox(im_str!("HMD Point-of-view"), &mut hmd_pov);
@@ -1892,19 +1861,15 @@ fn main() {
                             if let Some(monitor) = opt_monitor {
                                 let pos = monitor.get_pos();
                                 if let Some(mode) = monitor.get_video_mode() {
-                                    resize_main_window(&mut window, &mut default_framebuffer, &mut screen_state, glm::vec2(mode.width, mode.height), pos, WindowMode::FullScreen(monitor));
+                                    resize_main_window(&mut window, &mut default_framebuffer, &mut camera.screen_state, glm::vec2(mode.width, mode.height), pos, WindowMode::FullScreen(monitor));
                                 }
                             }
                         });
                     } else {
                         let window_size = get_window_size(&config);
-                        resize_main_window(&mut window, &mut default_framebuffer, &mut screen_state, window_size, (200, 200), WindowMode::Windowed);
+                        resize_main_window(&mut window, &mut default_framebuffer, &mut camera.screen_state, window_size, (200, 200), WindowMode::Windowed);
                     }
                     is_fullscreen = !is_fullscreen;
-                }
-
-                if imgui_ui.button(im_str!("Print camera position"), [0.0, 32.0]) {
-                    println!("Camera position on frame {}: ({}, {}, {})", frame_count, camera_position.x, camera_position.y, camera_position.z);
                 }
 
                 if imgui_ui.button(im_str!("Take screenshot"), [0.0, 32.0]) {
@@ -2086,10 +2051,10 @@ fn main() {
 
         //Create a view matrix from the camera state
         {
-            let new_view_matrix = glm::rotation(camera_orientation.y, &glm::vec3(1.0, 0.0, 0.0)) *
-                                  glm::rotation(camera_orientation.x, &Z_UP) *
-                                  glm::translation(&(-camera_position));
-            screen_state.update_view(new_view_matrix);
+            let new_view_matrix = glm::rotation(camera.orientation.y, &glm::vec3(1.0, 0.0, 0.0)) *
+                                  glm::rotation(camera.orientation.x, &Z_UP) *
+                                  glm::translation(&(-camera.position));
+            camera.screen_state.update_view(new_view_matrix);
         }
 
         //Rendering
@@ -2196,7 +2161,7 @@ fn main() {
                                 }
 
                                 //Draw the companion view if we're showing HMD POV
-                                let projection = *screen_state.get_clipping_from_view();
+                                let projection = *camera.screen_state.get_clipping_from_view();
                                 let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);
                                 if hmd_pov {
                                     let v_world_pos = xrutil::pose_to_mat4(&pose, &world_from_tracking);
@@ -2260,23 +2225,23 @@ fn main() {
             gl::BindFramebuffer(gl::FRAMEBUFFER, default_framebuffer.name);
             if !hmd_pov {
                 //Render shadows
-                let projection = *screen_state.get_clipping_from_view();
-                let v_mat = screen_state.get_view_from_world();
+                let projection = *camera.screen_state.get_clipping_from_view();
+                let v_mat = camera.screen_state.get_view_from_world();
                 scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, v_mat, &projection);
                 render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.opaque_entities.as_slice());
 
                 //Render main scene
                 let freecam_viewdata = ViewData::new(
-                    camera_position,
-                    *screen_state.get_view_from_world(),
-                    *screen_state.get_clipping_from_view()
+                    camera.position,
+                    *camera.screen_state.get_view_from_world(),
+                    *camera.screen_state.get_clipping_from_view()
                 );
                 render::main_scene(&default_framebuffer, &scene_data, &freecam_viewdata);
             }
 
             //Take a screenshot here as to not get the dev gui in it
             if screenshot_this_frame {
-                take_screenshot(&screen_state);
+                take_screenshot(&camera.screen_state);
                 screenshot_this_frame = false;
             }
 
@@ -2291,7 +2256,7 @@ fn main() {
 
             //Render Dear ImGui
             gl::UseProgram(imgui_program);
-            glutil::bind_matrix4(imgui_program, "projection", screen_state.get_clipping_from_screen());
+            glutil::bind_matrix4(imgui_program, "projection", camera.screen_state.get_clipping_from_screen());
             {
                 let draw_data = imgui_ui.render();
                 if draw_data.total_vtx_count > 0 {
@@ -2324,7 +2289,7 @@ fn main() {
                                     gl::ActiveTexture(gl::TEXTURE0);
                                     gl::BindTexture(gl::TEXTURE_2D, cmd_params.texture_id.id() as GLuint);
                                     gl::Scissor(cmd_params.clip_rect[0] as GLint,
-                                                screen_state.get_window_size().y as GLint - cmd_params.clip_rect[3] as GLint,
+                                                camera.screen_state.get_window_size().y as GLint - cmd_params.clip_rect[3] as GLint,
                                                 (cmd_params.clip_rect[2] - cmd_params.clip_rect[0]) as GLint,
                                                 (cmd_params.clip_rect[3] - cmd_params.clip_rect[1]) as GLint
                                     );
@@ -2348,7 +2313,7 @@ fn main() {
 
             //Take a screenshot here as to get the dev gui in it
             if full_screenshot_this_frame {
-                take_screenshot(&screen_state);
+                take_screenshot(&camera.screen_state);
                 full_screenshot_this_frame = false;
             }
         }

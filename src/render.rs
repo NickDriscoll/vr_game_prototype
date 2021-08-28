@@ -533,3 +533,28 @@ pub fn compute_shadow_cascade_matrices(shadow_cascade_distances: &[f32; SHADOW_C
     }
     out_mats
 }
+
+pub fn create_point_light_buffer(point_lights: &OptionVec<PointLight>) -> Vec<f32> {
+    let floats_per_light = 9; //4N+4N+Ns
+
+    //Create the buffer
+    let mut buffer = vec![0.0; MAX_POINT_LIGHTS * floats_per_light];        
+    let mut current_light = 0;
+    for i in 0..point_lights.len() {
+        if let Some(light) = &point_lights[i] {
+            buffer[current_light * 4] = light.position.x;
+            buffer[current_light * 4 + 1] = light.position.y;
+            buffer[current_light * 4 + 2] = light.position.z;
+
+            buffer[(current_light + MAX_POINT_LIGHTS) * 4] = light.color[0];
+            buffer[(current_light + MAX_POINT_LIGHTS) * 4 + 1] = light.color[1];
+            buffer[(current_light + MAX_POINT_LIGHTS) * 4 + 2] = light.color[2];
+            
+            buffer[(2 * MAX_POINT_LIGHTS) * 4 + current_light] = light.radius;
+
+            current_light += 1;
+        }
+    }
+
+    buffer
+}
