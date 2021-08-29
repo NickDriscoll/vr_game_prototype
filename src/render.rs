@@ -16,7 +16,7 @@ pub const FAR_DISTANCE: f32 = 1000000.0;
 pub const MSAA_SAMPLES: u32 = 8;
 pub const SHADOW_CASCADE_COUNT: usize = 5;
 pub const TEXTURE_MAP_COUNT: usize = 3;
-pub const MAX_POINT_LIGHTS: usize = 32;
+pub const MAX_POINT_LIGHTS: usize = 512;
 
 pub const STANDARD_HIGHLIGHTED_ATTRIBUTE: GLuint = 5;
 pub const STANDARD_TRANSFORM_ATTRIBUTE: GLuint = 6;
@@ -257,7 +257,7 @@ impl CascadedShadowMap {
 pub struct PointLight {
     pub position: glm::TVec3<f32>,
     pub color: [f32; 3],
-    pub radius: f32
+    pub power: f32
 }
 
 impl PointLight {
@@ -268,7 +268,7 @@ impl Spherical for PointLight {
     fn sphere(&self) -> Sphere {
         Sphere {
             focus: self.position,
-            radius: PointLight::COLLISION_RADIUS
+            radius: Self::COLLISION_RADIUS
         }
     }
 }
@@ -408,23 +408,24 @@ pub unsafe fn main_scene(framebuffer: &Framebuffer, scene_data: &SceneData, view
 unsafe fn render_entity(opt_entity: &Option<RenderEntity>, scene_data: &SceneData, view_data: &ViewData) {
     if let Some(entity) = opt_entity {
         let texture_map_names = ["albedo_tex", "normal_tex", "roughness_tex", "shadow_map"];
-        let sun_c = glm::vec3(scene_data.sun_color[0], scene_data.sun_color[1], scene_data.sun_color[2]);
 
         let p = entity.shader;
         gl::UseProgram(p);
-        glutil::bind_matrix4_array(p, "shadow_matrices", &scene_data.sun_shadow_map.matrices);
-        glutil::bind_matrix4(p, "view_projection", &view_data.view_projection);
-        glutil::bind_vector3(p, "sun_direction", &scene_data.sun_direction);
+
+        let sun_c = glm::vec3(scene_data.sun_color[0], scene_data.sun_color[1], scene_data.sun_color[2]);
         glutil::bind_vector3(p, "sun_color", &sun_c);
+        glutil::bind_matrix4_array(p, "shadow_matrices", &scene_data.sun_shadow_map.matrices);
         glutil::bind_float(p, "shininess_lower_bound", scene_data.shininess_lower_bound);
         glutil::bind_float(p, "shininess_upper_bound", scene_data.shininess_upper_bound);
+        glutil::bind_vector3(p, "sun_direction", &scene_data.sun_direction);
         glutil::bind_float(p, "ambient_strength", scene_data.ambient_strength);
         glutil::bind_float(p, "shadow_intensity", scene_data.shadow_intensity);
         glutil::bind_float(p, "current_time", scene_data.current_time);
-        glutil::bind_int(p, "shadow_map", TEXTURE_MAP_COUNT as GLint);
         glutil::bind_int(p, "complex_normals", scene_data.complex_normals as GLint);
         glutil::bind_int(p, "point_lights_count", scene_data.point_lights.count() as GLint);
         glutil::bind_float_array(p, "cascade_distances", &scene_data.sun_shadow_map.clip_space_distances[1..]);
+        glutil::bind_matrix4(p, "view_projection", &view_data.view_projection);
+        glutil::bind_int(p, "shadow_map", TEXTURE_MAP_COUNT as GLint);
         glutil::bind_vector3(p, "view_position", &view_data.view_position);
         glutil::bind_vector2(p, "uv_velocity", &entity.uv_velocity);
         glutil::bind_vector2(p, "uv_scale", &entity.uv_scale);
@@ -550,7 +551,7 @@ pub fn create_point_light_buffer(point_lights: &OptionVec<PointLight>) -> Vec<f3
             buffer[(current_light + MAX_POINT_LIGHTS) * 4 + 1] = light.color[1];
             buffer[(current_light + MAX_POINT_LIGHTS) * 4 + 2] = light.color[2];
             
-            buffer[(2 * MAX_POINT_LIGHTS) * 4 + current_light] = light.radius;
+            buffer[(2 * MAX_POINT_LIGHTS) * 4 + current_light] = light.power;
 
             current_light += 1;
         }

@@ -7,16 +7,13 @@ use crate::*;
 #[derive(PartialEq, Eq)]
 pub enum ClickAction {
     None,
-    SelectTotoro,
-    SpawnTotoro,
-    FlickTotoro,
-    DeleteTotoro,
+    CreateTotoro,
+    CreatePointLight,
+    SelectObject,
+    DeleteObject,
     MovePlayerSpawn,
     MoveSelectedTotoro,
-    CreatePointLight,
-    SelectPointLight,
-    MovePointLight,
-    DeletePointLight
+    MovePointLight
 }
 
 impl Default for ClickAction {

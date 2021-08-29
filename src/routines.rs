@@ -200,10 +200,11 @@ pub fn lerp(start: &glm::TVec3<f32>, end: &glm::TVec3<f32>, t: f32) -> glm::TVec
 //Given the mouse's position on the near clipping plane (A) and the camera's origin position (B),
 //computes the normalized ray (A - B), expressed in world-space coords
 pub fn compute_click_ray(screen_state: &ScreenState, screen_space_mouse: &glm::TVec2<f32>, camera_position: &glm::TVec3<f32>) -> Ray {
-    let fovx_radians = 2.0 * f32::atan(f32::tan(screen_state.get_fov_radians() / 2.0) * screen_state.get_aspect_ratio());
+    let fovy_radians = screen_state.get_fov_radians();
+    let fovx_radians = 2.0 * f32::atan(f32::tan(fovy_radians / 2.0) * screen_state.get_aspect_ratio());
     let max_coords = glm::vec4(
         NEAR_DISTANCE * f32::tan(fovx_radians / 2.0),
-        NEAR_DISTANCE * f32::tan(screen_state.get_fov_radians() / 2.0),
+        NEAR_DISTANCE * f32::tan(fovy_radians / 2.0),
         -NEAR_DISTANCE,
         1.0
     );
@@ -309,7 +310,7 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
 
     match File::open(path) {
         Ok(mut file) => {
-            let floats_at_start = 11;
+            let floats_at_start = 12;
             let r = io::read_pascal_strings(&mut file, 1);
             let new_skybox = io_or_error(r, path)[0].clone();
 
@@ -323,10 +324,12 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
             scene_data.sun_color[2] = raw_floats[5];
             scene_data.shininess_lower_bound = raw_floats[6];
             scene_data.shininess_upper_bound = raw_floats[7];
-            world_state.player_spawn.x = raw_floats[8];
-            world_state.player_spawn.y = raw_floats[9];
-            world_state.player_spawn.z = raw_floats[10];
+            scene_data.sun_size = raw_floats[8];
+            world_state.player_spawn.x = raw_floats[9];
+            world_state.player_spawn.y = raw_floats[10];
+            world_state.player_spawn.z = raw_floats[11];
             
+            //Load totoros
             let floats_per_totoro = 4;
             let totoros_count = io_or_error(io::read_u32(&mut file), path);                
             let raw_floats = io_or_error(io::read_f32_data(&mut file, totoros_count as usize * floats_per_totoro), path);
@@ -336,6 +339,24 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
                 tot.scale = raw_floats[i + 3];
                 world_state.totoros.insert(tot);
             }
+
+            //Load lights
+            let floats_per_light = 7;
+            let light_count = io_or_error(io::read_u32(&mut file), path);
+            let raw_floats = io_or_error(io::read_f32_data(&mut file, light_count as usize * floats_per_light), path);
+            for i in (0..raw_floats.len()).step_by(floats_per_light) {                
+                let position = glm::vec3(raw_floats[i], raw_floats[i + 1], raw_floats[i + 2]);    
+                let color = [raw_floats[i + 3], raw_floats[i + 4], raw_floats[i + 5]];
+                let power = raw_floats[i + 6];
+                let light = PointLight {
+                    position,
+                    color,
+                    power
+                };
+
+                scene_data.point_lights.insert(light);
+            }
+
 
             //Create the skybox cubemap
             scan_skybox_directory(world_state, &new_skybox);

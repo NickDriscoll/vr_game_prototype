@@ -11,7 +11,6 @@ const vec3 LOD_COLOR3 = vec3(1.0, 0.0, 1.0);
 const vec3 LOD_COLOR4 = vec3(0.0, 0.0, 1.0);
 const int SHADOW_CASCADES = 5;
 const float SHADOW_CASCADES_RECIPROCAL = 1.0 / SHADOW_CASCADES;
-const int MAX_POINT_LIGHTS = 32;
 
 in vec3 tangent_sun_direction;
 in vec3 tangent_view_position;
@@ -55,6 +54,7 @@ uniform float cascade_distances[SHADOW_CASCADES];
 //For a given draw call, this will be non-negative if one of the instances is to be highlighted
 uniform int highlighted_idx = -1;
 
+const int MAX_POINT_LIGHTS = 512;
 layout (std140, binding = 0) uniform PointLights {
     vec3 positions[MAX_POINT_LIGHTS];
     vec3 colors[MAX_POINT_LIGHTS];
@@ -185,6 +185,7 @@ void main() {
 
         vec3 light_color = point_lights.colors[i];
         vec3 tangent_light_direction = tangent_from_world * (point_lights.positions[i] - f_world_pos);
+        //vec3 tangent_light_direction = (point_lights.positions[i] - f_world_pos);
         float dist = length(tangent_light_direction);
         tangent_light_direction = normalize(tangent_light_direction);
 
