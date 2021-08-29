@@ -7,7 +7,7 @@ pub const OCULUS_TOUCH_INTERACTION_PROFILE: &str =          "/interaction_profil
 
 pub const LEFT_GRIP_POSE: &str =                            "/user/hand/left/input/grip/pose";
 pub const LEFT_AIM_POSE: &str =                             "/user/hand/left/input/aim/pose";
-pub const LEFT_TRIGGER_FLOAT: &str =                        "/user/hand/left/input/trigger/value";
+pub const LEFT_TRIGGER: &str =                              "/user/hand/left/input/trigger/value";
 pub const LEFT_STICK_VECTOR2: &str =                        "/user/hand/left/input/thumbstick";
 pub const LEFT_TRACKPAD_VECTOR2: &str =                     "/user/hand/left/input/trackpad";
 pub const LEFT_TRACKPAD_CLICK: &str =                       "/user/hand/left/input/trackpad/click";

@@ -11,7 +11,7 @@ uniform float sun_size;
 void main() {
     float likeness = dot(normalize(f_dir), sun_direction);
     vec3 sky_color = texture(skybox, tex_coord).xyz;
-    sky_color += smoothstep(mix(0.999, 0.99, sun_size), 1.0, likeness);
+    sky_color += smoothstep(mix(1.0, 0.99, sun_size), 1.0, likeness);
     sky_color *= sun_color;
 
     gl_FragColor = vec4(sky_color, 1.0);

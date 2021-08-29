@@ -110,6 +110,7 @@ impl Configuration {
                                 }
                             }
 
+                            //Insert into hashmap based on token type
                             match token_type {
                                 TokenType::Int => {
                                     let int = u32::from_str_radix(tokens[2], 10).unwrap();

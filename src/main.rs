@@ -66,8 +66,6 @@ const DEFAULT_TEX_PARAMS: [(GLenum, GLenum); 4] = [
 fn main() {    
     let Z_UP = glm::vec3(0.0, 0.0, 1.0);
 
-    //Do a bunch of OpenXR initialization
-
     //Initialize the configuration data
     let config = {
         //If we can't read from the config file, we create one with the default values
@@ -90,6 +88,8 @@ fn main() {
         }
     };
 
+
+    //Do a bunch of OpenXR initialization
     //Initialize the OpenXR instance
     let xr_instance = {
         let openxr_entry = xr::Entry::linked();
@@ -192,7 +192,7 @@ fn main() {
     };
 
     //Create the actionset
-    let xr_controller_actionset = match &xr_instance {
+    let xr_standard_actionset = match &xr_instance {
         Some(inst) => {
             match inst.create_action_set("controllers", "Controllers", 1) {
                 Ok(set) => { Some(set) }
@@ -208,18 +208,18 @@ fn main() {
     //Create the paths to appropriate equipment
     let left_grip_pose_path = xrutil::make_path(&xr_instance, xrutil::LEFT_GRIP_POSE);
     let left_aim_pose_path = xrutil::make_path(&xr_instance, xrutil::LEFT_AIM_POSE);
-    let left_trigger_float_path = xrutil::make_path(&xr_instance, xrutil::LEFT_TRIGGER_FLOAT);
+    let left_trigger_path = xrutil::make_path(&xr_instance, xrutil::LEFT_TRIGGER);
     let left_b_path = xrutil::make_path(&xr_instance, xrutil::LEFT_B_BUTTON);
     let left_y_path = xrutil::make_path(&xr_instance, xrutil::LEFT_Y_BUTTON);
     let left_stick_vector_path = xrutil::make_path(&xr_instance, xrutil::LEFT_STICK_VECTOR2);
     let left_trackpad_vector_path = xrutil::make_path(&xr_instance, xrutil::LEFT_TRACKPAD_VECTOR2);
     let left_trackpad_click_path = xrutil::make_path(&xr_instance, xrutil::LEFT_TRACKPAD_CLICK);
-    let right_trigger_float_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_TRIGGER_FLOAT);
+    let right_trigger_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_TRIGGER_FLOAT);
     let right_grip_pose_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_GRIP_POSE);
     let right_aim_pose_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_AIM_POSE);
     let right_trackpad_force_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_TRACKPAD_FORCE);
     let right_trackpad_click_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_TRACKPAD_CLICK);
-    let right_a_button_bool_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_A_BUTTON_BOOL);
+    let right_a_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_A_BUTTON_BOOL);
     let right_b_path = xrutil::make_path(&xr_instance, xrutil::RIGHT_B_BUTTON);
 
     //Create the hand subaction paths
@@ -227,115 +227,93 @@ fn main() {
     let right_hand_subaction_path = xrutil::make_path(&xr_instance, xr::USER_HAND_RIGHT);
 
     //Create the XrActions
-    let left_hand_pose_action = xrutil::make_action(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_pose", "Left hand pose");
-    let left_hand_aim_action = xrutil::make_action::<xr::Posef>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_aim", "Left hand aim");
-    let right_hand_grip_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_pose", "Right hand pose");
-    let right_hand_aim_action = xrutil::make_action(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_aim", "Right hand aim");
-    let left_gadget_action = xrutil::make_action::<f32>(&left_hand_subaction_path, &xr_controller_actionset, "left_hand_gadget", "Left hand gadget");
-    let right_gadget_action = xrutil::make_action::<f32>(&right_hand_subaction_path, &xr_controller_actionset, "right_hand_gadget", "Right hand gadget");
-    let go_home_action = xrutil::make_action::<bool>(&right_hand_subaction_path, &xr_controller_actionset, "item_menu", "Interact with item menu");
-    let player_move_action = xrutil::make_action::<xr::Vector2f>(&left_hand_subaction_path, &xr_controller_actionset, "player_move", "Player movement");
-    let left_switch_gadget = xrutil::make_action::<bool>(&left_hand_subaction_path, &xr_controller_actionset, "left_switch_gadget", "Left hand switch gadget");
-    let right_switch_gadget = xrutil::make_action::<bool>(&right_hand_subaction_path, &xr_controller_actionset, "right_switch_gadget", "Right hand switch gadget");
+    let left_hand_grip_action = xrutil::make_action(&left_hand_subaction_path, &xr_standard_actionset, "left_hand_pose", "Left hand pose");
+    let left_hand_aim_action = xrutil::make_action::<xr::Posef>(&left_hand_subaction_path, &xr_standard_actionset, "left_hand_aim", "Left hand aim");
+    let right_hand_grip_action = xrutil::make_action(&right_hand_subaction_path, &xr_standard_actionset, "right_hand_pose", "Right hand pose");
+    let right_hand_aim_action = xrutil::make_action(&right_hand_subaction_path, &xr_standard_actionset, "right_hand_aim", "Right hand aim");
+    let player_move_action = xrutil::make_action::<xr::Vector2f>(&left_hand_subaction_path, &xr_standard_actionset, "player_move", "Player movement");
+    let left_gadget_action = xrutil::make_action::<f32>(&left_hand_subaction_path, &xr_standard_actionset, "left_hand_gadget", "Left hand gadget");
+    let right_gadget_action = xrutil::make_action::<f32>(&right_hand_subaction_path, &xr_standard_actionset, "right_hand_gadget", "Right hand gadget");
+    let left_switch_gadget = xrutil::make_action::<bool>(&left_hand_subaction_path, &xr_standard_actionset, "left_switch_gadget", "Left hand switch gadget");    
+    let go_home_action = xrutil::make_action::<bool>(&right_hand_subaction_path, &xr_standard_actionset, "item_menu", "Interact with item menu");
+    let right_switch_gadget = xrutil::make_action::<bool>(&right_hand_subaction_path, &xr_standard_actionset, "right_switch_gadget", "Right hand switch gadget");
+
 
     //Suggest interaction profile bindings
-    match (&xr_instance,
-        &left_hand_pose_action,
-        &left_hand_aim_action,
-        &left_gadget_action,
-        &right_gadget_action,
-        &right_hand_grip_action,
-        &player_move_action,
-        &left_grip_pose_path,
-        &left_aim_pose_path,
-        &left_trigger_float_path,
-        &right_trigger_float_path,
-        &right_grip_pose_path,
-        &left_stick_vector_path,
-        &left_trackpad_vector_path,
-        &right_trackpad_force_path,
-        &go_home_action,
-        &right_hand_aim_action,
-        &right_aim_pose_path,
-        &right_trackpad_click_path,
-        &right_a_button_bool_path,
-        &left_b_path,
-        &left_switch_gadget,
-        &right_b_path,
-        &right_switch_gadget,
-        &left_trackpad_click_path,
-        &left_y_path) {
-        (Some(inst),
-        Some(l_grip_action),
-        Some(l_aim_action),
-        Some(l_trigger_action),
-        Some(r_trigger_action),
-        Some(r_action),
-        Some(move_action),
-        Some(l_grip_path),
-        Some(l_aim_path),
-        Some(l_trigger_path),
-        Some(r_trigger_path),
-        Some(r_path),
-        Some(l_stick_path),
-        Some(l_trackpad_path),
-        Some(r_trackpad_force),
-        Some(i_menu_action),
-        Some(r_aim_action),
-        Some(r_aim_path),
-        Some(r_track_click_path),
-        Some(r_a_button_path),
-        Some(l_b_path),
-        Some(l_switch),
-        Some(r_b_path),
-        Some(r_switch),
-        Some(l_track_click_path),
-        Some(l_y_path)) => {
-            //Valve Index
-            let bindings = [
-                xr::Binding::new(l_grip_action, *l_grip_path),
-                xr::Binding::new(l_aim_action, *l_aim_path),
-                xr::Binding::new(r_aim_action, *r_aim_path),
-                xr::Binding::new(l_trigger_action, *l_trigger_path),
-                xr::Binding::new(r_trigger_action, *r_trigger_path),
-                xr::Binding::new(r_action, *r_path),
-                xr::Binding::new(move_action, *l_stick_path),
-                xr::Binding::new(i_menu_action, *r_trackpad_force),
-                xr::Binding::new(l_switch, *l_b_path),
-                xr::Binding::new(r_switch, *r_b_path)
-            ];
-            xrutil::suggest_bindings(inst, xrutil::VALVE_INDEX_INTERACTION_PROFILE, &bindings);
-
-            //HTC Vive
-            let bindings = [
-                xr::Binding::new(l_grip_action, *l_grip_path),
-                xr::Binding::new(l_aim_action, *l_aim_path),
-                xr::Binding::new(r_aim_action, *r_aim_path),
-                xr::Binding::new(l_trigger_action, *l_trigger_path),
-                xr::Binding::new(r_trigger_action, *r_trigger_path),
-                xr::Binding::new(r_action, *r_path),
-                xr::Binding::new(move_action, *l_trackpad_path),                   
-                xr::Binding::new(i_menu_action, *r_track_click_path),
-                xr::Binding::new(l_switch, *l_track_click_path),
-                xr::Binding::new(r_switch, *r_track_click_path)
-            ];
-            xrutil::suggest_bindings(inst, xrutil::HTC_VIVE_INTERACTION_PROFILE, &bindings);
-
-            //Oculus Touch
-            let bindings = [
-                xr::Binding::new(l_grip_action, *l_grip_path),
-                xr::Binding::new(l_aim_action, *l_aim_path),
-                xr::Binding::new(r_aim_action, *r_aim_path),
-                xr::Binding::new(l_trigger_action, *l_trigger_path),
-                xr::Binding::new(r_trigger_action, *r_trigger_path),
-                xr::Binding::new(r_action, *r_path),
-                xr::Binding::new(move_action, *l_stick_path),
-                xr::Binding::new(l_switch, *l_y_path),
-                xr::Binding::new(r_switch, *r_a_button_path)
-            ];
-            xrutil::suggest_bindings(inst, xrutil::OCULUS_TOUCH_INTERACTION_PROFILE, &bindings);
+    if let Some(inst) = &xr_instance {
+        fn push_binding<'a, T: xr::ActionTy>(array: &mut Vec<xr::Binding<'a>>, binding: (&'a Option<xr::Action<T>>, Option<xr::Path>)) {            
+            if let (Some(action), Some(path)) = binding {
+                array.push(xr::Binding::new(action, path));
+            }
         }
-        _ => {}
+
+        //All VR setups will have these be the same
+        let pose_bindings = [
+            (&left_hand_grip_action, left_grip_pose_path),
+            (&left_hand_aim_action, left_aim_pose_path),
+            (&right_hand_grip_action, right_grip_pose_path),
+            (&right_hand_aim_action, right_aim_pose_path),
+        ];
+        let float_bindings = [
+            (&left_gadget_action, left_trigger_path),
+            (&right_gadget_action, right_trigger_path)
+        ];
+
+        //Unique bindings
+        let index_bools = [
+            (&go_home_action, right_trackpad_force_path),
+            (&left_switch_gadget, left_b_path),
+            (&right_switch_gadget, right_b_path)
+        ];
+        let vive_bools = [
+            (&go_home_action, None),
+            (&left_switch_gadget, left_trackpad_click_path),
+            (&right_switch_gadget, right_trackpad_click_path)
+        ];
+        let oculus_bools = [
+            (&go_home_action, right_a_path),
+            (&left_switch_gadget, left_y_path),
+            (&right_switch_gadget, right_b_path)
+        ];
+        let unique_bools = [&index_bools, &vive_bools, &oculus_bools];
+
+        let index_vec2s = [(&player_move_action, left_stick_vector_path)];
+        let vive_vec2s = [(&player_move_action, left_trackpad_vector_path)];
+        let oculus_vec2s = [(&player_move_action, left_stick_vector_path)];
+        let unique_vec2s = [&index_vec2s, &vive_vec2s, &oculus_vec2s];
+
+        let bindings_count = 10;
+        let mut index_bindings = Vec::with_capacity(bindings_count);
+        let mut vive_bindings = Vec::with_capacity(bindings_count);
+        let mut oculus_bindings = Vec::with_capacity(bindings_count);
+        let binding_arrays = [&mut index_bindings, &mut vive_bindings, &mut oculus_bindings];
+        let interaction_profiles = [xrutil::VALVE_INDEX_INTERACTION_PROFILE, xrutil::HTC_VIVE_INTERACTION_PROFILE, xrutil::OCULUS_TOUCH_INTERACTION_PROFILE];
+
+        //Do generic bindings
+        for i in 0..binding_arrays.len() {
+            for binding in pose_bindings {
+                push_binding(binding_arrays[i], binding);
+            }
+            for binding in float_bindings {
+                push_binding(binding_arrays[i], binding);
+            }
+        }
+
+        //Do unique bindings
+        for i in 0..unique_bools.len() {
+            for binding in unique_bools[i] {
+                push_binding(binding_arrays[i], *binding);
+            }
+        }
+        for i in 0..unique_vec2s.len() {
+            for binding in unique_vec2s[i] {
+                push_binding(binding_arrays[i], *binding);
+            }
+        }
+
+        for i in 0..interaction_profiles.len() {
+            xrutil::suggest_bindings(inst, interaction_profiles[i], binding_arrays[i]);
+        }
     }
 
     //Initializing GLFW and creating a window
@@ -459,7 +437,7 @@ fn main() {
     };
 
     //Set controller actionset as active
-    match (&xr_session, &xr_controller_actionset) {
+    match (&xr_session, &xr_standard_actionset) {
         (Some(session), Some(actionset)) => {
             if let Err(e) = session.attach_action_sets(&[&actionset]) {
                 println!("Unable to attach action sets: {}", e);
@@ -488,7 +466,7 @@ fn main() {
     let tracking_space = xrutil::make_reference_space(&xr_session, xr::ReferenceSpaceType::STAGE, space_pose);                          //Create tracking space
     let view_space = xrutil::make_reference_space(&xr_session, xr::ReferenceSpaceType::VIEW, xr::Posef::IDENTITY);                      //Create view space
     
-    let left_hand_grip_space = xrutil::make_actionspace(&xr_session, left_hand_subaction_path, &left_hand_pose_action, space_pose);     //Create left hand grip space
+    let left_hand_grip_space = xrutil::make_actionspace(&xr_session, left_hand_subaction_path, &left_hand_grip_action, space_pose);     //Create left hand grip space
     let left_hand_aim_space = xrutil::make_actionspace(&xr_session, left_hand_subaction_path, &left_hand_aim_action, space_pose);       //Create left hand aim space
     let right_hand_grip_space = xrutil::make_actionspace(&xr_session, right_hand_subaction_path, &right_hand_grip_action, space_pose);  //Create right hand grip space
     let right_hand_aim_space = xrutil::make_actionspace(&xr_session, right_hand_subaction_path, &right_hand_aim_action, space_pose);    //Create right hand aim space
@@ -639,7 +617,6 @@ fn main() {
         cascade_distances[3] = -(render::NEAR_DISTANCE + 25.0);
         cascade_distances[4] = -(render::NEAR_DISTANCE + 75.0);
         cascade_distances[5] = -(render::NEAR_DISTANCE + 125.0);
-        //cascade_distances[6] = -(render::NEAR_DISTANCE + 300.0);
 
         //Compute the clip space distances and save them in the scene_data struct
         for i in 0..cascade_distances.len() {
@@ -779,7 +756,7 @@ fn main() {
     let mut left_water_pillar_scale: glm::TVec3<f32> = glm::zero();
     let mut right_water_pillar_scale: glm::TVec3<f32> = glm::zero();
     let water_cylinder_path = "models/water_cylinder.ozy";
-    let water_cylinder_entity_index = scene_data.opaque_entities.insert(RenderEntity::from_ozy(water_cylinder_path, standard_program, 2, STANDARD_TRANSFORM_ATTRIBUTE, &mut texture_keeper, &DEFAULT_TEX_PARAMS));
+    let water_cylinder_entity_index = scene_data.transparent_entities.insert(RenderEntity::from_ozy(water_cylinder_path, standard_program, 2, STANDARD_TRANSFORM_ATTRIBUTE, &mut texture_keeper, &DEFAULT_TEX_PARAMS));
 
     //Set up global flags lol
     let mut is_fullscreen = false;
@@ -848,7 +825,7 @@ fn main() {
         let framerate = imgui_io.framerate;
 
         //Sync OpenXR actions
-        if let (Some(session), Some(controller_actionset)) = (&xr_session, &xr_controller_actionset) {
+        if let (Some(session), Some(controller_actionset)) = (&xr_session, &xr_standard_actionset) {
             if let Err(e) = session.sync_actions(&[xr::ActiveActionSet::new(controller_actionset)]) {
                 println!("Unable to sync actions: {}", e);
             }
@@ -1101,7 +1078,7 @@ fn main() {
                                     pillar_scales[i].z = xz_scale;
                                     world_state.player.tracking_velocity += update_force;
         
-                                    if let Some(entity) = scene_data.opaque_entities.get_mut_element(water_cylinder_entity_index) {
+                                    if let Some(entity) = scene_data.transparent_entities.get_mut_element(water_cylinder_entity_index) {
                                         //Update the water gun's pillar of water
                                         entity.uv_offset += glm::vec2(0.0, 5.0) * delta_time;
                                         entity.uv_scale.y = pillar_scales[i].y;
@@ -2104,7 +2081,7 @@ fn main() {
                                 let scales = [&left_water_pillar_scale, &right_water_pillar_scale];
                                 for i in 0..poses.len() {
                                     if let Some(p) = poses[i] {
-                                        if let Some(entity) = scene_data.opaque_entities.get_mut_element(water_cylinder_entity_index) {
+                                        if let Some(entity) = scene_data.transparent_entities.get_mut_element(water_cylinder_entity_index) {
                                             let mm = xrutil::pose_to_mat4(&p, &world_from_tracking) * glm::scaling(scales[i]);
                                             entity.update_single_transform(i, &mm, 16);
                                         }
