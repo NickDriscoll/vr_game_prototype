@@ -40,6 +40,7 @@ uniform bool complex_normals = false;               //Flag that controls whether
 uniform samplerCube skybox_sampler;
 
 //Debug visualization flags
+uniform bool visualize_albedo = false;
 uniform bool visualize_normals = false;
 uniform bool visualize_shadowed = false;
 uniform bool visualize_cascade_zone = false;
@@ -54,7 +55,7 @@ uniform float cascade_distances[SHADOW_CASCADES];
 //For a given draw call, this will be non-negative if one of the instances is to be highlighted
 uniform int highlighted_idx = -1;
 
-const int MAX_POINT_LIGHTS = 512;
+const int MAX_POINT_LIGHTS = 8;
 layout (std140, binding = 0) uniform PointLights {
     vec3 positions[MAX_POINT_LIGHTS];
     vec3 colors[MAX_POINT_LIGHTS];
@@ -88,6 +89,13 @@ float blinn_phong_specular(vec3 view_direction, vec3 light_direction, vec3 norma
 }
 
 void main() {
+    //Sample albedo texture
+    vec4 albedo_sample = texture(albedo_tex, f_uvs);
+    if (visualize_albedo) {
+        frag_color = albedo_sample;
+        return;
+    }
+
     //Compute this frag's tangent space normal
     vec3 tangent_space_normal;
     if (complex_normals) {
@@ -185,7 +193,6 @@ void main() {
 
         vec3 light_color = point_lights.colors[i];
         vec3 tangent_light_direction = tangent_from_world * (point_lights.positions[i] - f_world_pos);
-        //vec3 tangent_light_direction = (point_lights.positions[i] - f_world_pos);
         float dist = length(tangent_light_direction);
         tangent_light_direction = normalize(tangent_light_direction);
 
@@ -219,7 +226,6 @@ void main() {
     vec3 environment_lighting = sun_color * ((sun_specular + sun_diffuse) * shadow_factor + sky_contribution + ambient_strength);
 
     //Sample the albedo map for the fragment's base color
-    vec4 albedo_sample = texture(albedo_tex, f_uvs);
     vec3 base_color = albedo_sample.xyz;
     float alpha = albedo_sample.a;
     vec3 final_color = (environment_lighting + point_lights_contribution) * base_color;

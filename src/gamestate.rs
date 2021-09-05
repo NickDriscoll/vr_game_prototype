@@ -84,16 +84,8 @@ pub struct Totoro {
     pub desired_forward: glm::TVec3<f32>,
     pub state: TotoroState,
     pub state_timer: f32,
+    pub state_transition_after: f32,
     pub saw_player_last: f32
-}
-
-#[derive(Debug)]
-pub enum TotoroState {
-    Relaxed,
-    Meandering,
-    Startled,
-    Panicking,
-    BrainDead
 }
 
 impl Totoro {
@@ -111,9 +103,19 @@ impl Totoro {
             desired_forward: forward,
             state_timer: creation_time,
             state: TotoroState::Relaxed,
+            state_transition_after: 0.0,
             saw_player_last: 0.0
         }
     }
+}
+
+#[derive(Debug)]
+pub enum TotoroState {
+    Relaxed,
+    Meandering,
+    Startled,
+    Panicking,
+    BrainDead
 }
 
 pub fn delete_object<T>(objects: &mut OptionVec<T>, selected: &mut Option<usize>, idx: usize) {

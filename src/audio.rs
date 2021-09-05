@@ -36,8 +36,8 @@ fn load_decoder(path: &str) -> Option<mp3::Decoder<File>> {
     }    
 }
 
-fn set_linearized_gain(ctxt: &alto::Context, volume: f32) {
-    let gain_factor = (f32::exp(volume / 100.0) - 1.0) / (glm::e::<f32>() - 1.0);
+fn set_linearized_gain(ctxt: &alto::Context, linear_gain: f32) {
+    let gain_factor = (f32::exp(linear_gain / 100.0) - 1.0) / (glm::e::<f32>() - 1.0);
     ctxt.set_gain(gain_factor).unwrap();
 }
 
@@ -86,9 +86,11 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
         };
         set_linearized_gain(&alto_context, bgm_volume);
 
+        //Initialize sound effects buffers
+
+
         //Initialize the mp3 decoder with the default bgm
         let mut decoder = load_decoder(&default_bgm);
-
         let mut bgm_source = alto_context.new_streaming_source().unwrap();
         let mut playing_bgm = true;
         loop {

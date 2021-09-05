@@ -597,35 +597,34 @@ fn main() {
         screen_space_pos: glm::zero()
     };
 
+    //Initialize scene data struct
+    let mut scene_data = SceneData::default();
+    scene_data.skybox_program = skybox_program;
+
     //Initialize shadow data
     let cascade_size = 2048;
     let shadow_rendertarget = unsafe { RenderTarget::new_shadow((cascade_size * render::SHADOW_CASCADE_COUNT as GLint, cascade_size)) };
-    let sun_shadow_map = CascadedShadowMap::new(shadow_rendertarget, shadow_program, cascade_size);
+    scene_data.sun_shadow_map = CascadedShadowMap::new(shadow_rendertarget, shadow_program, cascade_size);
+    scene_data.depth_program = shadow_program;
 
-    //Initialize scene data struct
-    let mut scene_data = SceneData::default();
-    scene_data.sun_shadow_map = sun_shadow_map;
-    scene_data.skybox_program = skybox_program;
-
-    let shadow_cascade_distances = {
+    //Computing cascade distances
+    {
         //Manually picking the cascade distances because math is hard
         //The shadow cascade distances are negative bc they apply to view space
-        let mut cascade_distances = [0.0; render::SHADOW_CASCADE_COUNT + 1];
-        cascade_distances[0] = -(render::NEAR_DISTANCE);
-        cascade_distances[1] = -(render::NEAR_DISTANCE + 5.0);
-        cascade_distances[2] = -(render::NEAR_DISTANCE + 15.0);
-        cascade_distances[3] = -(render::NEAR_DISTANCE + 25.0);
-        cascade_distances[4] = -(render::NEAR_DISTANCE + 75.0);
-        cascade_distances[5] = -(render::NEAR_DISTANCE + 125.0);
+        let view_distances = &mut scene_data.sun_shadow_map.view_space_distances;
+        view_distances[0] = -(render::NEAR_DISTANCE);
+        view_distances[1] = -(render::NEAR_DISTANCE + 5.0);
+        view_distances[2] = -(render::NEAR_DISTANCE + 15.0);
+        view_distances[3] = -(render::NEAR_DISTANCE + 25.0);
+        view_distances[4] = -(render::NEAR_DISTANCE + 75.0);
+        view_distances[5] = -(render::NEAR_DISTANCE + 125.0);
 
         //Compute the clip space distances and save them in the scene_data struct
-        for i in 0..cascade_distances.len() {
-            let p = camera.screen_state.get_clipping_from_view() * glm::vec4(0.0, 0.0, cascade_distances[i], 1.0);
+        for i in 0..view_distances.len() {
+            let p = camera.screen_state.get_clipping_from_view() * glm::vec4(0.0, 0.0, view_distances[i], 1.0);
             scene_data.sun_shadow_map.clip_space_distances[i] = p.z;
         }
-
-        cascade_distances
-    };
+    }
 
     scene_data.point_lights_ubo = unsafe {
         //Gen buffer
@@ -1133,24 +1132,26 @@ fn main() {
             }
         }
 
-        //Apply speed limit
-        if world_state.player.tracking_velocity.x > VELOCITY_CAP {
-            world_state.player.tracking_velocity.x = VELOCITY_CAP;
-        }
-        if world_state.player.tracking_velocity.x < -VELOCITY_CAP {
-            world_state.player.tracking_velocity.x = -VELOCITY_CAP;
-        }
-        if world_state.player.tracking_velocity.y > VELOCITY_CAP {
-            world_state.player.tracking_velocity.y = VELOCITY_CAP;
-        }
-        if world_state.player.tracking_velocity.y < -VELOCITY_CAP {
-            world_state.player.tracking_velocity.y = -VELOCITY_CAP;
-        }
-        if world_state.player.tracking_velocity.z > VELOCITY_CAP {
-            world_state.player.tracking_velocity.z = VELOCITY_CAP;
-        }
-        if world_state.player.tracking_velocity.z < -VELOCITY_CAP {
-            world_state.player.tracking_velocity.z = -VELOCITY_CAP;
+        //Apply speed limit to player
+        {
+            if world_state.player.tracking_velocity.x > VELOCITY_CAP {
+                world_state.player.tracking_velocity.x = VELOCITY_CAP;
+            }
+            if world_state.player.tracking_velocity.x < -VELOCITY_CAP {
+                world_state.player.tracking_velocity.x = -VELOCITY_CAP;
+            }
+            if world_state.player.tracking_velocity.y > VELOCITY_CAP {
+                world_state.player.tracking_velocity.y = VELOCITY_CAP;
+            }
+            if world_state.player.tracking_velocity.y < -VELOCITY_CAP {
+                world_state.player.tracking_velocity.y = -VELOCITY_CAP;
+            }
+            if world_state.player.tracking_velocity.z > VELOCITY_CAP {
+                world_state.player.tracking_velocity.z = VELOCITY_CAP;
+            }
+            if world_state.player.tracking_velocity.z < -VELOCITY_CAP {
+                world_state.player.tracking_velocity.z = -VELOCITY_CAP;
+            }
         }
 
         //Totoro update
@@ -1162,20 +1163,22 @@ fn main() {
                 let ai_time = elapsed_time - totoro.state_timer;
                 match totoro.state {
                     TotoroState::Relaxed => {
-                        if ai_time >= 2.0 {
+                        if ai_time >= totoro.state_transition_after {
                             totoro.state_timer = elapsed_time;
                             totoro.state = TotoroState::Meandering;
                             if glm::distance(&totoro.home, &totoro.position) > EPSILON {
                                 totoro.desired_forward = glm::normalize(&(totoro.home - totoro.position));
                                 totoro.desired_forward.z = 0.0;
+                                totoro.state_transition_after = 3.0;
                             }
                         }
                     }
                     TotoroState::Meandering => {
-                        if ai_time >= 3.0 {
+                        if ai_time >= totoro.state_transition_after {
                             totoro.state_timer = elapsed_time;
                             totoro.velocity = glm::vec3(0.0, 0.0, totoro.velocity.z);
                             totoro.state = TotoroState::Relaxed;
+                            totoro.state_transition_after = rand::random::<f32>() * 2.0 + 1.0;
                         } else {
                             //Check if the player is nearby
                             if glm::distance(&world_state.player.tracked_segment.p1, &totoro.position) < totoro_awareness_radius {
@@ -1340,21 +1343,6 @@ fn main() {
                 ClickAction::None => {}
             }            
         }
-
-        //Apply a speed limit to player movement
-        const PLAYER_SPEED_LIMIT: f32 = 20.0;
-        {
-            let player = &mut world_state.player;
-            if player.tracking_velocity.x > PLAYER_SPEED_LIMIT {
-                player.tracking_velocity.x = PLAYER_SPEED_LIMIT;
-            }
-            if player.tracking_velocity.y > PLAYER_SPEED_LIMIT {
-                player.tracking_velocity.y = PLAYER_SPEED_LIMIT;
-            }
-            if player.tracking_velocity.z > PLAYER_SPEED_LIMIT {
-                player.tracking_velocity.z = PLAYER_SPEED_LIMIT;
-            }
-        }
         
         //Update tracking space location
         world_state.player.tracking_position += world_state.player.tracking_velocity * delta_time;
@@ -1404,6 +1392,7 @@ fn main() {
             //Check player capsule against triangle
             const MIN_NORMAL_LIKENESS: f32 = 0.5;
             {
+
                 //Coarse test with sphere
                 let player_sphere = Sphere {
                     focus: midpoint(&(world_state.player.tracked_segment.p0 + glm::vec3(0.0, 0.0, world_state.player.radius)), &world_state.player.tracked_segment.p1),
@@ -1460,24 +1449,29 @@ fn main() {
             }
 
             //Resolve player's attempt to stick to a wall
+
             if let Some(action) = &sticky_action {
+                fn grip_triangle(world_state: &mut WorldState, focus: glm::TVec3<f32>, radius: f32, triangle: &Triangle, triangle_sphere: &Sphere, grab_flag: &mut bool) {
+                    let sphere = Sphere {
+                        focus,
+                        radius: radius
+                    };
+    
+                    if let Some((_, collision_point)) = triangle_sphere_collision_point(&sphere, triangle, triangle_sphere) {
+                        world_state.player.tracking_position += collision_point - sphere.focus;
+                        world_state.player.tracking_velocity = glm::zero();
+                        world_state.player.stick_data = Some(StickData::Left(collision_point));
+                        *grab_flag = true;
+                    }
+                }
+
                 let stick_sphere_radius = 0.05;
                 match action {
                     StickData::Left(focus) => {
                         match world_state.player.stick_data {
                             Some(StickData::Left(_)) => {}
-                            _ => { 
-                                let sphere = Sphere {
-                                    focus: *focus,
-                                    radius: stick_sphere_radius
-                                };
-        
-                                if let Some((_, collision_point)) = triangle_sphere_collision_point(&sphere, &triangle, &triangle_sphere) {
-                                    world_state.player.tracking_position += collision_point - sphere.focus;
-                                    world_state.player.tracking_velocity = glm::zero();
-                                    world_state.player.stick_data = Some(StickData::Left(collision_point));
-                                    left_sticky_grab = true;
-                                }
+                            _ => {
+                                grip_triangle(&mut world_state, *focus, stick_sphere_radius, &triangle, &triangle_sphere, &mut left_sticky_grab);
                             }
                         }
                     }
@@ -1485,17 +1479,7 @@ fn main() {
                         match world_state.player.stick_data {
                             Some(StickData::Right(_)) => {}
                             _ => {
-                                let sphere = Sphere {
-                                    focus: *focus,
-                                    radius: stick_sphere_radius
-                                };
-
-                                if let Some((_, collision_point)) = triangle_sphere_collision_point(&sphere, &triangle, &triangle_sphere) {
-                                    world_state.player.tracking_position += collision_point - sphere.focus;
-                                    world_state.player.tracking_velocity = glm::zero();
-                                    world_state.player.stick_data = Some(StickData::Right(collision_point));                                    
-                                    right_sticky_grab = true;
-                                }
+                                grip_triangle(&mut world_state, *focus, stick_sphere_radius, &triangle, &triangle_sphere, &mut right_sticky_grab);
                             }
                         }
                     }
@@ -1686,7 +1670,7 @@ fn main() {
             
             gl::BindBuffer(gl::UNIFORM_BUFFER, scene_data.point_lights_ubo);
             let mut current_buffer_size = 0;
-            gl::GetBufferParameteriv(gl::ARRAY_BUFFER, gl::BUFFER_SIZE, &mut current_buffer_size);
+            gl::GetBufferParameteriv(gl::UNIFORM_BUFFER, gl::BUFFER_SIZE, &mut current_buffer_size);
     
             if buffer.len() * size_of::<GLfloat>() > current_buffer_size as usize {
                 let mut b = 0;
@@ -1748,6 +1732,7 @@ fn main() {
 
                 //Do visualization radio selection
                 imgui_ui.text(im_str!("Debug visualization options:"));
+                do_radio_button(&imgui_ui, im_str!("Visualize albedo"), &mut scene_data.fragment_flag, FragmentFlag::Albedo);
                 do_radio_button(&imgui_ui, im_str!("Visualize normals"), &mut scene_data.fragment_flag, FragmentFlag::Normals);
                 do_radio_button(&imgui_ui, im_str!("Visualize how shadowed"), &mut scene_data.fragment_flag, FragmentFlag::Shadowed);
                 do_radio_button(&imgui_ui, im_str!("Visualize shadow cascades"), &mut scene_data.fragment_flag, FragmentFlag::CascadeZones);
@@ -2128,7 +2113,7 @@ fn main() {
                                     );
 
                                     //Render the CSM for this eye
-                                    scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, &eye_view_matrix, &perspective);
+                                    scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&scene_data.sun_shadow_map.view_space_distances, &shadow_view, &eye_view_matrix, &perspective);
                                     render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.opaque_entities.as_slice());
     
                                     //Actually rendering
@@ -2159,7 +2144,6 @@ fn main() {
                                         v_mat,
                                         projection
                                     );
-                                    default_framebuffer.bind();
                                     render::main_scene(&default_framebuffer, &scene_data, &view_state);
                                 }
                             }                           
@@ -2216,7 +2200,7 @@ fn main() {
                 //Render shadows
                 let projection = *camera.screen_state.get_clipping_from_view();
                 let v_mat = camera.screen_state.get_view_from_world();
-                scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&shadow_cascade_distances, &shadow_view, v_mat, &projection);
+                scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&scene_data.sun_shadow_map.view_space_distances, &shadow_view, v_mat, &projection);
                 render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.opaque_entities.as_slice());
 
                 //Render main scene
