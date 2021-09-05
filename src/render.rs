@@ -384,7 +384,7 @@ pub unsafe fn main_scene(framebuffer: &Framebuffer, scene_data: &SceneData, view
     gl::BindTexture(gl::TEXTURE_2D, scene_data.sun_shadow_map.rendertarget.texture);
 
     //Bind the skybox sampler
-    gl::ActiveTexture(gl::TEXTURE0 + 4);
+    gl::ActiveTexture(gl::TEXTURE0 + ozy::render::TEXTURE_MAP_COUNT as GLenum + 1);
     gl::BindTexture(gl::TEXTURE_CUBE_MAP, scene_data.skybox_cubemap);
 
     //Depth pre-pass

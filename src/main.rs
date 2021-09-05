@@ -786,7 +786,7 @@ fn main() {
     let mut elapsed_time = 0.0;
 
     //Init audio system
-    let mut bgm_volume = 20.0;
+    let mut bgm_volume = 10.0;
     let (audio_sender, audio_receiver) = mpsc::channel();
     audio::audio_main(audio_receiver, bgm_volume, &config);          //This spawns a thread to run the audio system
 
@@ -1197,8 +1197,11 @@ fn main() {
                         }
                     }
                     TotoroState::Startled => {
-                        let new_forward = glm::normalize(&(world_state.player.tracked_segment.p1 - totoro.position));
-                        totoro.forward = new_forward;
+                        totoro.forward = {
+                            let mut f = world_state.player.tracked_segment.p1 - totoro.position;
+                            f.z = 0.0;
+                            glm::normalize(&f)
+                        };
                         totoro.velocity = glm::vec3(0.0, 0.0, 10.0);
                         totoro.state = TotoroState::Panicking;
                         totoro.state_timer = elapsed_time;
@@ -1277,7 +1280,8 @@ fn main() {
                     //Create Totoro if the ray hit
                     if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
                         let tot = Totoro::new(point, elapsed_time);
-                        world_state.totoros.insert(tot);
+                        let i = world_state.totoros.insert(tot);
+                        world_state.selected_totoro = Some(i);
                     }
                 }
                 ClickAction::SelectObject => {
@@ -1327,7 +1331,8 @@ fn main() {
                                 color: [rand::random(), rand::random(), rand::random()],
                                 power: 3.0
                             };
-                            scene_data.point_lights.insert(light);
+                            let i = scene_data.point_lights.insert(light);
+                            scene_data.selected_point_light = Some(i);
                         }
                     }
                 }
@@ -1557,7 +1562,6 @@ fn main() {
             let mut current_totoro = 0;
             for i in 0..totoros.len() {
                 if let Some(totoro) = &totoros[i] {
-
                     //Directly constructing the rotation matrix bc we get linear algebra
                     let cr = glm::cross(&Z_UP, &totoro.forward);
                     let rotation_mat = glm::mat4(

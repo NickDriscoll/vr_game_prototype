@@ -52,9 +52,6 @@ uniform float shininess_upper_bound = 128.0;
 uniform float shadow_intensity = 0.1;
 uniform float cascade_distances[SHADOW_CASCADES];
 
-//For a given draw call, this will be non-negative if one of the instances is to be highlighted
-uniform int highlighted_idx = -1;
-
 const int MAX_POINT_LIGHTS = 8;
 layout (std140, binding = 0) uniform PointLights {
     vec3 positions[MAX_POINT_LIGHTS];
@@ -88,7 +85,7 @@ float blinn_phong_specular(vec3 view_direction, vec3 light_direction, vec3 norma
     return pow(spec_angle, shininess);
 }
 
-void main() {
+void shade_blinn_phong() {
     //Sample albedo texture
     vec4 albedo_sample = texture(albedo_tex, f_uvs);
     if (visualize_albedo) {
@@ -114,7 +111,7 @@ void main() {
     //Compute diffuse lighting
     float sun_diffuse = lambertian_diffuse(tangent_sun_direction, tangent_space_normal);
 
-    //Determine how shadowed the fragment is
+    //Determine which cascade the fragment is in
     vec4 adj_shadow_space_pos;
     int shadow_cascade = -1;
     float shadow = 0.0;    
@@ -230,4 +227,8 @@ void main() {
     float alpha = albedo_sample.a;
     vec3 final_color = (environment_lighting + point_lights_contribution) * base_color;
     frag_color = vec4(final_color, alpha) + rim_lighting;
+}
+
+void main() {
+    shade_blinn_phong();
 }
