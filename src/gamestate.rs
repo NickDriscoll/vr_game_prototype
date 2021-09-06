@@ -22,7 +22,8 @@ pub struct WorldState {
     pub transparent_terrain_indices: Vec<usize>,     //Indices of the terrain's graphics data in a RenderEntities array
     pub skybox_strings: Vec<ImString>,
     pub level_name: String,
-    pub active_skybox_index: usize
+    pub active_skybox_index: usize,
+    pub delta_timescale: f32
 }
 
 pub struct Player {

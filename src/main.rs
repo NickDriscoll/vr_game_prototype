@@ -693,7 +693,8 @@ fn main() {
             transparent_terrain_indices: Vec::new(),
             skybox_strings: Vec::new(),
             level_name: String::new(),
-            active_skybox_index: 0
+            active_skybox_index: 0,
+            delta_timescale: 1.0
         };
 
         //Load the scene data from the level file
@@ -761,7 +762,7 @@ fn main() {
     let mut is_fullscreen = false;
     let mut wireframe = false;
     let mut true_wireframe = false;
-    let mut click_action = ClickAction::None;
+    let mut click_action = ClickAction::Default;
     let mut hmd_pov = false;
     let mut do_vsync = true;
     let mut do_imgui = true;
@@ -783,7 +784,6 @@ fn main() {
     let mut frame_count = 0;
     let mut last_frame_instant = Instant::now();
     let mut last_xr_render_time = xr::Time::from_nanos(1);
-    let mut elapsed_time = 0.0;
 
     //Init audio system
     let mut bgm_volume = 10.0;
@@ -811,15 +811,13 @@ fn main() {
 			let frame_instant = Instant::now();
 			let dur = frame_instant.duration_since(last_frame_instant);
 			last_frame_instant = frame_instant;
-			let f_dur = dur.as_secs_f32();
-            imgui_io.delta_time = f_dur;
+            imgui_io.delta_time = dur.as_secs_f32();
 
             //Don't allow game objects to have an update delta of more than a thirtieth of a second
-            if f_dur > MAX_DELTA_TIME { MAX_DELTA_TIME }
-            else { f_dur }
+            if imgui_io.delta_time > MAX_DELTA_TIME { MAX_DELTA_TIME }
+            else { imgui_io.delta_time * world_state.delta_timescale }
         };
-        elapsed_time += delta_time;
-        scene_data.current_time = elapsed_time;
+        scene_data.elapsed_time += delta_time;
         frame_count += 1;
         let framerate = imgui_io.framerate;
 
@@ -1160,11 +1158,11 @@ fn main() {
         for i in 0..world_state.totoros.len() {
             if let Some(totoro) = world_state.totoros.get_mut_element(i) {
                 //Do behavior based on AI state
-                let ai_time = elapsed_time - totoro.state_timer;
+                let ai_time = scene_data.elapsed_time - totoro.state_timer;
                 match totoro.state {
                     TotoroState::Relaxed => {
                         if ai_time >= totoro.state_transition_after {
-                            totoro.state_timer = elapsed_time;
+                            totoro.state_timer = scene_data.elapsed_time;
                             totoro.state = TotoroState::Meandering;
                             if glm::distance(&totoro.home, &totoro.position) > EPSILON {
                                 totoro.desired_forward = glm::normalize(&(totoro.home - totoro.position));
@@ -1175,7 +1173,7 @@ fn main() {
                     }
                     TotoroState::Meandering => {
                         if ai_time >= totoro.state_transition_after {
-                            totoro.state_timer = elapsed_time;
+                            totoro.state_timer = scene_data.elapsed_time;
                             totoro.velocity = glm::vec3(0.0, 0.0, totoro.velocity.z);
                             totoro.state = TotoroState::Relaxed;
                             totoro.state_transition_after = rand::random::<f32>() * 2.0 + 1.0;
@@ -1204,7 +1202,7 @@ fn main() {
                         };
                         totoro.velocity = glm::vec3(0.0, 0.0, 10.0);
                         totoro.state = TotoroState::Panicking;
-                        totoro.state_timer = elapsed_time;
+                        totoro.state_timer = scene_data.elapsed_time;
                     }
                     TotoroState::Panicking => {
                         if ai_time >= 0.25 {
@@ -1244,7 +1242,7 @@ fn main() {
         }
 
         let camera_velocity = camera.speed * glm::vec4_to_vec3(&(glm::affine_inverse(*camera.screen_state.get_view_from_world()) * glm::vec3_to_vec4(&camera.view_space_velocity)));
-        camera.position += camera_velocity * delta_time;
+        camera.position += camera_velocity * delta_time / world_state.delta_timescale;
 
         //Do click action
         if !imgui_wants_mouse && mouse.clicked && (!mouse.was_clicked || turbo_clicking) {
@@ -1258,7 +1256,7 @@ fn main() {
                 }
             }
 
-            let get_clicked_closure = |click_ray: &Ray| {
+            let mut get_clicked_closure = |click_ray: &Ray| {
                 let mut r_t = f32::INFINITY;
                 let mut r_i = None;
                 let mut f = None;
@@ -1267,6 +1265,9 @@ fn main() {
                 check_hit_info(tot_hit_info, &mut r_t, &mut r_i, &mut f, 0);
                 let light_hit_info = get_clicked_object(&scene_data.point_lights, click_ray);
                 check_hit_info(light_hit_info, &mut r_t, &mut r_i, &mut f, 1);
+
+                world_state.selected_totoro = None;
+                scene_data.selected_point_light = None;
 
                 (f, r_i)
             };
@@ -1279,24 +1280,9 @@ fn main() {
                 ClickAction::CreateTotoro => {
                     //Create Totoro if the ray hit
                     if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
-                        let tot = Totoro::new(point, elapsed_time);
+                        let tot = Totoro::new(point, scene_data.elapsed_time);
                         let i = world_state.totoros.insert(tot);
                         world_state.selected_totoro = Some(i);
-                    }
-                }
-                ClickAction::SelectObject => {
-                    match get_clicked_closure(&click_ray) {
-                        (Some(f), Some(idx)) => {
-                            match f {
-                                0 => { world_state.selected_totoro = Some(idx); }
-                                1 => { scene_data.selected_point_light = Some(idx); }
-                                _ => {}
-                            }
-                        }
-                        _ => {
-                            world_state.selected_totoro = None;
-                            scene_data.selected_point_light = None;
-                        }
                     }
                 }
                 ClickAction::DeleteObject => {
@@ -1345,7 +1331,18 @@ fn main() {
                         }
                     }
                 }
-                ClickAction::None => {}
+                ClickAction::Default => {
+                    match get_clicked_closure(&click_ray) {
+                        (Some(f), Some(idx)) => {
+                            match f {
+                                0 => { world_state.selected_totoro = Some(idx); }
+                                1 => { scene_data.selected_point_light = Some(idx); }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                }
             }            
         }
         
@@ -1715,7 +1712,7 @@ fn main() {
             let drag_speed = 0.02;
             let win = imgui::Window::new(im_str!("Hacking window"));
             if let Some(win_token) = win.begin(&imgui_ui) {
-                imgui_ui.text(im_str!("Frametime: {:.2}ms\tFPS: {:.2}\tFrame: {}", delta_time * 1000.0, framerate, frame_count));
+                imgui_ui.text(im_str!("Frametime: {:.2}ms\tFPS: {:.2}\tFrame: {}", delta_time * 1000.0 / world_state.delta_timescale, framerate, frame_count));
                 imgui_ui.text(im_str!("Totoros spawned: {}", world_state.totoros.count()));
                 imgui_ui.text(im_str!("Point lights count: {}/{}", scene_data.point_lights.count(), render::MAX_POINT_LIGHTS));
                 imgui_ui.checkbox(im_str!("Wireframe view"), &mut wireframe);
@@ -1754,7 +1751,6 @@ fn main() {
                 imgui_ui.text(im_str!("Click action"));
                 do_radio_button(&imgui_ui, im_str!("Create totoro"), &mut click_action, ClickAction::CreateTotoro);
                 do_radio_button(&imgui_ui, im_str!("Create light source"), &mut click_action, ClickAction::CreatePointLight);
-                do_radio_button(&imgui_ui, im_str!("Select object"), &mut click_action, ClickAction::SelectObject);
                 do_radio_button(&imgui_ui, im_str!("Delete object"), &mut click_action, ClickAction::DeleteObject);
                 do_radio_button(&imgui_ui, im_str!("Move player spawn"), &mut click_action, ClickAction::MovePlayerSpawn);
                 imgui_ui.separator();
@@ -1806,6 +1802,8 @@ fn main() {
                 }
 
                 imgui_ui.separator();
+
+                Slider::new(im_str!("Timescale")).range(RangeInclusive::new(0.000001, 10.0)).build(&imgui_ui, &mut world_state.delta_timescale);
                 
                 //Reset player position button
                 if let Some(_) = &xr_instance {
@@ -1966,7 +1964,7 @@ fn main() {
                     imgui::Drag::new(im_str!("Z")).speed(drag_speed).build(&imgui_ui, &mut tot.position.z);
                     imgui_ui.text(im_str!("Velocity ({:.3}, {:.3}, {:.3})", tot.velocity.x, tot.velocity.y, tot.velocity.z));
                     imgui_ui.text(im_str!("AI state: {:?}", tot.state));
-                    imgui_ui.text(im_str!("AI timer state: {}", elapsed_time - tot.state_timer));
+                    imgui_ui.text(im_str!("AI timer state: {}", scene_data.elapsed_time - tot.state_timer));
                             
                     imgui_ui.separator();
                     imgui::Slider::new(im_str!("Scale")).range(RangeInclusive::new(0.1, 4.0)).build(&imgui_ui, &mut tot.scale);

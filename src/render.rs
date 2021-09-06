@@ -292,7 +292,7 @@ pub struct SceneData {
     pub sun_shadow_map: CascadedShadowMap,
     pub shadow_intensity: f32,
     pub ambient_strength: f32,
-    pub current_time: f32,
+    pub elapsed_time: f32,
     pub point_lights: OptionVec<PointLight>,
     pub point_lights_ubo: GLuint,
     pub selected_point_light: Option<usize>,
@@ -329,7 +329,7 @@ impl Default for SceneData {
             shadow_intensity: 1.0,
             ambient_strength: 0.2,
             sun_shadow_map,
-            current_time: 0.0,
+            elapsed_time: 0.0,
             point_lights: OptionVec::new(),
             point_lights_ubo: 0,
             selected_point_light: None,
@@ -431,7 +431,7 @@ pub unsafe fn main_scene(framebuffer: &Framebuffer, scene_data: &SceneData, view
 
 unsafe fn render_entity(entity: &RenderEntity, program: GLuint, scene_data: &SceneData, view_data: &ViewData) {
     
-    let texture_sampler_names = ["albedo_tex", "normal_tex", "roughness_tex", "shadow_map"];
+    let texture_sampler_names = ["albedo_sampler", "normal_sampler", "roughness_sampler", "shadow_map"];
 
     let p = program;
     gl::UseProgram(p);
@@ -445,7 +445,7 @@ unsafe fn render_entity(entity: &RenderEntity, program: GLuint, scene_data: &Sce
     glutil::bind_vector3(p, "sun_direction", &scene_data.sun_direction);
     glutil::bind_float(p, "ambient_strength", scene_data.ambient_strength);
     glutil::bind_float(p, "shadow_intensity", scene_data.shadow_intensity);
-    glutil::bind_float(p, "current_time", scene_data.current_time);
+    glutil::bind_float(p, "current_time", scene_data.elapsed_time);
     glutil::bind_int(p, "complex_normals", scene_data.complex_normals as GLint);
     glutil::bind_int(p, "point_lights_count", scene_data.point_lights.count() as GLint);
     glutil::bind_float_array(p, "cascade_distances", &scene_data.sun_shadow_map.clip_space_distances[1..]);

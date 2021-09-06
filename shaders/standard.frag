@@ -29,9 +29,9 @@ out vec4 frag_color;
 uniform float current_time;
 
 //Material textures
-uniform sampler2D albedo_tex;
-uniform sampler2D normal_tex;
-uniform sampler2D roughness_tex;
+uniform sampler2D albedo_sampler;
+uniform sampler2D normal_sampler;
+uniform sampler2D roughness_sampler;
 
 uniform sampler2D shadow_map;                       //Shadow map texture
 uniform vec3 view_position;                         //World space position of the camera
@@ -75,9 +75,7 @@ float determine_shadowed(vec3 f_shadow_pos, vec3 tan_normal, int cascade) {
     return sampled_depth + bias < f_shadow_pos.z ? 1.0 : 0.0;
 }
 
-float lambertian_diffuse(vec3 light_direction, vec3 normal) {
-    return max(0.0, dot(light_direction, normal));
-}
+float lambertian_diffuse(vec3 light_direction, vec3 normal) { return max(0.0, dot(light_direction, normal)); }
 
 float blinn_phong_specular(vec3 view_direction, vec3 light_direction, vec3 normal, float shininess) {
     vec3 halfway = normalize(view_direction + light_direction);
@@ -85,9 +83,57 @@ float blinn_phong_specular(vec3 view_direction, vec3 light_direction, vec3 norma
     return pow(spec_angle, shininess);
 }
 
+//Returns the shadow space position as a vec4 where alpha is the shadow cascade index
+vec4 determine_shadow_cascade() {
+    //Determine which cascade the fragment is in
+    vec3 adj_shadow_space_pos;
+    int shadow_cascade = -1;
+    for (int i = 0; i < SHADOW_CASCADES; i++) {
+        if (clip_space_z < cascade_distances[i]) {
+            adj_shadow_space_pos = vec3(shadow_space_pos[i] * 0.5 + 0.5);
+            if (!(
+                adj_shadow_space_pos.z < 0.0 ||
+                adj_shadow_space_pos.z > 1.0 ||
+                adj_shadow_space_pos.x < 0.0 ||
+                adj_shadow_space_pos.x > 1.0 ||
+                adj_shadow_space_pos.y < 0.0 ||
+                adj_shadow_space_pos.y > 1.0
+            )) {
+                shadow_cascade = i;
+            }
+            break;
+        }
+    }
+    return vec4(adj_shadow_space_pos, shadow_cascade);
+}
+
+float cascaded_shadow_factor(vec3 adj_shadow_space_pos, int shadow_cascade, vec3 normal) {
+    //Compute how shadowed if we are potentially shadowed
+    float shadow = 0.0;
+    if (shadow_cascade > -1) {
+        if (true) {
+            //Do PCF
+            //Average the 3x3 block of shadow texels centered at this pixel
+            int bound = 1;
+            vec2 texel_size = 1.0 / textureSize(shadow_map, 0);
+            for (int x = -bound; x <= bound; x++) {
+                for (int y = -bound; y <= bound; y++) {
+                    shadow += determine_shadowed(vec3(adj_shadow_space_pos.xy + vec2(x, y) * texel_size, adj_shadow_space_pos.z), normal, shadow_cascade);
+                }
+            }
+            float s = 2.0 * bound + 1.0;
+            shadow /= s * s; //Total number of texels sampled: (2*bound + 1)^2
+        } else {
+            shadow = determine_shadowed(adj_shadow_space_pos.xyz, normal, shadow_cascade);
+        }
+    }
+    shadow *= shadow_intensity;
+    return 1.0 - shadow;
+}
+
 void shade_blinn_phong() {
     //Sample albedo texture
-    vec4 albedo_sample = texture(albedo_tex, f_uvs);
+    vec4 albedo_sample = texture(albedo_sampler, f_uvs);
     if (visualize_albedo) {
         frag_color = albedo_sample;
         return;
@@ -96,7 +142,7 @@ void shade_blinn_phong() {
     //Compute this frag's tangent space normal
     vec3 tangent_space_normal;
     if (complex_normals) {
-        vec3 sampled_normal = texture(normal_tex, f_uvs).xyz;
+        vec3 sampled_normal = texture(normal_sampler, f_uvs).xyz;
         tangent_space_normal = normalize(sampled_normal * 2.0 - 1.0);
     } else {
         tangent_space_normal = vec3(0.0, 0.0, 1.0);
@@ -111,47 +157,11 @@ void shade_blinn_phong() {
     //Compute diffuse lighting
     float sun_diffuse = lambertian_diffuse(tangent_sun_direction, tangent_space_normal);
 
-    //Determine which cascade the fragment is in
-    vec4 adj_shadow_space_pos;
-    int shadow_cascade = -1;
-    float shadow = 0.0;    
-    for (int i = 0; i < SHADOW_CASCADES; i++) {
-        if (clip_space_z < cascade_distances[i]) {
-            adj_shadow_space_pos = shadow_space_pos[i] * 0.5 + 0.5;
-            if (!(
-                adj_shadow_space_pos.z < 0.0 ||
-                adj_shadow_space_pos.z > 1.0 ||
-                adj_shadow_space_pos.x < 0.0 ||
-                adj_shadow_space_pos.x > 1.0 ||
-                adj_shadow_space_pos.y < 0.0 ||
-                adj_shadow_space_pos.y > 1.0
-            )) {
-                shadow_cascade = i;
-            }
-            break;
-        }
-    }
-
-    //Compute how shadowed if we are potentially shadowed
-    if (shadow_cascade > -1) {
-        if (true) {
-            //Do PCF
-            //Average the 3x3 block of shadow texels centered at this pixel
-            int bound = 1;
-            vec2 texel_size = 1.0 / textureSize(shadow_map, 0);
-            for (int x = -bound; x <= bound; x++) {
-                for (int y = -bound; y <= bound; y++) {
-                    shadow += determine_shadowed(vec3(adj_shadow_space_pos.xy + vec2(x, y) * texel_size, adj_shadow_space_pos.z), tangent_space_normal, shadow_cascade);
-                }
-            }
-            float s = (2.0 * bound) + 1;
-            shadow /= s * s; //Total number of texels sampled: (2*bound + 1)^2
-        } else {
-            shadow = determine_shadowed(adj_shadow_space_pos.xyz, tangent_space_normal, shadow_cascade);
-        }
-    }
-    shadow *= shadow_intensity;
-    float shadow_factor = 1.0 - shadow;
+    //Compute sun shadow factor
+    vec4 cascade_res = determine_shadow_cascade();
+    vec3 adj_shadow_space_pos = cascade_res.xyz;
+    int shadow_cascade = int(cascade_res.a);
+    float shadow_factor = cascaded_shadow_factor(adj_shadow_space_pos, shadow_cascade, tangent_space_normal);
 
     if (visualize_cascade_zone) {
         if (shadow_cascade == 0) {
@@ -168,12 +178,12 @@ void shade_blinn_phong() {
 
     //Early exit for shadow visualization
     if (visualize_shadowed) {
-        frag_color = vec4(vec3(shadow), 1.0);
+        frag_color = vec4(vec3(shadow_factor), 1.0);
         return;
     }
 
     //Roughness is a [0, 1] value that gets mapped to [shininess_upper_bound, shininess_lower_bound]
-    float roughness = texture(roughness_tex, f_uvs).x;
+    float roughness = texture(roughness_sampler, f_uvs).x;
     float f_shininess = (1.0 - roughness) * (shininess_upper_bound - shininess_lower_bound) + shininess_lower_bound;
 
     //Compute specular light w/ blinn-phong
@@ -229,6 +239,43 @@ void shade_blinn_phong() {
     frag_color = vec4(final_color, alpha) + rim_lighting;
 }
 
+void shade_toon() {
+    vec4 albedo_sample = texture(albedo_sampler, f_uvs);
+    vec3 tangent_space_normal = vec3(0.0, 0.0, 1.0);
+    vec3 tangent_view_direction = normalize(tangent_view_position - f_tan_pos);
+
+    float raw_diffuse = lambertian_diffuse(tangent_sun_direction, tangent_space_normal);
+    float toon_diffuse = smoothstep(0.45, 0.55, raw_diffuse);
+
+    //Roughness is a [0, 1] value that gets mapped to [shininess_upper_bound, shininess_lower_bound]
+    float roughness = texture(roughness_sampler, f_uvs).x;
+    float f_shininess = (1.0 - roughness) * (shininess_upper_bound - shininess_lower_bound) + shininess_lower_bound;
+    
+    float toon_specular = 0.0;
+    if (f_shininess > 5.0) {
+        float raw_specular = blinn_phong_specular(tangent_view_direction, tangent_sun_direction, tangent_space_normal, f_shininess);
+        float toon_specular = smoothstep(0.8, 0.9, raw_specular);
+    }
+
+    //Compute sun shadow factor
+    vec4 cascade_res = determine_shadow_cascade();
+    vec3 adj_shadow_space_pos = cascade_res.xyz;
+    int shadow_cascade = int(cascade_res.a);
+    float shadow_factor = cascaded_shadow_factor(adj_shadow_space_pos, shadow_cascade, tangent_space_normal);
+
+    //Optionally add rim-lighting
+    vec4 rim_lighting = vec4(0.0);
+    if (f_highlighted != 0.0) {
+        float likeness = 1.0 - max(0.0, dot(tangent_view_direction, tangent_space_normal));
+        float factor = smoothstep(0.5, 1.0, likeness);
+        rim_lighting = vec4(factor * vec3(cos(5.0 * current_time) * 0.5 + 0.5, sin(6.0 * current_time) * 0.5 + 0.5, sin(8.0 * current_time) * 0.5 + 0.5), 1.0);
+    }
+
+    vec3 color = albedo_sample.rgb * ((toon_diffuse + toon_specular) * shadow_factor + ambient_strength) * sun_color;
+    frag_color = vec4(color, 1.0) + rim_lighting;
+}
+
 void main() {
     shade_blinn_phong();
+    //shade_toon();
 }
