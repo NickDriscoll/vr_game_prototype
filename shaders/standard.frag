@@ -44,6 +44,7 @@ uniform bool visualize_albedo = false;
 uniform bool visualize_normals = false;
 uniform bool visualize_shadowed = false;
 uniform bool visualize_cascade_zone = false;
+uniform bool toon_shading = false;
 
 uniform vec3 sun_color = vec3(1.0, 1.0, 1.0);
 uniform float ambient_strength = 0.0;
@@ -243,6 +244,12 @@ void shade_toon() {
     vec4 albedo_sample = texture(albedo_sampler, f_uvs);
     vec3 tangent_space_normal = vec3(0.0, 0.0, 1.0);
     vec3 tangent_view_direction = normalize(tangent_view_position - f_tan_pos);
+    
+    //Compute this frag's tangent space normal
+    if (complex_normals) {
+        vec3 sampled_normal = texture(normal_sampler, f_uvs).xyz;
+        tangent_space_normal = normalize(sampled_normal * 2.0 - 1.0);
+    }
 
     float raw_diffuse = lambertian_diffuse(tangent_sun_direction, tangent_space_normal);
     float toon_diffuse = smoothstep(0.45, 0.55, raw_diffuse);
@@ -252,16 +259,37 @@ void shade_toon() {
     float f_shininess = (1.0 - roughness) * (shininess_upper_bound - shininess_lower_bound) + shininess_lower_bound;
     
     float toon_specular = 0.0;
-    if (f_shininess > 5.0) {
-        float raw_specular = blinn_phong_specular(tangent_view_direction, tangent_sun_direction, tangent_space_normal, f_shininess);
-        float toon_specular = smoothstep(0.8, 0.9, raw_specular);
-    }
+    float raw_specular = blinn_phong_specular(tangent_view_direction, tangent_sun_direction, tangent_space_normal, f_shininess);
+    toon_specular = smoothstep(0.8, 0.9, raw_specular);
 
     //Compute sun shadow factor
     vec4 cascade_res = determine_shadow_cascade();
     vec3 adj_shadow_space_pos = cascade_res.xyz;
     int shadow_cascade = int(cascade_res.a);
     float shadow_factor = cascaded_shadow_factor(adj_shadow_space_pos, shadow_cascade, tangent_space_normal);
+
+    //Compute lighting from point lights
+    /*
+    vec3 point_lights_contribution = vec3(0.0);
+    for (int i = 0; i < point_lights_count; i++) {
+        //Unpack the radius
+        int r_idx = i / 4;
+        float rs[4] = {point_lights.radii[r_idx].x, point_lights.radii[r_idx].y, point_lights.radii[r_idx].z, point_lights.radii[r_idx].w};
+        float radius = rs[i % 4];
+
+        vec3 light_color = point_lights.colors[i];
+        vec3 tangent_light_direction = tangent_from_world * (point_lights.positions[i] - f_world_pos);
+        float dist = length(tangent_light_direction);
+        tangent_light_direction = normalize(tangent_light_direction);
+
+        float diffuse = lambertian_diffuse(tangent_light_direction, tangent_space_normal);
+        float toon_diffuse = smoothstep(0.45, 0.55, diffuse);
+        float specular = blinn_phong_specular(tangent_view_direction, tangent_light_direction, tangent_space_normal, f_shininess);
+        float toon_specular = smoothstep(0.8, 0.9, specular);
+
+        point_lights_contribution += light_color * (toon_diffuse + toon_specular) * (radius * radius / (dist * dist + 0.01));
+    }
+    */
 
     //Optionally add rim-lighting
     vec4 rim_lighting = vec4(0.0);
@@ -276,6 +304,9 @@ void shade_toon() {
 }
 
 void main() {
-    shade_blinn_phong();
-    //shade_toon();
+    if (toon_shading) {
+        shade_toon();
+    } else {
+        shade_blinn_phong();
+    }
 }

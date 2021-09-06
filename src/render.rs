@@ -278,6 +278,7 @@ impl Spherical for PointLight {
 pub struct SceneData {
     pub fragment_flag: FragmentFlag,
     pub complex_normals: bool,
+    pub toon_shading: bool,
     pub skybox_cubemap: GLuint,
     pub skybox_vao: GLuint,
     pub skybox_program: GLuint,
@@ -315,6 +316,7 @@ impl Default for SceneData {
         SceneData {
             fragment_flag: FragmentFlag::Default,
             complex_normals: true,
+            toon_shading: true,
             skybox_cubemap: 0,
             skybox_vao: ozy::prims::skybox_cube_vao(),
             skybox_program: 0,
@@ -447,6 +449,7 @@ unsafe fn render_entity(entity: &RenderEntity, program: GLuint, scene_data: &Sce
     glutil::bind_float(p, "shadow_intensity", scene_data.shadow_intensity);
     glutil::bind_float(p, "current_time", scene_data.elapsed_time);
     glutil::bind_int(p, "complex_normals", scene_data.complex_normals as GLint);
+    glutil::bind_int(p, "toon_shading", scene_data.toon_shading as GLint);
     glutil::bind_int(p, "point_lights_count", scene_data.point_lights.count() as GLint);
     glutil::bind_float_array(p, "cascade_distances", &scene_data.sun_shadow_map.clip_space_distances[1..]);
     glutil::bind_matrix4(p, "view_projection", &view_data.view_projection);
