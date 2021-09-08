@@ -67,8 +67,8 @@ vec4 simple_diffuse(vec3 color, float diffuse, float ambient) {
 }
 
 float determine_shadowed(vec3 f_shadow_pos, vec3 tan_normal, int cascade) {
-    //float bias = 0.0025;
-    float bias = 0.0025 * (1.0 - max(0.0, dot(tan_normal, tangent_sun_direction)));
+    float bias = 0.0025;
+    //float bias = 0.0025 * (1.0 - max(0.0, dot(tan_normal, tangent_sun_direction)));
     vec2 sample_uv = f_shadow_pos.xy;
     sample_uv.x = sample_uv.x * SHADOW_CASCADES_RECIPROCAL;
     sample_uv.x += cascade * SHADOW_CASCADES_RECIPROCAL;
@@ -249,19 +249,19 @@ void shade_toon() {
         return;
     }
 
+    //Compute this frag's tangent space normal
     vec3 tangent_space_normal = vec3(0.0, 0.0, 1.0);
+    if (complex_normals) {
+        vec3 sampled_normal = texture(normal_sampler, f_uvs).xyz;
+        tangent_space_normal = normalize(sampled_normal * 2.0 - 1.0);
+    }
+
     vec3 tangent_view_direction = normalize(tangent_view_position - f_tan_pos);
     
     //Early exit if we're visualizing normals
     if (visualize_normals) {
         frag_color = vec4(tangent_space_normal * 0.5 + 0.5, 1.0);
         return;
-    }
-    
-    //Compute this frag's tangent space normal
-    if (complex_normals) {
-        vec3 sampled_normal = texture(normal_sampler, f_uvs).xyz;
-        tangent_space_normal = normalize(sampled_normal * 2.0 - 1.0);
     }
 
     //Diffuse contribution from the sun
@@ -270,9 +270,10 @@ void shade_toon() {
     //Roughness is a [0, 1] value that gets mapped to [shininess_upper_bound, shininess_lower_bound]
     float roughness = texture(roughness_sampler, f_uvs).x;
     float f_shininess = (1.0 - roughness) * (shininess_upper_bound - shininess_lower_bound) + shininess_lower_bound;
+    float specular_switch = roughness > 0.95 ? 0.0 : 1.0;
     
     //Specular contribution from the sun
-    float sun_specular = toon_specular(tangent_view_direction, tangent_sun_direction, tangent_space_normal, f_shininess);
+    float sun_specular = specular_switch * toon_specular(tangent_view_direction, tangent_sun_direction, tangent_space_normal, f_shininess);
 
     //Compute sun shadow factor
     vec4 cascade_res = determine_shadow_cascade();
@@ -313,7 +314,7 @@ void shade_toon() {
         tangent_light_direction = normalize(tangent_light_direction);
 
         float diffuse = toon_diffuse(tangent_light_direction, tangent_space_normal);
-        float specular = toon_specular(tangent_view_direction, tangent_light_direction, tangent_space_normal, f_shininess);
+        float specular = specular_switch * toon_specular(tangent_view_direction, tangent_light_direction, tangent_space_normal, f_shininess);
 
         point_lights_contribution += light_color * (diffuse + specular) * (radius * radius / (dist * dist + 0.01));
     }
