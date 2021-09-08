@@ -37,6 +37,10 @@ pub struct Camera {
     pub screen_state: ScreenState
 }
 
+impl Camera {
+    
+}
+
 #[derive(PartialEq, Eq)]
 enum TokenType {
     Int,

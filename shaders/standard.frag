@@ -77,12 +77,14 @@ float determine_shadowed(vec3 f_shadow_pos, vec3 tan_normal, int cascade) {
 }
 
 float lambertian_diffuse(vec3 light_direction, vec3 normal) { return max(0.0, dot(light_direction, normal)); }
+float toon_diffuse(vec3 light_direction, vec3 normal) { return smoothstep(0.45, 0.55, lambertian_diffuse(light_direction, normal)); }
 
 float blinn_phong_specular(vec3 view_direction, vec3 light_direction, vec3 normal, float shininess) {
     vec3 halfway = normalize(view_direction + light_direction);
     float spec_angle = max(0.0, dot(halfway, normal));
     return pow(spec_angle, shininess);
 }
+float toon_specular(vec3 view_direction, vec3 light_direction, vec3 normal, float shininess) { return smoothstep(0.8, 0.9, blinn_phong_specular(view_direction, light_direction, normal, shininess)); }
 
 //Returns the shadow space position as a vec4 where alpha is the shadow cascade index
 vec4 determine_shadow_cascade() {
@@ -242,8 +244,19 @@ void shade_blinn_phong() {
 
 void shade_toon() {
     vec4 albedo_sample = texture(albedo_sampler, f_uvs);
+    if (visualize_albedo) {
+        frag_color = albedo_sample;
+        return;
+    }
+
     vec3 tangent_space_normal = vec3(0.0, 0.0, 1.0);
     vec3 tangent_view_direction = normalize(tangent_view_position - f_tan_pos);
+    
+    //Early exit if we're visualizing normals
+    if (visualize_normals) {
+        frag_color = vec4(tangent_space_normal * 0.5 + 0.5, 1.0);
+        return;
+    }
     
     //Compute this frag's tangent space normal
     if (complex_normals) {
@@ -251,16 +264,15 @@ void shade_toon() {
         tangent_space_normal = normalize(sampled_normal * 2.0 - 1.0);
     }
 
-    float raw_diffuse = lambertian_diffuse(tangent_sun_direction, tangent_space_normal);
-    float toon_diffuse = smoothstep(0.45, 0.55, raw_diffuse);
+    //Diffuse contribution from the sun
+    float sun_diffuse = toon_diffuse(tangent_sun_direction, tangent_space_normal);
 
     //Roughness is a [0, 1] value that gets mapped to [shininess_upper_bound, shininess_lower_bound]
     float roughness = texture(roughness_sampler, f_uvs).x;
     float f_shininess = (1.0 - roughness) * (shininess_upper_bound - shininess_lower_bound) + shininess_lower_bound;
     
-    float toon_specular = 0.0;
-    float raw_specular = blinn_phong_specular(tangent_view_direction, tangent_sun_direction, tangent_space_normal, f_shininess);
-    toon_specular = smoothstep(0.8, 0.9, raw_specular);
+    //Specular contribution from the sun
+    float sun_specular = toon_specular(tangent_view_direction, tangent_sun_direction, tangent_space_normal, f_shininess);
 
     //Compute sun shadow factor
     vec4 cascade_res = determine_shadow_cascade();
@@ -268,8 +280,26 @@ void shade_toon() {
     int shadow_cascade = int(cascade_res.a);
     float shadow_factor = cascaded_shadow_factor(adj_shadow_space_pos, shadow_cascade, tangent_space_normal);
 
+    if (visualize_cascade_zone) {
+        if (shadow_cascade == 0) {
+            frag_color = simple_diffuse(LOD_COLOR0, sun_diffuse * shadow_factor, ambient_strength);
+        } else if (shadow_cascade == 1) {
+            frag_color = simple_diffuse(LOD_COLOR1, sun_diffuse * shadow_factor, ambient_strength);
+        } else if (shadow_cascade == 2) {
+            frag_color = simple_diffuse(LOD_COLOR2, sun_diffuse * shadow_factor, ambient_strength);
+        } else if (shadow_cascade == 3) {
+            frag_color = simple_diffuse(LOD_COLOR3, sun_diffuse * shadow_factor, ambient_strength);
+        }
+        return;
+    }
+
+    //Early exit for shadow visualization
+    if (visualize_shadowed) {
+        frag_color = vec4(vec3(shadow_factor), 1.0);
+        return;
+    }
+
     //Compute lighting from point lights
-    /*
     vec3 point_lights_contribution = vec3(0.0);
     for (int i = 0; i < point_lights_count; i++) {
         //Unpack the radius
@@ -282,14 +312,11 @@ void shade_toon() {
         float dist = length(tangent_light_direction);
         tangent_light_direction = normalize(tangent_light_direction);
 
-        float diffuse = lambertian_diffuse(tangent_light_direction, tangent_space_normal);
-        float toon_diffuse = smoothstep(0.45, 0.55, diffuse);
-        float specular = blinn_phong_specular(tangent_view_direction, tangent_light_direction, tangent_space_normal, f_shininess);
-        float toon_specular = smoothstep(0.8, 0.9, specular);
+        float diffuse = toon_diffuse(tangent_light_direction, tangent_space_normal);
+        float specular = toon_specular(tangent_view_direction, tangent_light_direction, tangent_space_normal, f_shininess);
 
-        point_lights_contribution += light_color * (toon_diffuse + toon_specular) * (radius * radius / (dist * dist + 0.01));
+        point_lights_contribution += light_color * (diffuse + specular) * (radius * radius / (dist * dist + 0.01));
     }
-    */
 
     //Optionally add rim-lighting
     vec4 rim_lighting = vec4(0.0);
@@ -299,8 +326,9 @@ void shade_toon() {
         rim_lighting = vec4(factor * vec3(cos(5.0 * current_time) * 0.5 + 0.5, sin(6.0 * current_time) * 0.5 + 0.5, sin(8.0 * current_time) * 0.5 + 0.5), 1.0);
     }
 
-    vec3 color = albedo_sample.rgb * ((toon_diffuse + toon_specular) * shadow_factor + ambient_strength) * sun_color;
-    frag_color = vec4(color, 1.0) + rim_lighting;
+    vec3 sun_total = sun_color * ((sun_diffuse + sun_specular) * shadow_factor + ambient_strength);
+    vec3 color = albedo_sample.rgb * (sun_total + point_lights_contribution);
+    frag_color = vec4(color, albedo_sample.a) + rim_lighting;
 }
 
 void main() {

@@ -44,7 +44,7 @@ fn set_linearized_gain(ctxt: &alto::Context, linear_gain: f32) {
 //Main function for the audio system
 pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, config: &Configuration) {
     //Allocation is necessary here because we are moving this into another thread
-    let default_bgm = match config.string_options.get(Configuration::MUSIC_NAME) {
+    let mut bgm_path = match config.string_options.get(Configuration::MUSIC_NAME) {
         Some(path) => { String::from(path) }
         None => { String::from(DEFAULT_BGM_PATH) }
     }; 
@@ -90,7 +90,7 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
 
 
         //Initialize the mp3 decoder with the default bgm
-        let mut decoder = load_decoder(&default_bgm);
+        let mut decoder = load_decoder(&bgm_path);
         let mut bgm_source = alto_context.new_streaming_source().unwrap();
         let mut playing_bgm = true;
         loop {
@@ -105,9 +105,10 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                     AudioCommand::SelectNewBGM => {
                         bgm_source.pause();
                         match tfd::open_file_dialog("Choose bgm", "music/", Some((&["*.mp3"], "mp3 files (*.mp3)"))) {
-                            Some(bgm_path) => {
+                            Some(path) => {
                                 bgm_source.stop();
-                                decoder = load_decoder(&bgm_path);
+                                decoder = load_decoder(&path);
+                                bgm_path = path;
                             
                                 //Clear out any residual sound data from the old mp3
                                 bgm_source = alto_context.new_streaming_source().unwrap();
@@ -118,10 +119,11 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                     }
                     AudioCommand::RestartBGM => {
                         bgm_source.pause();
-                        if let Some(decoder) = &mut decoder {
-                            bgm_source.stop();                            
-                            decoder.reader_mut().seek(SeekFrom::Start(0)).unwrap();
-                            //playing_bgm = true;
+                        if let Some(dec) = &mut decoder {
+                            bgm_source.stop();
+                            decoder = load_decoder(&bgm_path);
+                            //dec.reader_mut().seek(SeekFrom::Start(0)).unwrap();
+                            playing_bgm = true;
                         }
                     }
                     AudioCommand::PlayPause => {
@@ -181,7 +183,7 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                         Err(e) => {
                             match e {
                                 mp3::Error::Eof => {
-                                    println!("Looping the mp3");
+                                    println!("Looping the bgm");
                                     decoder.reader_mut().seek(SeekFrom::Start(0)).unwrap();
                                 }
                                 _ => { println!("Error decoding mp3 frame: {}", e); }

@@ -330,9 +330,10 @@ fn main() {
         None => { glfw.window_hint(glfw::WindowHint::ContextVersion(4, 3)); }
     }
 
-    //Camera state    
+    //Camera state
+    let default_camera_position = glm::vec3(0.0, -8.0, 5.5);
     let mut camera = {
-        let position = glm::vec3(0.0, -8.0, 5.5);
+        let position = default_camera_position;
         let screen_state = {
             let window_size = get_window_size(&config);
             let fov_radians = glm::half_pi();
@@ -1710,8 +1711,8 @@ fn main() {
         //Draw ImGui
         if do_imgui {
             let drag_speed = 0.02;
-            let win = imgui::Window::new(im_str!("Hacking window"));
-            if let Some(win_token) = win.begin(&imgui_ui) {
+            
+            if let Some(win_token) = imgui::Window::new(im_str!("Hacking window")).begin(&imgui_ui) {
                 imgui_ui.text(im_str!("Frametime: {:.2}ms\tFPS: {:.2}\tFrame: {}", delta_time * 1000.0 / world_state.delta_timescale, framerate, frame_count));
                 imgui_ui.text(im_str!("Totoros spawned: {}", world_state.totoros.count()));
                 imgui_ui.text(im_str!("Point lights count: {}/{}", scene_data.point_lights.count(), render::MAX_POINT_LIGHTS));
@@ -1741,6 +1742,7 @@ fn main() {
                 imgui_ui.checkbox(im_str!("View collision volumes"), &mut viewing_collision);
                 imgui_ui.checkbox(im_str!("View point lights"), &mut viewing_point_lights);
                 imgui_ui.checkbox(im_str!("View player spawn"), &mut viewing_player_spawn);
+                imgui_ui.checkbox(im_str!("Use toon shading"), &mut scene_data.toon_shading);
 
                 if let Some(_) = &xr_instance {
                     imgui_ui.checkbox(im_str!("View player"), &mut viewing_player_spheres);
@@ -1810,6 +1812,10 @@ fn main() {
                     if imgui_ui.button(im_str!("Reset player position"), [0.0, 32.0]) {
                         reset_player_position(&mut world_state);
                     }
+                }
+
+                if imgui_ui.button(im_str!("Reset freecam position"), [0.0, 32.0]) {
+                    camera.position = default_camera_position;
                 }
 
                 //Fullscreen button
@@ -1964,7 +1970,7 @@ fn main() {
                     imgui::Drag::new(im_str!("Z")).speed(drag_speed).build(&imgui_ui, &mut tot.position.z);
                     imgui_ui.text(im_str!("Velocity ({:.3}, {:.3}, {:.3})", tot.velocity.x, tot.velocity.y, tot.velocity.z));
                     imgui_ui.text(im_str!("AI state: {:?}", tot.state));
-                    imgui_ui.text(im_str!("AI timer state: {}", scene_data.elapsed_time - tot.state_timer));
+                    imgui_ui.text(im_str!("AI timer state: {:.5}/{:.5}", scene_data.elapsed_time - tot.state_timer, tot.state_transition_after));
                             
                     imgui_ui.separator();
                     imgui::Slider::new(im_str!("Scale")).range(RangeInclusive::new(0.1, 4.0)).build(&imgui_ui, &mut tot.scale);
