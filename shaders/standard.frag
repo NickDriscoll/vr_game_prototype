@@ -77,7 +77,7 @@ float determine_shadowed(vec3 f_shadow_pos, vec3 tan_normal, int cascade) {
 }
 
 float lambertian_diffuse(vec3 light_direction, vec3 normal) { return max(0.0, dot(light_direction, normal)); }
-float toon_diffuse(vec3 light_direction, vec3 normal) { return smoothstep(0.45, 0.55, lambertian_diffuse(light_direction, normal)); }
+float toon_diffuse(vec3 light_direction, vec3 normal) { return smoothstep(0.35, 0.45, lambertian_diffuse(light_direction, normal)); }
 
 float blinn_phong_specular(vec3 view_direction, vec3 light_direction, vec3 normal, float shininess) {
     vec3 halfway = normalize(view_direction + light_direction);

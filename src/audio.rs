@@ -119,10 +119,9 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                     }
                     AudioCommand::RestartBGM => {
                         bgm_source.pause();
-                        if let Some(dec) = &mut decoder {
+                        if let Some(_) = &mut decoder {
                             bgm_source.stop();
                             decoder = load_decoder(&bgm_path);
-                            //dec.reader_mut().seek(SeekFrom::Start(0)).unwrap();
                             playing_bgm = true;
                         }
                     }
