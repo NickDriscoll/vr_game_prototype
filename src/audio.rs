@@ -92,7 +92,7 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
         //Initialize the mp3 decoder with the default bgm
         let mut decoder = load_decoder(&bgm_path);
         let mut bgm_source = alto_context.new_streaming_source().unwrap();
-        let mut playing_bgm = true;
+        let mut start_bgm = true;
         loop {
             //Process all commands from the main thread
             while let Ok(command) = audio_receiver.try_recv() {
@@ -112,7 +112,7 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                             
                                 //Clear out any residual sound data from the old mp3
                                 bgm_source = alto_context.new_streaming_source().unwrap();
-                                playing_bgm = true;
+                                start_bgm = true;
                             }
                             None => { bgm_source.play(); }
                         }
@@ -122,19 +122,19 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                         if let Some(_) = &mut decoder {
                             bgm_source.stop();
                             decoder = load_decoder(&bgm_path);
-                            playing_bgm = true;
+                            start_bgm = true;
                         }
                     }
                     AudioCommand::PlayPause => {
-                        playing_bgm = !playing_bgm;
+                        start_bgm = !start_bgm;
                         match bgm_source.state() {
                             SourceState::Playing | SourceState::Initial => {
                                 bgm_source.pause();                                
-                                playing_bgm = false;
+                                start_bgm = false;
                             }
                             SourceState::Paused | SourceState::Stopped => {
                                 bgm_source.play();
-                                playing_bgm = true;
+                                start_bgm = true;
                             }
                             SourceState::Unknown(code) => { println!("Source is in an unknown state: {}", code); }
                         }
@@ -197,9 +197,9 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                 bgm_source.unqueue_buffer().unwrap();
             }
 
-            if bgm_source.state() != SourceState::Playing && playing_bgm && bgm_source.buffers_queued() == IDEAL_FRAMES_QUEUED {
+            if bgm_source.state() != SourceState::Playing && start_bgm && bgm_source.buffers_queued() == IDEAL_FRAMES_QUEUED {
                 bgm_source.play();
-                playing_bgm = false;
+                start_bgm = false;
             }
 
             //Sleeping to avoid throttling the CPU core

@@ -673,8 +673,8 @@ fn main() {
     let mut world_from_tracking = glm::identity();
     let mut tracking_from_world = glm::affine_inverse(world_from_tracking);
 
-    let mut left_sticky_grab = false;
-    let mut right_sticky_grab = false;
+    let mut left_sticky_grabbing = false;
+    let mut right_sticky_grabbing = false;
 
     let mut world_state = {
         let level_name = match config.string_options.get(Configuration::LEVEL_NAME) {
@@ -843,6 +843,7 @@ fn main() {
             match event {
                 WindowEvent::Close => { window.set_should_close(true); }
                 WindowEvent::Key(key, _, Action::Press, _) => {
+                    imgui_io.want_capture_keyboard;
                     match key_directions.get(&key) {
                         Some(dir) => {
                             camera.view_space_velocity += dir;
@@ -1010,14 +1011,15 @@ fn main() {
                                     if state.current_state > 0.5 {
                                         let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
                                         let grip_position = glm::vec4_to_vec3(&(hand_transform * glm::vec4(0.0, 0.0, 0.0, 1.0)));
-                                        if i == 0 && !left_sticky_grab {
+
+                                        if i == 0 && !left_sticky_grabbing {
                                             match world_state.player.stick_data {
                                                 Some(StickData::Left(_)) => {}
                                                 _ => {
                                                     sticky_action = Some(StickData::Left(grip_position));
                                                 }
                                             }
-                                        } else if i == 1 && !right_sticky_grab {
+                                        } else if i == 1 && !right_sticky_grabbing {
                                             match world_state.player.stick_data {
                                                 Some(StickData::Right(_)) => {}
                                                 _ => {
@@ -1031,8 +1033,8 @@ fn main() {
                                             player.tracking_velocity = (player.tracked_segment.p0 - player.last_tracked_segment.p0) / delta_time * 2.0;
                                         };
 
-                                        if i == 0 { left_sticky_grab = false; }
-                                        else if i == 1 { right_sticky_grab = false; }
+                                        if i == 0 { left_sticky_grabbing = false; }
+                                        else if i == 1 { right_sticky_grabbing = false; }
 
                                         match &world_state.player.stick_data {
                                             Some(StickData::Left(_)) => {
@@ -1454,7 +1456,7 @@ fn main() {
             //Resolve player's attempt to stick to a wall
 
             if let Some(action) = &sticky_action {
-                fn grip_triangle(world_state: &mut WorldState, focus: glm::TVec3<f32>, radius: f32, triangle: &Triangle, triangle_sphere: &Sphere, grab_flag: &mut bool) {
+                fn grip_triangle(world_state: &mut WorldState, focus: glm::TVec3<f32>, radius: f32, triangle: &Triangle, triangle_sphere: &Sphere, grab_flag: &mut bool, is_left: bool) {
                     let sphere = Sphere {
                         focus,
                         radius: radius
@@ -1463,8 +1465,13 @@ fn main() {
                     if let Some((_, collision_point)) = triangle_sphere_collision_point(&sphere, triangle, triangle_sphere) {
                         world_state.player.tracking_position += collision_point - sphere.focus;
                         world_state.player.tracking_velocity = glm::zero();
-                        world_state.player.stick_data = Some(StickData::Left(collision_point));
                         *grab_flag = true;
+                        
+                        if is_left {
+                            world_state.player.stick_data = Some(StickData::Left(collision_point));
+                        } else {
+                            world_state.player.stick_data = Some(StickData::Right(collision_point));
+                        }
                     }
                 }
 
@@ -1474,7 +1481,7 @@ fn main() {
                         match world_state.player.stick_data {
                             Some(StickData::Left(_)) => {}
                             _ => {
-                                grip_triangle(&mut world_state, *focus, stick_sphere_radius, &triangle, &triangle_sphere, &mut left_sticky_grab);
+                                grip_triangle(&mut world_state, *focus, stick_sphere_radius, &triangle, &triangle_sphere, &mut left_sticky_grabbing, true);
                             }
                         }
                     }
@@ -1482,7 +1489,7 @@ fn main() {
                         match world_state.player.stick_data {
                             Some(StickData::Right(_)) => {}
                             _ => {
-                                grip_triangle(&mut world_state, *focus, stick_sphere_radius, &triangle, &triangle_sphere, &mut right_sticky_grab);
+                                grip_triangle(&mut world_state, *focus, stick_sphere_radius, &triangle, &triangle_sphere, &mut right_sticky_grabbing, false);
                             }
                         }
                     }
