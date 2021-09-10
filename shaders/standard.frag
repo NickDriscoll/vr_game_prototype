@@ -67,7 +67,7 @@ vec4 simple_diffuse(vec3 color, float diffuse, float ambient) {
 }
 
 float determine_shadowed(vec3 f_shadow_pos, vec3 tan_normal, int cascade) {
-    float bias = 0.0025;
+    float bias = 0.00125;
     //float bias = 0.0025 * (1.0 - max(0.0, dot(tan_normal, tangent_sun_direction)));
     vec2 sample_uv = f_shadow_pos.xy;
     sample_uv.x = sample_uv.x * SHADOW_CASCADES_RECIPROCAL;
@@ -132,6 +132,10 @@ float cascaded_shadow_factor(vec3 adj_shadow_space_pos, int shadow_cascade, vec3
     }
     shadow *= shadow_intensity;
     return 1.0 - shadow;
+}
+
+float distance_falloff(float light_radius, float dist) {
+    return light_radius * light_radius / (dist * dist + 0.01);
 }
 
 void shade_blinn_phong() {
@@ -209,7 +213,7 @@ void shade_blinn_phong() {
         float diffuse = lambertian_diffuse(tangent_light_direction, tangent_space_normal);
         float specular = blinn_phong_specular(tangent_view_direction, tangent_light_direction, tangent_space_normal, f_shininess);
 
-        point_lights_contribution += light_color * (diffuse + specular) * (radius * radius / (dist * dist + 0.01));
+        point_lights_contribution += light_color * (diffuse + specular) * distance_falloff(radius, dist);
     }
 
     //Get some light from the skybox
@@ -316,7 +320,8 @@ void shade_toon() {
         float diffuse = toon_diffuse(tangent_light_direction, tangent_space_normal);
         float specular = specular_switch * toon_specular(tangent_view_direction, tangent_light_direction, tangent_space_normal, f_shininess);
 
-        point_lights_contribution += light_color * (diffuse + specular) * (radius * radius / (dist * dist + 0.01));
+        float falloff = distance_falloff(radius, dist);
+        point_lights_contribution += light_color * (diffuse + specular) * smoothstep(0.2, 0.3, falloff);
     }
 
     //Optionally add rim-lighting

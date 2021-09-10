@@ -1454,7 +1454,6 @@ fn main() {
             }
 
             //Resolve player's attempt to stick to a wall
-
             if let Some(action) = &sticky_action {
                 fn grip_triangle(world_state: &mut WorldState, focus: glm::TVec3<f32>, radius: f32, triangle: &Triangle, triangle_sphere: &Sphere, grab_flag: &mut bool, is_left: bool) {
                     let sphere = Sphere {
