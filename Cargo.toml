@@ -12,16 +12,17 @@ edition = "2018"
 [dependencies]
 ozy_engine = { path = "../ozy_engine" }
 #ozy_engine = { git = "https://github.com/NickDriscoll/ozy_engine" }
-glfw = "*"
+alto = "3.0.4"
+chrono = "*"
 gl = "*"
-nalgebra-glm = "*"
-raw-window-handle = "*"
-rand = "0.8.4"
+glfw = "*"
 image = "*"
 imgui = "0.7.0"
-alto = "3.0.4"
 minimp3 = "0.5.1"
-chrono = "*"
+nalgebra-glm = "*"
+noise = "0.7.0"
+rand = "0.8.4"
+raw-window-handle = "*"
 tinyfiledialogs = "3.3.10"
 
 strum = { version = "0.20", features = ["derive"] }

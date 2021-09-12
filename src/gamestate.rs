@@ -4,7 +4,7 @@ use ozy::collision::{LineSegment, Terrain};
 use strum::EnumCount;
 use ozy::collision::*;
 use xr::Posef;
-use crate::traits::Spherical;
+use crate::traits::SphereCollider;
 
 #[derive(PartialEq, Eq)]
 pub enum MoveState {
@@ -128,7 +128,7 @@ pub fn delete_object<T>(objects: &mut OptionVec<T>, selected: &mut Option<usize>
     }
 }
 
-impl Spherical for Totoro {
+impl SphereCollider for Totoro {
     fn sphere(&self) -> Sphere {        
         let radius = self.scale * 0.65;
         Sphere {

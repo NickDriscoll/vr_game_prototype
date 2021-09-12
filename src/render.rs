@@ -9,7 +9,7 @@ use ozy::glutil::ColorSpace;
 use ozy::{glutil};
 use tfd::MessageBoxIcon;
 use gl::types::*;
-use crate::traits::Spherical;
+use crate::traits::SphereCollider;
 
 pub const NEAR_DISTANCE: f32 = 0.0625;
 pub const FAR_DISTANCE: f32 = 1_000_000.0;
@@ -259,20 +259,42 @@ impl CascadedShadowMap {
 pub struct PointLight {
     pub position: glm::TVec3<f32>,
     pub color: [f32; 3],
-    pub power: f32
+    pub power: f32,
+    pub flicker_timescale: f32,
+    pub flicker_amplitude: f32
 }
 
 impl PointLight {
     pub const COLLISION_RADIUS: f32 = 0.2;
+
+    pub fn new(position: glm::TVec3<f32>, color: [f32; 3], power: f32) -> Self {
+        PointLight {
+            position,
+            color,
+            power,
+            flicker_timescale: 1.0,
+            flicker_amplitude: 0.0
+        }
+    }
 }
 
-impl Spherical for PointLight {
+impl SphereCollider for PointLight {
     fn sphere(&self) -> Sphere {
         Sphere {
             focus: self.position,
             radius: Self::COLLISION_RADIUS
         }
     }
+}
+
+pub struct SpotLight {
+    pub point: PointLight,
+    pub direction: glm::TVec3<f32>,
+    pub angle: f32 //Expressed as cos(angle)
+}
+
+impl SphereCollider for SpotLight {
+    fn sphere(&self) -> Sphere { self.point.sphere() }
 }
 
 pub struct SceneData {
@@ -325,7 +347,7 @@ impl Default for SceneData {
             shininess_upper_bound: 128.0,
             sun_pitch: 0.0,
             sun_yaw: 0.0,
-            sun_direction: glm::zero(),
+            sun_direction: glm::vec3(0.0, 0.0, 1.0),
             sun_color: [1.0, 1.0, 1.0],
             sun_size: 0.999,
             shadow_intensity: 1.0,
@@ -559,29 +581,4 @@ pub fn compute_shadow_cascade_matrices(shadow_cascade_distances: &[f32; SHADOW_C
         out_mats[i] = shadow_projection * shadow_view;
     }
     out_mats
-}
-
-pub fn create_point_light_buffer(point_lights: &OptionVec<PointLight>) -> Vec<f32> {
-    let floats_per_light = 9; //4N+4N+Ns
-
-    //Create the buffer
-    let mut buffer = vec![0.0; MAX_POINT_LIGHTS * floats_per_light];        
-    let mut current_light = 0;
-    for i in 0..point_lights.len() {
-        if let Some(light) = &point_lights[i] {
-            buffer[current_light * 4] = light.position.x;
-            buffer[current_light * 4 + 1] = light.position.y;
-            buffer[current_light * 4 + 2] = light.position.z;
-
-            buffer[(current_light + MAX_POINT_LIGHTS) * 4] = light.color[0];
-            buffer[(current_light + MAX_POINT_LIGHTS) * 4 + 1] = light.color[1];
-            buffer[(current_light + MAX_POINT_LIGHTS) * 4 + 2] = light.color[2];
-            
-            buffer[(2 * MAX_POINT_LIGHTS) * 4 + current_light] = light.power;
-
-            current_light += 1;
-        }
-    }
-
-    buffer
 }

@@ -21,6 +21,7 @@ use render::{NEAR_DISTANCE, FAR_DISTANCE};
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
 use gl::types::*;
 use imgui::{ColorEdit, DrawCmd, EditableColor, FontAtlasRefMut, ImString, Slider, TextureId, im_str};
+use noise::NoiseFn;
 use core::ops::RangeInclusive;
 use std::collections::HashMap;
 use std::fs::{File, read_dir};
@@ -46,7 +47,7 @@ use crate::gamestate::*;
 use crate::structs::*;
 use crate::routines::*;
 use crate::render::*;
-use crate::traits::Spherical;
+use crate::traits::SphereCollider;
 
 #[cfg(windows)]
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
@@ -76,7 +77,7 @@ fn main() {
                 let mut string_options = HashMap::new();
                 int_options.insert(String::from(Configuration::WINDOWED_WIDTH), 1280);
                 int_options.insert(String::from(Configuration::WINDOWED_HEIGHT), 720);
-                string_options.insert(String::from(Configuration::LEVEL_NAME), String::from("recreate_night"));
+                string_options.insert(String::from(Configuration::LEVEL_NAME), String::from("toon_level"));
                 string_options.insert(String::from(Configuration::MUSIC_NAME), String::from(audio::DEFAULT_BGM_PATH));
                 let c = Configuration {
                     int_options,
@@ -168,7 +169,11 @@ fn main() {
 
     //Get the max swapchain size
     let xr_swapchain_size = match &xr_viewconfiguration_views {
-        Some(views) => { Some(glm::vec2(views[0].recommended_image_rect_width, views[0].recommended_image_rect_height)) }
+        Some(views) => {
+            let size = glm::vec2(views[0].recommended_image_rect_width, views[0].recommended_image_rect_height);
+            println!("Eye image resolution: {}x{}", size.x, size.y);
+            Some(size)
+        }
         _ => { None }
     };
 
@@ -363,6 +368,8 @@ fn main() {
         }
     };
     window.set_resizable(false);
+
+    //Enable polling for various event types
     window.set_key_polling(true);
     window.set_mouse_button_polling(true);
     window.set_cursor_pos_polling(true);
@@ -802,6 +809,9 @@ fn main() {
         hm
     };
 
+    //Init simplex noise function
+    let simplex = noise::OpenSimplex::default();
+
     //Main loop
     while !window.should_close() {
         let imgui_io = imgui_context.io_mut();
@@ -1239,6 +1249,13 @@ fn main() {
             }
         }
 
+        //Point light update
+        for i in 0..scene_data.point_lights.len() {
+            if let Some(light) = scene_data.point_lights.get_mut_element(i) {
+                let offset = simplex.get([0.0, scene_data.elapsed_time as f64]);
+            }
+        }
+
         //If the user is controlling the camera, force the mouse cursor into the center of the screen
         if camera.using_mouselook {
             window.set_cursor_pos(camera.screen_state.get_window_size().x as f64 / 2.0, camera.screen_state.get_window_size().y as f64 / 2.0);
@@ -1315,11 +1332,7 @@ fn main() {
                 ClickAction::CreatePointLight => {
                     if scene_data.point_lights.count() < render::MAX_POINT_LIGHTS { 
                         if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
-                            let light = PointLight {
-                                position: point + glm::vec3(0.0, 0.0, 2.0),
-                                color: [rand::random(), rand::random(), rand::random()],
-                                power: 3.0
-                            };
+                            let light = PointLight::new(point + glm::vec3(0.0, 0.0, 2.0), [rand::random(), rand::random(), rand::random()], 3.0);
                             let i = scene_data.point_lights.insert(light);
                             scene_data.selected_point_light = Some(i);
                         }
@@ -1674,7 +1687,29 @@ fn main() {
         //Update the uniform buffer object of point lights
         unsafe {            
             //Create the buffer
-            let buffer = create_point_light_buffer(&scene_data.point_lights);
+            let floats_per_light = 9; //4N+4N+Ns
+        
+            //Create the buffer
+            let mut buffer = vec![0.0; MAX_POINT_LIGHTS * floats_per_light];        
+            let mut current_light = 0;
+            for i in 0..scene_data.point_lights.len() {
+                if let Some(light) = &scene_data.point_lights[i] {
+                    buffer[current_light * 4] = light.position.x;
+                    buffer[current_light * 4 + 1] = light.position.y;
+                    buffer[current_light * 4 + 2] = light.position.z;
+        
+                    buffer[(current_light + MAX_POINT_LIGHTS) * 4] = light.color[0];
+                    buffer[(current_light + MAX_POINT_LIGHTS) * 4 + 1] = light.color[1];
+                    buffer[(current_light + MAX_POINT_LIGHTS) * 4 + 2] = light.color[2];
+                    
+                    //Modulate power                    
+                    //let offset = 0.25 * simplex.get([0.0, 6.0 * scene_data.elapsed_time as f64]) as f32;
+                    let offset = light.flicker_amplitude * simplex.get([0.0, light.flicker_timescale as f64 * scene_data.elapsed_time as f64]) as f32;
+                    buffer[(2 * MAX_POINT_LIGHTS) * 4 + current_light] = light.power + offset;
+        
+                    current_light += 1;
+                }
+            }
             
             gl::BindBuffer(gl::UNIFORM_BUFFER, scene_data.point_lights_ubo);
             let mut current_buffer_size = 0;
@@ -1811,7 +1846,9 @@ fn main() {
 
                 imgui_ui.separator();
 
-                Slider::new(im_str!("Timescale")).range(RangeInclusive::new(0.000001, 10.0)).build(&imgui_ui, &mut world_state.delta_timescale);
+                if Slider::new(im_str!("Timescale")).range(RangeInclusive::new(0.000001, 2.0)).build(&imgui_ui, &mut world_state.delta_timescale) {
+                    send_or_error(&audio_sender, AudioCommand::SetPitchShift(world_state.delta_timescale));
+                }
                 
                 //Reset player position button
                 if let Some(_) = &xr_instance {
@@ -1900,7 +1937,7 @@ fn main() {
                             ];
                             
                             let floats_per_totoro = 4;
-                            let floats_per_light = 7;
+                            let floats_per_light = 9;
                             let size = size_of::<f32>() * (floats_to_write.len() + totoros.count() * floats_per_totoro + scene_data.point_lights.count() * floats_per_light) + size_of::<u32>() * 2;
 
                             //Convert to raw bytes and write to file
@@ -1925,6 +1962,8 @@ fn main() {
                                     write_vec3_to_buffer(&mut bytes, light.position);
                                     write_vec3_to_buffer(&mut bytes, glm::vec3(light.color[0], light.color[1], light.color[2]));
                                     write_f32_to_buffer(&mut bytes, light.power);
+                                    write_f32_to_buffer(&mut bytes, light.flicker_amplitude);
+                                    write_f32_to_buffer(&mut bytes, light.flicker_timescale);
                                 }
                             }
 
@@ -1994,7 +2033,7 @@ fn main() {
                     }
 
                     imgui_ui.separator();
-                    do_radio_button(&imgui_ui, im_str!("Move totoro home"), &mut click_action, ClickAction::MoveSelectedTotoro);
+                    do_radio_button(&imgui_ui, im_str!("Move totoro's home"), &mut click_action, ClickAction::MoveSelectedTotoro);
 
                     token.end(&imgui_ui);
                 }
@@ -2011,6 +2050,8 @@ fn main() {
                             
                     imgui_ui.separator();
                     imgui::Slider::new(im_str!("Power")).range(RangeInclusive::new(0.0, 10.0)).build(&imgui_ui, &mut light.power);
+                    imgui::Slider::new(im_str!("Flicker amplitude")).range(RangeInclusive::new(0.0, 3.0)).build(&imgui_ui, &mut light.flicker_amplitude);
+                    imgui::Slider::new(im_str!("Flicker timescale")).range(RangeInclusive::new(0.0, 10.0)).build(&imgui_ui, &mut light.flicker_timescale);
                     
                     ColorEdit::new(im_str!("Light color"), EditableColor::Float3(&mut light.color)).build(&imgui_ui);
 

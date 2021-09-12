@@ -18,6 +18,7 @@ pub enum AudioCommand {
     SetListenerOrientation(([f32; 3], [f32; 3])),
     SetSourcePosition([f32; 3], usize),
     SetListenerGain(f32),
+    SetPitchShift(f32),
     SelectNewBGM,
     RestartBGM,
     PlayPause
@@ -102,6 +103,7 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                     AudioCommand::SetListenerOrientation(ori) => { alto_context.set_orientation(ori).unwrap(); }
                     AudioCommand::SetSourcePosition(pos, i) => { if i == 0 { bgm_source.set_position(pos).unwrap(); } }
                     AudioCommand::SetListenerGain(volume) => { set_linearized_gain(&alto_context, volume); }
+                    AudioCommand::SetPitchShift(shift) => { bgm_source.set_pitch(shift).unwrap(); }
                     AudioCommand::SelectNewBGM => {
                         bgm_source.pause();
                         match tfd::open_file_dialog("Choose bgm", "music/", Some((&["*.mp3"], "mp3 files (*.mp3)"))) {
@@ -191,6 +193,8 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                     }
                 }
             }
+
+            //bgm_source.set_pitch(0.5).unwrap();
 
             //Unqueue any processed buffers
             while bgm_source.buffers_processed() > 0 {

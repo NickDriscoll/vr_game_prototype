@@ -18,7 +18,7 @@ use ozy::structs::OptionVec;
 use ozy::collision::*;
 
 use crate::traits::PositionAble;
-use crate::traits::Spherical;
+use crate::traits::SphereCollider;
 use crate::gamestate::*;
 use crate::structs::*;
 use crate::*;
@@ -97,7 +97,7 @@ pub unsafe fn create_skybox_cubemap(sky_name: &str) -> GLuint {
 	cubemap
 }
 
-pub fn get_clicked_object<T: Spherical>(objects: &OptionVec<T>, click_ray: &Ray) -> Option<(f32, usize)> {
+pub fn get_clicked_object<T: SphereCollider>(objects: &OptionVec<T>, click_ray: &Ray) -> Option<(f32, usize)> {
     let mut smallest_t = f32::INFINITY;
     let mut hit_index = None;
     for i in 0..objects.len() {
@@ -328,6 +328,8 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
             world_state.player_spawn.x = raw_floats[9];
             world_state.player_spawn.y = raw_floats[10];
             world_state.player_spawn.z = raw_floats[11];
+
+            world_state.player.tracking_position = world_state.player_spawn;
             
             //Load totoros
             let floats_per_totoro = 4;
@@ -341,18 +343,16 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
             }
 
             //Load lights
-            let floats_per_light = 7;
+            let floats_per_light = 9;
             let light_count = io_or_error(io::read_u32(&mut file), path);
             let raw_floats = io_or_error(io::read_f32_data(&mut file, light_count as usize * floats_per_light), path);
             for i in (0..raw_floats.len()).step_by(floats_per_light) {                
                 let position = glm::vec3(raw_floats[i], raw_floats[i + 1], raw_floats[i + 2]);    
                 let color = [raw_floats[i + 3], raw_floats[i + 4], raw_floats[i + 5]];
                 let power = raw_floats[i + 6];
-                let light = PointLight {
-                    position,
-                    color,
-                    power
-                };
+                let mut light = PointLight::new(position, color, power);
+                light.flicker_amplitude = raw_floats[i + 7];
+                light.flicker_timescale = raw_floats[i + 8];
 
                 scene_data.point_lights.insert(light);
             }

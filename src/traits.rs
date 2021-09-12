@@ -1,7 +1,7 @@
 use ozy::collision::Sphere;
 
 //Trait implemented by game objects that are represented by spheres
-pub trait Spherical {
+pub trait SphereCollider {
     fn sphere(&self) -> Sphere;
 }
 
