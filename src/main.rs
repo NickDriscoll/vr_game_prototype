@@ -375,6 +375,7 @@ fn main() {
     window.set_cursor_pos_polling(true);
     window.set_scroll_polling(true);
     window.set_framebuffer_size_polling(true);
+    window.set_char_polling(true);
 
     //Load OpenGL function pointers
     gl::load_with(|symbol| window.get_proc_address(symbol));
@@ -572,6 +573,29 @@ fn main() {
         let io = imgui_context.io_mut();
         io.display_size[0] = camera.screen_state.get_window_size().x as f32;
         io.display_size[1] = camera.screen_state.get_window_size().y as f32;
+        
+        //Set up keyboard index map
+        io.key_map[imgui::Key::Tab as usize] = Key::Tab as u32;
+        io.key_map[imgui::Key::LeftArrow as usize] = Key::Left as u32;
+        io.key_map[imgui::Key::RightArrow as usize] = Key::Right as u32;
+        io.key_map[imgui::Key::UpArrow as usize] = Key::Up as u32;
+        io.key_map[imgui::Key::DownArrow as usize] = Key::Down as u32;
+        io.key_map[imgui::Key::PageDown as usize] = Key::PageDown as u32;
+        io.key_map[imgui::Key::PageUp as usize] = Key::PageUp as u32;
+        io.key_map[imgui::Key::Home as usize] = Key::Home as u32;
+        io.key_map[imgui::Key::End as usize] = Key::End as u32;
+        io.key_map[imgui::Key::Insert as usize] = Key::Insert as u32;
+        io.key_map[imgui::Key::Delete as usize] = Key::Delete as u32;
+        io.key_map[imgui::Key::Backspace as usize] = Key::Backspace as u32;
+        io.key_map[imgui::Key::Space as usize] = Key::Space as u32;
+        io.key_map[imgui::Key::Enter as usize] = Key::Enter as u32;
+        io.key_map[imgui::Key::KeyPadEnter as usize] = Key::KpEnter as u32;
+        io.key_map[imgui::Key::A as usize] = Key::A as u32;
+        io.key_map[imgui::Key::C as usize] = Key::C as u32;
+        io.key_map[imgui::Key::V as usize] = Key::V as u32;
+        io.key_map[imgui::Key::X as usize] = Key::X as u32;
+        io.key_map[imgui::Key::Y as usize] = Key::Y as u32;
+        io.key_map[imgui::Key::Z as usize] = Key::Z as u32;
     }
 
     //Create and upload Dear IMGUI font atlas
@@ -853,7 +877,7 @@ fn main() {
             match event {
                 WindowEvent::Close => { window.set_should_close(true); }
                 WindowEvent::Key(key, _, Action::Press, _) => {
-                    imgui_io.want_capture_keyboard;
+                    imgui_io.keys_down[key as usize] = true;
                     match key_directions.get(&key) {
                         Some(dir) => {
                             camera.view_space_velocity += dir;
@@ -876,6 +900,7 @@ fn main() {
                     }
                 }
                 WindowEvent::Key(key, _, Action::Release, _) => {
+                    imgui_io.keys_down[key as usize] = false;
                     match key_directions.get(&key) {
                         Some(dir) => {
                             camera.view_space_velocity -= dir;
@@ -893,6 +918,7 @@ fn main() {
                         }
                     }
                 }
+                WindowEvent::Char(c) => { imgui_io.add_input_character(c); }
                 WindowEvent::MouseButton(glfw::MouseButtonLeft, action, ..) => {
                     match action {
                         Action::Press => {
@@ -1118,20 +1144,22 @@ fn main() {
         //Apply gravity otherwise
         match &world_state.player.stick_data {
             Some(data) => {
+                let move_to_grip = |stick_point: &glm::TVec3<f32>, aim_space: &Option<xr::Space>| {
+                    let mut res = glm::zero();
+                    if let Some(pose) = xrutil::locate_space(aim_space, &tracking_space, last_xr_render_time) {
+                        let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
+                        let grip_position = glm::vec4_to_vec3(&(hand_transform * glm::vec4(0.0, 0.0, 0.0, 1.0)));
+                        res = stick_point - grip_position;
+                    }
+                    res
+                };
+
                 match data {
                     StickData::Left(stick_point) => {
-                        if let Some(pose) = xrutil::locate_space(&left_hand_aim_space, &tracking_space, last_xr_render_time) {
-                            let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
-                            let grip_position = glm::vec4_to_vec3(&(hand_transform * glm::vec4(0.0, 0.0, 0.0, 1.0)));
-                            world_state.player.tracking_position += stick_point - grip_position;
-                        }
+                        world_state.player.tracking_position += move_to_grip(&stick_point, &left_hand_aim_space);
                     }                    
                     StickData::Right(stick_point) => {
-                        if let Some(pose) = xrutil::locate_space(&right_hand_aim_space, &tracking_space, last_xr_render_time) {
-                            let hand_transform = xrutil::pose_to_mat4(&pose, &world_from_tracking);
-                            let grip_position = glm::vec4_to_vec3(&(hand_transform * glm::vec4(0.0, 0.0, 0.0, 1.0)));
-                            world_state.player.tracking_position += stick_point - grip_position;
-                        }
+                        world_state.player.tracking_position += move_to_grip(&stick_point, &right_hand_aim_space);
                     }
                 }
             }
@@ -1246,13 +1274,6 @@ fn main() {
                 if totoro.position.z < -1000.0 {
                     delete_object(&mut world_state.totoros, &mut world_state.selected_totoro, i);
                 }
-            }
-        }
-
-        //Point light update
-        for i in 0..scene_data.point_lights.len() {
-            if let Some(light) = scene_data.point_lights.get_mut_element(i) {
-                let offset = simplex.get([0.0, scene_data.elapsed_time as f64]);
             }
         }
 

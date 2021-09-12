@@ -62,6 +62,18 @@ layout (std140, binding = 0) uniform PointLights {
 } point_lights;
 uniform int point_lights_count = 0;
 
+const int MAX_SPOT_LIGHTS = 8;
+layout (std140, binding = 1) uniform SpotLights {
+    vec3 positions[MAX_SPOT_LIGHTS];
+    vec3 colors[MAX_SPOT_LIGHTS];
+    vec3 directions[MAX_SPOT_LIGHTS];
+
+    //These are individual floats packed into vec4's to save memory given the std140 layout
+    vec4 radii[MAX_SPOT_LIGHTS / 4]; 
+    vec4 angles[MAX_SPOT_LIGHTS / 4];
+} spot_lights;
+uniform int spot_lights_count = 0;
+
 vec3 tangent_space_normal() {
     //Compute this frag's tangent space normal
     vec3 tangent_space_normal = vec3(0.0, 0.0, 1.0);
