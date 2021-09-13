@@ -1,6 +1,8 @@
 use alto::{sys::ALint, Source, SourceState};
 use tfd::MessageBoxIcon;
-use std::fs::File;
+use std::sync::Arc;
+use std::collections::HashMap;
+use std::fs::{File, read_dir};
 use std::io::{Seek, SeekFrom};
 use std::sync::mpsc::Receiver;
 use std::thread;
@@ -19,6 +21,8 @@ pub enum AudioCommand {
     SetSourcePosition([f32; 3], usize),
     SetListenerGain(f32),
     SetPitchShift(f32),
+    LoadSFX(String),
+    PlaySFX(String, [f32; 3]),
     SelectNewBGM,
     RestartBGM,
     PlayPause
@@ -37,6 +41,7 @@ fn load_decoder(path: &str) -> Option<mp3::Decoder<File>> {
     }    
 }
 
+//Gain is a non-linear quantity, so we do this conversion in order to translate from a volume value that is linear
 fn set_linearized_gain(ctxt: &alto::Context, linear_gain: f32) {
     let gain_factor = (f32::exp(linear_gain / 100.0) - 1.0) / (glm::e::<f32>() - 1.0);
     ctxt.set_gain(gain_factor).unwrap();
@@ -87,13 +92,20 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
         };
         set_linearized_gain(&alto_context, bgm_volume);
 
-        //Initialize sound effects buffers
+        //Hashmap for assiciating sfx paths with their loaded audio data
+        let mut sfx_buffers = HashMap::new();
 
+        const STATIC_SOURCE_LIMIT: usize = 64;
+        let mut sfx_sources = Vec::with_capacity(STATIC_SOURCE_LIMIT);
+        for _ in 0..STATIC_SOURCE_LIMIT {
+            sfx_sources.push(alto_context.new_static_source().unwrap());
+        }
 
         //Initialize the mp3 decoder with the default bgm
         let mut decoder = load_decoder(&bgm_path);
         let mut bgm_source = alto_context.new_streaming_source().unwrap();
         let mut start_bgm = true;
+
         loop {
             //Process all commands from the main thread
             while let Ok(command) = audio_receiver.try_recv() {
@@ -104,16 +116,75 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                     AudioCommand::SetSourcePosition(pos, i) => { if i == 0 { bgm_source.set_position(pos).unwrap(); } }
                     AudioCommand::SetListenerGain(volume) => { set_linearized_gain(&alto_context, volume); }
                     AudioCommand::SetPitchShift(shift) => { bgm_source.set_pitch(shift).unwrap(); }
+                    AudioCommand::LoadSFX(path) => {
+                        let mut freq = 0;
+                        let mut samples = Vec::new();
+                        if let Some(mut sfx_decoder) = load_decoder(&path) {
+                            //Sound effects are assumed to be mono
+                            loop {
+                                match sfx_decoder.next_frame() {
+                                    Ok(frame) => {
+                                        freq = frame.sample_rate;
+                                        for sample in frame.data {
+                                            samples.push(
+                                                alto::Mono {
+                                                    center: sample
+                                                }
+                                            );
+                                        }
+                                    }
+                                    Err(e) => {
+                                        match e {
+                                            mp3::Error::Eof => {
+                                                println!("Done loading {}", path);
+                                            }
+                                            _ => { println!("Error decoding mp3 frame: {}", e); }
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        let b = alto_context.new_buffer(samples, freq).unwrap();
+                        sfx_buffers.insert(path, Arc::new(b));
+                    }
+                    AudioCommand::PlaySFX(path, position) => {
+                        match sfx_buffers.get(&path) {
+                            Some(buffer) => {
+                                let mut available = false;
+                                for source in &mut sfx_sources {
+                                    if source.state() != SourceState::Playing {
+                                        source.set_position(position).unwrap();
+                                        source.set_buffer(buffer.clone()).unwrap();
+                                        source.set_gain(10.0).unwrap();
+                                        source.play();
+                                        available = true;
+                                        break;
+                                    }
+                                }
+
+                                if !available {
+                                    println!("No available sfx slot to play {}", path);
+                                }
+                            }
+                            None => {
+                                println!("{} hasn't been loaded yet", path);
+                            }
+                        }
+                    }
                     AudioCommand::SelectNewBGM => {
                         bgm_source.pause();
                         match tfd::open_file_dialog("Choose bgm", "music/", Some((&["*.mp3"], "mp3 files (*.mp3)"))) {
                             Some(path) => {
+                                let pitch = bgm_source.pitch();
                                 bgm_source.stop();
                                 decoder = load_decoder(&path);
                                 bgm_path = path;
                             
                                 //Clear out any residual sound data from the old mp3
                                 bgm_source = alto_context.new_streaming_source().unwrap();
+                                bgm_source.set_pitch(pitch).unwrap();
                                 start_bgm = true;
                             }
                             None => { bgm_source.play(); }
@@ -193,8 +264,6 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                     }
                 }
             }
-
-            //bgm_source.set_pitch(0.5).unwrap();
 
             //Unqueue any processed buffers
             while bgm_source.buffers_processed() > 0 {

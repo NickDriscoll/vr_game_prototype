@@ -17,8 +17,7 @@ use ozy::render::{Framebuffer, ScreenState};
 use ozy::structs::OptionVec;
 use ozy::collision::*;
 
-use crate::traits::PositionAble;
-use crate::traits::SphereCollider;
+use crate::traits::{PositionAble, SphereCollider};
 use crate::gamestate::*;
 use crate::structs::*;
 use crate::*;

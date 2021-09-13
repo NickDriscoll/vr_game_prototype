@@ -104,7 +104,7 @@ impl Totoro {
             desired_forward: forward,
             state_timer: creation_time,
             state: TotoroState::Relaxed,
-            state_transition_after: 0.0,
+            state_transition_after: 2.0,
             saw_player_last: 0.0
         }
     }

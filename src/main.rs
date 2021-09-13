@@ -822,6 +822,30 @@ fn main() {
     let (audio_sender, audio_receiver) = mpsc::channel();
     audio::audio_main(audio_receiver, bgm_volume, &config);          //This spawns a thread to run the audio system
 
+    //Load totoro sound effects
+    let mut totoro_sfx_paths = Vec::new();
+    match read_dir("sfx/totoro") {
+        Ok(iter) => {
+            for entry in iter {
+                match entry {
+                    Ok(ent) => {
+                        let name = format!("sfx/totoro/{}", ent.file_name().into_string().unwrap());
+                        totoro_sfx_paths.push(name.clone());
+                        send_or_error(&audio_sender, AudioCommand::LoadSFX(name));
+                    }
+                    Err(e) => {
+                        tfd::message_box_ok("Audio error", &format!("Error reading sfx entry: {}", e), MessageBoxIcon::Error);
+                        return;
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            tfd::message_box_ok("Audio error", &format!("Error reading sfx directory: {}", e), MessageBoxIcon::Error);
+            return;
+        }
+    }
+
     let key_directions = {
         let mut hm = HashMap::new();
         hm.insert(Key::W, glm::vec3(0.0, 0.0, -1.0));
@@ -1013,7 +1037,7 @@ fn main() {
                             let new = (*gadgets[i] as usize + 1) % GadgetType::COUNT;
                             *gadgets[i] = GadgetType::from_usize(new);
         
-                            if let Some(ent) = scene_data.opaque_entities.get_mut_element(gadget_indices[i]) { unsafe { 
+                            if let Some(ent) = scene_data.opaque_entities.get_mut_element(gadget_indices[i]) {unsafe{ 
                                 ent.update_single_transform(i, &glm::zero(), 16);
                             }}
                             if let Some(ent) = gadget_model_map.get(gadgets[i]) {
@@ -1222,6 +1246,8 @@ fn main() {
                             //Check if the player is nearby
                             if glm::distance(&world_state.player.tracked_segment.p1, &totoro.position) < totoro_awareness_radius {
                                 totoro.state = TotoroState::Startled;
+                                let path = totoro_sfx_paths[rand::random::<usize>() % totoro_sfx_paths.len()].clone();
+                                send_or_error(&audio_sender, AudioCommand::PlaySFX(path, vec_to_array(totoro.position)));
                             } else {
                                 let turn_speed = totoro_speed * 2.0;
                                 totoro.forward = glm::normalize(&lerp(&totoro.forward, &totoro.desired_forward, turn_speed * delta_time));
