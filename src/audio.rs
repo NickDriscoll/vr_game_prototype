@@ -18,7 +18,6 @@ pub enum AudioCommand {
     SetListenerPosition([f32; 3]),
     SetListenerVelocity([f32; 3]),
     SetListenerOrientation(([f32; 3], [f32; 3])),
-    SetSourcePosition([f32; 3], usize),
     SetListenerGain(f32),
     SetPitchShift(f32),
     LoadSFX(String),
@@ -113,7 +112,6 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                     AudioCommand::SetListenerPosition(pos) => { alto_context.set_position(pos).unwrap(); }
                     AudioCommand::SetListenerVelocity(vel) => { alto_context.set_velocity(vel).unwrap(); }
                     AudioCommand::SetListenerOrientation(ori) => { alto_context.set_orientation(ori).unwrap(); }
-                    AudioCommand::SetSourcePosition(pos, i) => { if i == 0 { bgm_source.set_position(pos).unwrap(); } }
                     AudioCommand::SetListenerGain(volume) => { set_linearized_gain(&alto_context, volume); }
                     AudioCommand::SetPitchShift(shift) => { bgm_source.set_pitch(shift).unwrap(); }
                     AudioCommand::LoadSFX(path) => {
@@ -157,7 +155,7 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                                     if source.state() != SourceState::Playing {
                                         source.set_position(position).unwrap();
                                         source.set_buffer(buffer.clone()).unwrap();
-                                        source.set_gain(10.0).unwrap();
+                                        source.set_gain(20.0).unwrap();
                                         source.play();
                                         available = true;
                                         break;
@@ -263,6 +261,12 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                         }
                     }
                 }
+            }
+
+            //Match sfx pitches with the bgm pitch
+            let pitch = bgm_source.pitch();
+            for source in &mut sfx_sources {
+                source.set_pitch(pitch).unwrap();
             }
 
             //Unqueue any processed buffers

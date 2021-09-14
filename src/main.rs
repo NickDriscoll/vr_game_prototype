@@ -1637,9 +1637,6 @@ fn main() {
 
                     let mm = glm::translation(&totoro.position) * rotation_mat * uniform_scale(totoro.scale);
                     write_matrix_to_buffer(&mut transform_buffer, current_totoro, mm);
-                    
-                    let pos = [mm[12], mm[13], mm[14]];
-                    send_or_error(&audio_sender, AudioCommand::SetSourcePosition(pos, i));
 
                     if let Some(idx) = world_state.selected_totoro {
                         if idx == i {
