@@ -553,6 +553,7 @@ fn main() {
 
     //Compile shader programs
     let standard_program = compile_shader_or_crash("shaders/standard.vert", "shaders/standard.frag");
+    let water_program = compile_shader_or_crash("shaders/standard.vert", "shaders/water.frag");
     let debug_program = compile_shader_or_crash("shaders/debug.vert", "shaders/debug.frag");
     let shadow_program = compile_shader_or_crash("shaders/shadow.vert", "shaders/shadow.frag");
     let skybox_program = compile_shader_or_crash("shaders/skybox.vert", "shaders/skybox.frag");
@@ -823,28 +824,29 @@ fn main() {
     audio::audio_main(audio_receiver, bgm_volume, &config);          //This spawns a thread to run the audio system
 
     //Load totoro sound effects
-    let mut totoro_sfx_paths = Vec::new();
-    match read_dir("sfx/totoro") {
+    let totoro_sfx_paths = match read_dir("sfx/totoro") {
         Ok(iter) => {
+            let mut paths = Vec::new();
             for entry in iter {
                 match entry {
                     Ok(ent) => {
                         let name = format!("sfx/totoro/{}", ent.file_name().into_string().unwrap());
-                        totoro_sfx_paths.push(name.clone());
+                        paths.push(name.clone());
                         send_or_error(&audio_sender, AudioCommand::LoadSFX(name));
                     }
                     Err(e) => {
                         tfd::message_box_ok("Audio error", &format!("Error reading sfx entry: {}", e), MessageBoxIcon::Error);
-                        return;
                     }
                 }
             }
+            paths
         }
         Err(e) => {
             tfd::message_box_ok("Audio error", &format!("Error reading sfx directory: {}", e), MessageBoxIcon::Error);
-            return;
+            Vec::new()
         }
-    }
+    };
+    
 
     let key_directions = {
         let mut hm = HashMap::new();
@@ -1246,8 +1248,10 @@ fn main() {
                             //Check if the player is nearby
                             if glm::distance(&world_state.player.tracked_segment.p1, &totoro.position) < totoro_awareness_radius {
                                 totoro.state = TotoroState::Startled;
-                                let path = totoro_sfx_paths[rand::random::<usize>() % totoro_sfx_paths.len()].clone();
-                                send_or_error(&audio_sender, AudioCommand::PlaySFX(path, vec_to_array(totoro.position)));
+                                if totoro_sfx_paths.len() > 0 {
+                                    let path = totoro_sfx_paths[rand::random::<usize>() % totoro_sfx_paths.len()].clone();
+                                    send_or_error(&audio_sender, AudioCommand::PlaySFX(path, vec_to_array(totoro.position)));
+                                }
                             } else {
                                 let turn_speed = totoro_speed * 2.0;
                                 totoro.forward = glm::normalize(&lerp(&totoro.forward, &totoro.desired_forward, turn_speed * delta_time));
@@ -1267,7 +1271,7 @@ fn main() {
                             f.z = 0.0;
                             glm::normalize(&f)
                         };
-                        totoro.velocity = glm::vec3(0.0, 0.0, 10.0);
+                        totoro.velocity = glm::vec3(0.0, 0.0, 3.0);
                         totoro.state = TotoroState::Panicking;
                         totoro.state_timer = scene_data.elapsed_time;
                     }
@@ -1279,7 +1283,9 @@ fn main() {
                             totoro.desired_forward = glm::vec4_to_vec3(&(glm::rotation(rand_binomial(), &Z_UP) * glm::vec3_to_vec4(&new_forward)));
                             
                             let turn_speed = totoro_speed * 2.0;
-                            totoro.forward = glm::normalize(&lerp(&totoro.forward, &totoro.desired_forward, turn_speed * delta_time));
+                            let desire_difference = glm::dot(&totoro.forward, &totoro.desired_forward);
+                            totoro.forward = lerp(&totoro.forward, &totoro.desired_forward, turn_speed * delta_time);
+                            totoro.forward = glm::normalize(&totoro.forward);
                             let v = totoro.forward * totoro_speed;
                             totoro.velocity = glm::vec3(v.x, v.y, totoro.velocity.z);
                         }
