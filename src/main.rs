@@ -1272,23 +1272,33 @@ fn main() {
                             glm::normalize(&f)
                         };
                         totoro.velocity = glm::vec3(0.0, 0.0, 3.0);
-                        totoro.state = TotoroState::Panicking;
+                        totoro.state = TotoroState::PrePanicking;
                         totoro.state_timer = scene_data.elapsed_time;
                     }
-                    TotoroState::Panicking => {
+                    TotoroState::PrePanicking => {
                         if ai_time >= 0.25 {
-                            let mut new_forward = glm::normalize(&(totoro.position - world_state.player.tracked_segment.p1));
-                            new_forward.z = 0.0;
-                            new_forward = glm::normalize(&new_forward);
-                            totoro.desired_forward = glm::vec4_to_vec3(&(glm::rotation(rand_binomial(), &Z_UP) * glm::vec3_to_vec4(&new_forward)));
-                            
-                            let turn_speed = totoro_speed * 2.0;
-                            let desire_difference = glm::dot(&totoro.forward, &totoro.desired_forward);
-                            totoro.forward = lerp(&totoro.forward, &totoro.desired_forward, turn_speed * delta_time);
-                            totoro.forward = glm::normalize(&totoro.forward);
-                            let v = totoro.forward * totoro_speed;
-                            totoro.velocity = glm::vec3(v.x, v.y, totoro.velocity.z);
+                            totoro.forward = {
+                                let mut f = totoro.position - world_state.player.tracked_segment.p1;
+                                f.z = 0.0;
+                                glm::normalize(&f)
+                            };
+                            totoro.state = TotoroState::Panicking;
+                            totoro.state_timer = scene_data.elapsed_time;
+
                         }
+                    }
+                    TotoroState::Panicking => {
+                        let mut new_forward = glm::normalize(&(totoro.position - world_state.player.tracked_segment.p1));
+                        new_forward.z = 0.0;
+                        new_forward = glm::normalize(&new_forward);
+                        totoro.desired_forward = glm::vec4_to_vec3(&(glm::rotation(rand_binomial(), &Z_UP) * glm::vec3_to_vec4(&new_forward)));
+                        
+                        let turn_speed = totoro_speed * 2.0;
+                        totoro.forward = lerp(&totoro.forward, &totoro.desired_forward, turn_speed * delta_time);
+                        totoro.forward = glm::normalize(&totoro.forward);
+                        let v = totoro.forward * totoro_speed;
+                        totoro.velocity = glm::vec3(v.x, v.y, totoro.velocity.z);
+
                     }
                     TotoroState::BrainDead => {}
                 }
