@@ -1,8 +1,8 @@
-use alto::{sys::ALint, Source, SourceState};
+use alto::{sys::ALint, Buffer, Source, SourceState};
 use tfd::MessageBoxIcon;
 use std::sync::Arc;
 use std::collections::HashMap;
-use std::fs::{File, read_dir};
+use std::fs::{File};
 use std::io::{Seek, SeekFrom};
 use std::sync::mpsc::Receiver;
 use std::thread;
@@ -11,7 +11,13 @@ use crate::structs::Configuration;
 
 pub const DEFAULT_BGM_PATH: &str = "music/cryptic_relics.mp3";
 
-const IDEAL_FRAMES_QUEUED: ALint = 5;
+const IDEAL_FRAMES_QUEUED: ALint = 5;   //Ideal number of queued audio frames for streaming sources
+
+pub struct SoundEffect {
+    pub path: String,
+    pub position: [f32; 3],
+    pub linear_gain: f32
+}
 
 //Represents the kinds of messages the audio system can receive from the main thread
 pub enum AudioCommand {
@@ -21,7 +27,7 @@ pub enum AudioCommand {
     SetListenerGain(f32),
     SetPitchShift(f32),
     LoadSFX(String),
-    PlaySFX(String, [f32; 3]),
+    PlaySFX(SoundEffect),
     SelectNewBGM,
     RestartBGM,
     PlayPause
@@ -37,22 +43,30 @@ fn load_decoder(path: &str) -> Option<mp3::Decoder<File>> {
             tfd::message_box_ok("Error loading mp3", &format!("Unable to open: {}\n{}", path, e), MessageBoxIcon::Error);
             None
         }
-    }    
+    }
 }
 
 //Gain is a non-linear quantity, so we do this conversion in order to translate from a volume value that is linear
+fn linearize_gain(linear_gain: f32) -> f32 {
+    (f32::exp(linear_gain / 100.0) - 1.0) / (glm::e::<f32>() - 1.0)
+}
+
 fn set_linearized_gain(ctxt: &alto::Context, linear_gain: f32) {
-    let gain_factor = (f32::exp(linear_gain / 100.0) - 1.0) / (glm::e::<f32>() - 1.0);
-    ctxt.set_gain(gain_factor).unwrap();
+    ctxt.set_gain(linearize_gain(linear_gain)).unwrap();
 }
 
 //Main function for the audio system
-pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, config: &Configuration) {
+pub fn audio_main(audio_receiver: Receiver<AudioCommand>, config: &Configuration) {
     //Allocation is necessary here because we are moving this into another thread
     let mut bgm_path = match config.string_options.get(Configuration::MUSIC_NAME) {
         Some(path) => { String::from(path) }
         None => { String::from(DEFAULT_BGM_PATH) }
-    }; 
+    };
+
+    let bgm_volume = match config.float_options.get(Configuration::BGM_VOLUME) {
+        Some(v) => { *v }
+        None => { 10.0 }
+    };
 
     thread::spawn(move || {
         //Initializing the OpenAL context
@@ -101,7 +115,7 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
         }
 
         //Initialize the mp3 decoder with the default bgm
-        let mut decoder = load_decoder(&bgm_path);
+        let mut bgm_decoder = load_decoder(&bgm_path);
         let mut bgm_source = alto_context.new_streaming_source().unwrap();
         let mut start_bgm = true;
 
@@ -133,9 +147,7 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                                     }
                                     Err(e) => {
                                         match e {
-                                            mp3::Error::Eof => {
-                                                println!("Done loading {}", path);
-                                            }
+                                            mp3::Error::Eof => {}
                                             _ => { println!("Error decoding mp3 frame: {}", e); }
                                         }
                                         break;
@@ -147,15 +159,15 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                         let b = alto_context.new_buffer(samples, freq).unwrap();
                         sfx_buffers.insert(path, Arc::new(b));
                     }
-                    AudioCommand::PlaySFX(path, position) => {
-                        match sfx_buffers.get(&path) {
+                    AudioCommand::PlaySFX(sound_effect) => {
+                        match sfx_buffers.get(&sound_effect.path) {
                             Some(buffer) => {
                                 let mut available = false;
                                 for source in &mut sfx_sources {
                                     if source.state() != SourceState::Playing {
-                                        source.set_position(position).unwrap();
+                                        source.set_position(sound_effect.position).unwrap();
                                         source.set_buffer(buffer.clone()).unwrap();
-                                        source.set_gain(20.0).unwrap();
+                                        source.set_gain(linearize_gain(sound_effect.linear_gain)).unwrap();
                                         source.play();
                                         available = true;
                                         break;
@@ -163,11 +175,11 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                                 }
 
                                 if !available {
-                                    println!("No available sfx slot to play {}", path);
+                                    println!("No available sfx slot to play {}", sound_effect.path);
                                 }
                             }
                             None => {
-                                println!("{} hasn't been loaded yet", path);
+                                println!("{} hasn't been loaded yet", sound_effect.path);
                             }
                         }
                     }
@@ -177,7 +189,7 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                             Some(path) => {
                                 let pitch = bgm_source.pitch();
                                 bgm_source.stop();
-                                decoder = load_decoder(&path);
+                                bgm_decoder = load_decoder(&path);
                                 bgm_path = path;
                             
                                 //Clear out any residual sound data from the old mp3
@@ -190,9 +202,9 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
                     }
                     AudioCommand::RestartBGM => {
                         bgm_source.pause();
-                        if let Some(_) = &mut decoder {
+                        if let Some(_) = &mut bgm_decoder {
                             bgm_source.stop();
-                            decoder = load_decoder(&bgm_path);
+                            bgm_decoder = load_decoder(&bgm_path);
                             start_bgm = true;
                         }
                     }
@@ -215,9 +227,9 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, bgm_volume: f32, confi
 
             //If there are fewer than the ideal number of frames queued, prepare and queue a frame
             if bgm_source.buffers_queued() < IDEAL_FRAMES_QUEUED {
-                if let Some(decoder) = &mut decoder {
+                if let Some(decoder) = &mut bgm_decoder {
                     match decoder.next_frame() {
-                        Ok(frame) => {                          
+                        Ok(frame) => {
                             if frame.channels == 1 {            //Mono
                                 let mut mono_samples = Vec::with_capacity(frame.data.len());
                                 for sample in frame.data {

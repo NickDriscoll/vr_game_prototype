@@ -42,7 +42,7 @@ use ozy::routines::uniform_scale;
 use ozy::structs::OptionVec;
 use ozy::collision::*;
 
-use crate::audio::{AudioCommand};
+use crate::audio::{AudioCommand, SoundEffect};
 use crate::gamestate::*;
 use crate::structs::*;
 use crate::routines::*;
@@ -74,13 +74,16 @@ fn main() {
             Some(cfg) => { cfg }
             None => {
                 let mut int_options = HashMap::new();
+                let mut float_options = HashMap::new();
                 let mut string_options = HashMap::new();
                 int_options.insert(String::from(Configuration::WINDOWED_WIDTH), 1280);
                 int_options.insert(String::from(Configuration::WINDOWED_HEIGHT), 720);
+                float_options.insert(String::from(Configuration::BGM_VOLUME), 10.0);
                 string_options.insert(String::from(Configuration::LEVEL_NAME), String::from("toon_level"));
                 string_options.insert(String::from(Configuration::MUSIC_NAME), String::from(audio::DEFAULT_BGM_PATH));
                 let c = Configuration {
                     int_options,
+                    float_options,
                     string_options
                 };
                 c.to_file(Configuration::CONFIG_FILEPATH);
@@ -553,7 +556,6 @@ fn main() {
 
     //Compile shader programs
     let standard_program = compile_shader_or_crash("shaders/standard.vert", "shaders/standard.frag");
-    let water_program = compile_shader_or_crash("shaders/standard.vert", "shaders/water.frag");
     let debug_program = compile_shader_or_crash("shaders/debug.vert", "shaders/debug.frag");
     let shadow_program = compile_shader_or_crash("shaders/shadow.vert", "shaders/shadow.frag");
     let skybox_program = compile_shader_or_crash("shaders/skybox.vert", "shaders/skybox.frag");
@@ -737,6 +739,11 @@ fn main() {
         word
     };
 
+    //Make vao for visualizing collision tris
+    {
+
+    }
+
     //Create debug sphere render entity
     let debug_sphere_re_index = unsafe {
         let segments = 32;
@@ -819,9 +826,12 @@ fn main() {
     let mut last_xr_render_time = xr::Time::from_nanos(1);
 
     //Init audio system
-    let mut bgm_volume = 10.0;
+    let mut bgm_volume = match config.float_options.get(Configuration::BGM_VOLUME) {
+        Some(v) => { *v }
+        None => { 10.0 }
+    };
     let (audio_sender, audio_receiver) = mpsc::channel();
-    audio::audio_main(audio_receiver, bgm_volume, &config);          //This spawns a thread to run the audio system
+    audio::audio_main(audio_receiver, &config);          //This spawns a thread to run the audio system
 
     //Load totoro sound effects
     let totoro_sfx_paths = match read_dir("sfx/totoro") {
@@ -846,7 +856,6 @@ fn main() {
             Vec::new()
         }
     };
-    
 
     let key_directions = {
         let mut hm = HashMap::new();
@@ -1121,7 +1130,7 @@ fn main() {
                                     water_gun_force = glm::vec4_to_vec3(&(-state.current_state * world_space_vec));
                     
                                     if state.current_state > 0.0 {
-                                        pillar_scales[i].y = 100.0;
+                                        pillar_scales[i].y = 10.0;
                                         if world_state.player.movement_state != MoveState::Falling {
                                             set_player_falling(&mut world_state.player);
                                         }
@@ -1248,10 +1257,6 @@ fn main() {
                             //Check if the player is nearby
                             if glm::distance(&world_state.player.tracked_segment.p1, &totoro.position) < totoro_awareness_radius {
                                 totoro.state = TotoroState::Startled;
-                                if totoro_sfx_paths.len() > 0 {
-                                    let path = totoro_sfx_paths[rand::random::<usize>() % totoro_sfx_paths.len()].clone();
-                                    send_or_error(&audio_sender, AudioCommand::PlaySFX(path, vec_to_array(totoro.position)));
-                                }
                             } else {
                                 let turn_speed = totoro_speed * 2.0;
                                 totoro.forward = glm::normalize(&lerp(&totoro.forward, &totoro.desired_forward, turn_speed * delta_time));
@@ -1274,6 +1279,16 @@ fn main() {
                         totoro.velocity = glm::vec3(0.0, 0.0, 3.0);
                         totoro.state = TotoroState::PrePanicking;
                         totoro.state_timer = scene_data.elapsed_time;
+
+                        if totoro_sfx_paths.len() > 0 {
+                            let path = totoro_sfx_paths[rand::random::<usize>() % totoro_sfx_paths.len()].clone();
+                            let yell_sfx = SoundEffect {
+                                path,
+                                position: vec_to_array(totoro.position),
+                                linear_gain: 200.0
+                            };
+                            send_or_error(&audio_sender, AudioCommand::PlaySFX(yell_sfx));
+                        }
                     }
                     TotoroState::PrePanicking => {
                         if ai_time >= 0.25 {
@@ -1473,7 +1488,6 @@ fn main() {
             //Check player capsule against triangle
             const MIN_NORMAL_LIKENESS: f32 = 0.5;
             {
-
                 //Coarse test with sphere
                 let player_sphere = Sphere {
                     focus: midpoint(&(world_state.player.tracked_segment.p0 + glm::vec3(0.0, 0.0, world_state.player.radius)), &world_state.player.tracked_segment.p1),

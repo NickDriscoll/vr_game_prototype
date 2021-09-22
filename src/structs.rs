@@ -50,6 +50,7 @@ enum TokenType {
 
 pub struct Configuration {
     pub int_options: HashMap<String, u32>,
+    pub float_options: HashMap<String, f32>,
     pub string_options: HashMap<String, String>
 }
 
@@ -57,6 +58,9 @@ impl Configuration {
     pub const WINDOWED_WIDTH: &'static str = "windowed_width";
     pub const WINDOWED_HEIGHT: &'static str = "windowed_height";
     const INTS: [&'static str; 2] = [Self::WINDOWED_WIDTH, Self::WINDOWED_HEIGHT];
+
+    pub const BGM_VOLUME: &'static str = "bgm_volume";
+    const FLOATS: [&'static str; 1] = [Self::BGM_VOLUME];
 
     pub const LEVEL_NAME: &'static str = "level_name";
     pub const MUSIC_NAME: &'static str = "default_music";
@@ -66,6 +70,7 @@ impl Configuration {
 
     pub fn from_file(filepath: &str) -> Option<Self> {
         let mut int_options = HashMap::with_capacity(Self::INTS.len());
+        let mut float_options = HashMap::with_capacity(Self::FLOATS.len());
         let mut string_options = HashMap::with_capacity(Self::STRS.len());
 
         match File::open(filepath) {
@@ -117,7 +122,8 @@ impl Configuration {
                                     int_options.insert(String::from(tokens[0]), int);
                                 }
                                 TokenType::Float => {
-
+                                    let f = tokens[2].parse::<f32>().unwrap();
+                                    float_options.insert(String::from(tokens[0]), f);
                                 }
                                 TokenType::String => {
                                     string_options.insert(String::from(tokens[0]), String::from(tokens[2]));
@@ -140,6 +146,7 @@ impl Configuration {
         Some(
             Configuration {
                 int_options,
+                float_options,
                 string_options
             }
         )

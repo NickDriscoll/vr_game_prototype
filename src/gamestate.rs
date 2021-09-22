@@ -76,6 +76,15 @@ pub fn reset_player_position(world_state: &mut WorldState) {
     world_state.player.movement_state = MoveState::Falling;
 }
 
+pub struct CaptureBall {
+    pub position: glm::TVec3<f32>,
+    pub velocity: glm::TVec3<f32>
+}
+
+impl CaptureBall {
+    pub const RADIUS: f32 = 1.0;
+}
+
 pub struct Totoro {
     pub position: glm::TVec3<f32>,
     pub velocity: glm::TVec3<f32>,
