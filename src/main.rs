@@ -555,11 +555,11 @@ fn main() {
     };
 
     //Compile shader programs
-    let standard_program = compile_shader_or_crash("shaders/standard.vert", "shaders/standard.frag");
-    let debug_program = compile_shader_or_crash("shaders/debug.vert", "shaders/debug.frag");
-    let shadow_program = compile_shader_or_crash("shaders/shadow.vert", "shaders/shadow.frag");
-    let skybox_program = compile_shader_or_crash("shaders/skybox.vert", "shaders/skybox.frag");
-    let imgui_program = compile_shader_or_crash("shaders/ui/imgui.vert", "shaders/ui/imgui.frag");
+    let standard_program = compile_shader_or_crash(&[(gl::VERTEX_SHADER, "shaders/standard.vert"), (gl::FRAGMENT_SHADER, "shaders/standard.frag")]);
+    let debug_program = compile_shader_or_crash(&[(gl::VERTEX_SHADER, "shaders/debug.vert"), (gl::FRAGMENT_SHADER, "shaders/debug.frag")]);
+    let shadow_program = compile_shader_or_crash(&[(gl::VERTEX_SHADER, "shaders/shadow.vert"), (gl::FRAGMENT_SHADER, "shaders/shadow.frag")]);
+    let skybox_program = compile_shader_or_crash(&[(gl::VERTEX_SHADER, "shaders/skybox.vert"), (gl::FRAGMENT_SHADER, "shaders/skybox.frag")]);
+    let imgui_program = compile_shader_or_crash(&[(gl::VERTEX_SHADER, "shaders/ui/imgui.vert"), (gl::FRAGMENT_SHADER, "shaders/ui/imgui.frag")]);
     
     //Initialize default framebuffer
     let mut default_framebuffer = Framebuffer {
@@ -802,7 +802,7 @@ fn main() {
     let mut is_fullscreen = false;
     let mut wireframe = false;
     let mut true_wireframe = false;
-    let mut click_action = ClickAction::Default;
+    let mut click_action = ClickAction::Select;
     let mut hmd_pov = false;
     let mut do_vsync = true;
     let mut do_imgui = true;
@@ -1383,6 +1383,15 @@ fn main() {
                         world_state.selected_totoro = Some(i);
                     }
                 }
+                ClickAction::Select => {
+                    if let (Some(f), Some(idx)) =  get_clicked_closure(&click_ray) {
+                        match f {
+                            0 => { world_state.selected_totoro = Some(idx); }
+                            1 => { scene_data.selected_point_light = Some(idx); }
+                            _ => {}
+                        }                        
+                    }
+                }
                 ClickAction::DeleteObject => {
                     if let (Some(f), Some(idx)) = get_clicked_closure(&click_ray) {
                         match f {
@@ -1423,18 +1432,6 @@ fn main() {
                                 light.position = point + glm::vec3(0.0, 0.0, 2.0);
                             }
                         }
-                    }
-                }
-                ClickAction::Default => {
-                    match get_clicked_closure(&click_ray) {
-                        (Some(f), Some(idx)) => {
-                            match f {
-                                0 => { world_state.selected_totoro = Some(idx); }
-                                1 => { scene_data.selected_point_light = Some(idx); }
-                                _ => {}
-                            }
-                        }
-                        _ => {}
                     }
                 }
             }            

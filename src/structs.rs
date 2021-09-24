@@ -6,7 +6,7 @@ use crate::*;
 
 #[derive(PartialEq, Eq)]
 pub enum ClickAction {
-    Default,
+    Select,
     CreateTotoro,
     CreatePointLight,
     DeleteObject,
@@ -16,7 +16,7 @@ pub enum ClickAction {
 }
 
 impl Default for ClickAction {
-    fn default() -> Self { ClickAction::Default }
+    fn default() -> Self { ClickAction::Select }
 }
 
 pub struct Mouse {

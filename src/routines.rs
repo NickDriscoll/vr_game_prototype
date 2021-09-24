@@ -144,11 +144,11 @@ pub fn floats_equal(a: f32, b: f32) -> bool {
     d < EPSILON && d > -EPSILON
 }
 
-pub fn compile_shader_or_crash(vert: &str, frag: &str) -> GLuint {
-    match glutil::compile_program_from_files(vert, frag)  { 
+pub fn compile_shader_or_crash(source_files: &[(GLenum, &str)] ) -> GLuint {
+    match glutil::compile_program_from_files(&source_files) {
         Ok(program) => { program }
         Err(e) => {
-            tfd::message_box_ok("Error compiling OpenGL shader.", &format!("An error occurred while compiling an OpenGL shader:\n\nVert:\t{}\nFrag:\t{}\n\n{}", vert, frag, e), tfd::MessageBoxIcon::Error);
+            tfd::message_box_ok("Error compiling OpenGL shader.", &format!("An error occurred while compiling an OpenGL shader:\n\n{}", e), tfd::MessageBoxIcon::Error);
             exit(-1);
         }
     }
