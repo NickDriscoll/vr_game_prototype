@@ -560,6 +560,7 @@ fn main() {
     let shadow_program = compile_shader_or_crash(&[(gl::VERTEX_SHADER, "shaders/shadow.vert"), (gl::FRAGMENT_SHADER, "shaders/shadow.frag")]);
     let skybox_program = compile_shader_or_crash(&[(gl::VERTEX_SHADER, "shaders/skybox.vert"), (gl::FRAGMENT_SHADER, "shaders/skybox.frag")]);
     let imgui_program = compile_shader_or_crash(&[(gl::VERTEX_SHADER, "shaders/ui/imgui.vert"), (gl::FRAGMENT_SHADER, "shaders/ui/imgui.frag")]);
+    let postfx_program = compile_shader_or_crash(&[(gl::COMPUTE_SHADER, "shaders/gaussian_blur.comp")]);
     
     //Initialize default framebuffer
     let mut default_framebuffer = Framebuffer {
@@ -567,6 +568,14 @@ fn main() {
         size: (camera.screen_state.get_window_size().x as GLsizei, camera.screen_state.get_window_size().y as GLsizei),
         clear_flags: gl::DEPTH_BUFFER_BIT | gl::COLOR_BUFFER_BIT,
         cull_face: gl::BACK
+    };
+
+    //Creating default rendertarget
+    let mut default_rendertarget = unsafe {
+        RenderTarget::new_multisampled(
+            (camera.screen_state.get_window_size().x as GLsizei, camera.screen_state.get_window_size().y as GLsizei),
+            render::MSAA_SAMPLES as GLint
+        )
     };
 
     //Creating Dear ImGui context
@@ -739,10 +748,29 @@ fn main() {
         word
     };
 
-    //Make vao for visualizing collision tris
-    {
+    //Make RenderEntity for visualizing collision tris
+    let terrain_re_index = unsafe {
+        let inds = &world_state.terrain.indices;
+        let mut verts = vec![0.0; world_state.terrain.vertices.len() * 6];
+        for i in 0..world_state.terrain.vertices.len() {
+            let v = &world_state.terrain.vertices[i];
+            verts[6 * i] = v.x;
+            verts[6 * i + 1] = v.y;
+            verts[6 * i + 2] = v.z;
+            verts[6 * i + 3] = 0.0;
+            verts[6 * i + 4] = 0.0;
+            verts[6 * i + 5] = 0.0;
+        }
 
-    }
+        let vao = glutil::create_vertex_array_object(&verts, inds, &[3, 3]);
+        let mut re = RenderEntity::from_vao(vao, debug_program, inds.len(), 1, DEBUG_TRANSFORM_ATTRIBUTE);
+        re.init_new_instanced_buffer(4, DEBUG_COLOR_ATTRIBUTE, RenderEntity::COLOR_BUFFER_INDEX);
+
+        let color = [0.5, 0.0, 0.0, 0.5];
+        re.update_color_buffer(&color, DEBUG_COLOR_ATTRIBUTE);
+
+        scene_data.transparent_entities.insert(re)
+    };
 
     //Create debug sphere render entity
     let debug_sphere_re_index = unsafe {
@@ -810,6 +838,7 @@ fn main() {
     let mut full_screenshot_this_frame = false;
     let mut turbo_clicking = false;
     let mut viewing_collision = false;
+    let mut viewing_triangles = false;
     let mut viewing_player_spawn = false;
     let mut viewing_player_spheres = false;
     let mut showing_shadow_atlas = false;
@@ -1851,11 +1880,18 @@ fn main() {
                 do_radio_button(&imgui_ui, im_str!("Visualize how shadowed"), &mut scene_data.fragment_flag, FragmentFlag::Shadowed);
                 do_radio_button(&imgui_ui, im_str!("Visualize shadow cascades"), &mut scene_data.fragment_flag, FragmentFlag::CascadeZones);
                 imgui_ui.checkbox(im_str!("View shadow atlas"), &mut showing_shadow_atlas);
-                imgui_ui.checkbox(im_str!("View collision volumes"), &mut viewing_collision);
+                if imgui_ui.checkbox(im_str!("View collision triangles"), &mut viewing_triangles) {
+                    if let Some(re) = scene_data.transparent_entities.get_mut_element(terrain_re_index) {
+                        let mat = if viewing_triangles { glm::identity::<f32, 4>() }
+                        else { glm::zero() };
+
+                        re.update_transform_buffer(glm::value_ptr(&mat), DEBUG_TRANSFORM_ATTRIBUTE);
+                    }
+                }
+                imgui_ui.checkbox(im_str!("View collision spheres"), &mut viewing_collision);
                 imgui_ui.checkbox(im_str!("View point lights"), &mut viewing_point_lights);
                 imgui_ui.checkbox(im_str!("View player spawn"), &mut viewing_player_spawn);
                 imgui_ui.checkbox(im_str!("Use toon shading"), &mut scene_data.toon_shading);
-
                 if let Some(_) = &xr_instance {
                     imgui_ui.checkbox(im_str!("View player"), &mut viewing_player_spheres);
                 }
@@ -1940,7 +1976,14 @@ fn main() {
                             if let Some(monitor) = opt_monitor {
                                 let pos = monitor.get_pos();
                                 if let Some(mode) = monitor.get_video_mode() {
-                                    resize_main_window(&mut window, &mut default_framebuffer, &mut camera.screen_state, glm::vec2(mode.width, mode.height), pos, WindowMode::FullScreen(monitor));
+                                    resize_main_window(
+                                        &mut window,
+                                        &mut default_framebuffer,
+                                        &mut camera.screen_state,
+                                        glm::vec2(mode.width, mode.height),
+                                        pos,
+                                        WindowMode::FullScreen(monitor)
+                                    );
                                 }
                             }
                         });
@@ -2335,7 +2378,14 @@ fn main() {
                     *camera.screen_state.get_view_from_world(),
                     *camera.screen_state.get_clipping_from_view()
                 );
-                render::main_scene(&default_framebuffer, &scene_data, &freecam_viewdata);
+                render::main_scene(&default_rendertarget.framebuffer, &scene_data, &freecam_viewdata);
+                
+                //Blit to default framebuffer
+                let fb_size = camera.screen_state.get_window_size();
+                gl::BindFramebuffer(gl::FRAMEBUFFER, default_framebuffer.name);
+                gl::BindFramebuffer(gl::READ_FRAMEBUFFER, default_rendertarget.framebuffer.name);
+                gl::BlitFramebuffer(0, 0, fb_size.x as GLint, fb_size.y as GLint, 0, 0, fb_size.x as GLint, fb_size.y as GLint, gl::COLOR_BUFFER_BIT, gl::NEAREST);
+
             }
 
             //Take a screenshot here as to not get the dev gui in it

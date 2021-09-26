@@ -12,7 +12,7 @@ use gl::types::*;
 use crate::traits::SphereCollider;
 
 pub const NEAR_DISTANCE: f32 = 0.0625;
-pub const FAR_DISTANCE: f32 = 1_000_000.0;
+pub const FAR_DISTANCE: f32 = 100_000.0;
 pub const MSAA_SAMPLES: u32 = 8;
 pub const SHADOW_CASCADE_COUNT: usize = 5;
 pub const ENTITY_TEXTURE_COUNT: usize = 3;
