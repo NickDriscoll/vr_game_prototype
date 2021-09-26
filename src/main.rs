@@ -15,8 +15,7 @@ mod routines;
 mod traits;
 mod xrutil;
 
-use render::{compute_shadow_cascade_matrices, CascadedShadowMap, FragmentFlag, RenderEntity, SceneData, ViewData};
-use render::{NEAR_DISTANCE, FAR_DISTANCE};
+use render::{CascadedShadowMap, FragmentFlag, RenderEntity, SceneData, ViewData};
 
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
 use gl::types::*;
@@ -340,13 +339,19 @@ fn main() {
 
     //Camera state
     let default_camera_position = glm::vec3(0.0, -8.0, 5.5);
+    let mut window_size;
     let mut camera = {
         let position = default_camera_position;
-        let screen_state = {
-            let window_size = get_window_size(&config);
-            let fov_radians = glm::half_pi();
-            ScreenState::new(window_size, glm::identity(), fov_radians, NEAR_DISTANCE, FAR_DISTANCE)
-        };
+        window_size = get_window_size(&config);
+        let fov_radians = glm::half_pi();
+
+        let view_from_world = glm::identity();
+		let clipping_from_view = glm::perspective_zo(window_size.x as f32 / window_size.y as f32, fov_radians, render::NEAR_DISTANCE, render::FAR_DISTANCE);
+        let aspect_ratio = window_size.x as f32 / window_size.y as f32;
+        let clipping_from_world = clipping_from_view * view_from_world;
+        let world_from_clipping = glm::affine_inverse(clipping_from_world);
+		let world_from_view = glm::affine_inverse(view_from_world);
+        let clipping_from_screen = clip_from_screen(window_size);
 
         Camera {
             position,
@@ -355,16 +360,23 @@ fn main() {
             orientation: glm::vec2(0.0, -glm::half_pi::<f32>() * 0.6),
             is_colliding: true,
             using_mouselook: false,
-            screen_state,
             radius: 0.5,
-            speed: 5.0
+            speed: 5.0,
+            aspect_ratio,
+            fov_radians,
+            view_from_world,
+            clipping_from_view,
+            clipping_from_world,
+            world_from_clipping,
+            world_from_view,
+            clipping_from_screen
         }
     };
 
     //Create the window
 	glfw.window_hint(WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
 	glfw.window_hint(WindowHint::Samples(Some(render::MSAA_SAMPLES)));
-    let (mut window, events) = match glfw.create_window(camera.screen_state.get_window_size().x, camera.screen_state.get_window_size().y, "THCATO", glfw::WindowMode::Windowed) {
+    let (mut window, events) = match glfw.create_window(window_size.x, window_size.y, "THCATO", glfw::WindowMode::Windowed) {
         Some(stuff) => { stuff }
         None => {
             panic!("Unable to create a window!");
@@ -390,8 +402,7 @@ fn main() {
         gl::Enable(gl::MULTISAMPLE);                                    //Enable MSAA
         gl::Enable(gl::BLEND);											//Enable alpha blending
 		gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);			//Set blend func to (Cs * alpha + Cd * (1.0 - alpha))
-        //gl::ClearColor(0.26, 0.4, 0.46, 1.0);							//Set the clear color
-        gl::ClearColor(0.1, 0.1, 0.1, 1.0);
+        gl::ClearColor(0.26, 0.4, 0.46, 1.0);							//Set the clear color
 
 		#[cfg(gloutput)]
 		{
@@ -565,7 +576,7 @@ fn main() {
     //Initialize default framebuffer
     let mut default_framebuffer = Framebuffer {
         name: 0,
-        size: (camera.screen_state.get_window_size().x as GLsizei, camera.screen_state.get_window_size().y as GLsizei),
+        size: (window_size.x as GLsizei, window_size.y as GLsizei),
         clear_flags: gl::DEPTH_BUFFER_BIT | gl::COLOR_BUFFER_BIT,
         cull_face: gl::BACK
     };
@@ -573,7 +584,7 @@ fn main() {
     //Creating default rendertarget
     let mut default_rendertarget = unsafe {
         RenderTarget::new_multisampled(
-            (camera.screen_state.get_window_size().x as GLsizei, camera.screen_state.get_window_size().y as GLsizei),
+            (window_size.x as GLsizei, window_size.y as GLsizei),
             render::MSAA_SAMPLES as GLint
         )
     };
@@ -583,8 +594,8 @@ fn main() {
     imgui_context.style_mut().use_dark_colors();
     {
         let io = imgui_context.io_mut();
-        io.display_size[0] = camera.screen_state.get_window_size().x as f32;
-        io.display_size[1] = camera.screen_state.get_window_size().y as f32;
+        io.display_size[0] = window_size.x as f32;
+        io.display_size[1] = window_size.y as f32;
         
         //Set up keyboard index map
         io.key_map[imgui::Key::Tab as usize] = Key::Tab as u32;
@@ -665,7 +676,7 @@ fn main() {
 
         //Compute the clip space distances and save them in the scene_data struct
         for i in 0..view_distances.len() {
-            let p = camera.screen_state.get_clipping_from_view() * glm::vec4(0.0, 0.0, view_distances[i], 1.0);
+            let p = camera.clipping_from_view * glm::vec4(0.0, 0.0, view_distances[i], 1.0);
             scene_data.sun_shadow_map.clip_space_distances[i] = p.z;
         }
     }
@@ -1012,7 +1023,7 @@ fn main() {
                     mouse.screen_space_pos = glm::vec2(x as f32, y as f32);
                     if camera.using_mouselook {
                         const CAMERA_SENSITIVITY_DAMPENING: f32 = 0.002;
-                        let offset = glm::vec2(mouse.screen_space_pos.x as f32 - camera.screen_state.get_window_size().x as f32 / 2.0, mouse.screen_space_pos.y as f32 - camera.screen_state.get_window_size().y as f32 / 2.0);
+                        let offset = glm::vec2(mouse.screen_space_pos.x as f32 - window_size.x as f32 / 2.0, mouse.screen_space_pos.y as f32 - window_size.y as f32 / 2.0);
                         camera.orientation += offset * CAMERA_SENSITIVITY_DAMPENING;
                         if camera.orientation.y < -glm::pi::<f32>() {
                             camera.orientation.y = -glm::pi::<f32>();
@@ -1365,10 +1376,10 @@ fn main() {
 
         //If the user is controlling the camera, force the mouse cursor into the center of the screen
         if camera.using_mouselook {
-            window.set_cursor_pos(camera.screen_state.get_window_size().x as f64 / 2.0, camera.screen_state.get_window_size().y as f64 / 2.0);
+            window.set_cursor_pos(window_size.x as f64 / 2.0, window_size.y as f64 / 2.0);
         }
 
-        let camera_velocity = camera.speed * glm::vec4_to_vec3(&(glm::affine_inverse(*camera.screen_state.get_view_from_world()) * glm::vec3_to_vec4(&camera.view_space_velocity)));
+        let camera_velocity = camera.speed * glm::vec4_to_vec3(&(glm::affine_inverse(camera.view_from_world) * glm::vec3_to_vec4(&camera.view_space_velocity)));
         camera.position += camera_velocity * delta_time / world_state.delta_timescale;
 
         //Do click action
@@ -1400,7 +1411,8 @@ fn main() {
             };
 
             //Compute click ray
-            let click_ray = compute_click_ray(&camera.screen_state, &mouse.screen_space_pos, &camera.position);
+            let w = glm::vec2(window_size.x as f32, window_size.y as f32);
+            let click_ray = compute_click_ray(&camera, w, &mouse.screen_space_pos, &camera.position);
 
             //Branch based on which click action is selected
             match click_action {
@@ -1657,8 +1669,8 @@ fn main() {
                 }
                 None => {
                     let camera_vel = camera.position - camera.last_position;
-                    let camera_forward = glm::vec4_to_vec3(&(camera.screen_state.get_world_from_view() * glm::vec4(0.0, 0.0, -1.0, 0.0)));
-                    let camera_up = glm::vec4_to_vec3(&(camera.screen_state.get_world_from_view() * glm::vec4(0.0, 1.0, 0.0, 0.0)));
+                    let camera_forward = glm::vec4_to_vec3(&(camera.world_from_view * glm::vec4(0.0, 0.0, -1.0, 0.0)));
+                    let camera_up = glm::vec4_to_vec3(&(camera.world_from_view * glm::vec4(0.0, 1.0, 0.0, 0.0)));
                     
                     (vec_to_array(camera.position), vec_to_array(camera_vel), vec_to_array(camera_forward), vec_to_array(camera_up))
                 }
@@ -1969,29 +1981,32 @@ fn main() {
                 }
 
                 //Fullscreen button
-                if imgui_ui.button(im_str!("Toggle fullscreen"), [0.0, 32.0]) {
-                    //Toggle window fullscreen
-                    if !is_fullscreen {
-                        glfw.with_primary_monitor_mut(|_, opt_monitor| {
-                            if let Some(monitor) = opt_monitor {
-                                let pos = monitor.get_pos();
-                                if let Some(mode) = monitor.get_video_mode() {
-                                    resize_main_window(
-                                        &mut window,
-                                        &mut default_framebuffer,
-                                        &mut camera.screen_state,
-                                        glm::vec2(mode.width, mode.height),
-                                        pos,
-                                        WindowMode::FullScreen(monitor)
-                                    );
+                unsafe {
+                    if imgui_ui.button(im_str!("Toggle fullscreen"), [0.0, 32.0]) {
+                        //Toggle window fullscreen
+                        if !is_fullscreen {
+                            glfw.with_primary_monitor_mut(|_, opt_monitor| {
+                                if let Some(monitor) = opt_monitor {
+                                    let pos = monitor.get_pos();
+                                    if let Some(mode) = monitor.get_video_mode() {
+                                        window_size = glm::vec2(mode.width, mode.height);
+                                        resize_main_window(
+                                            &mut window,
+                                            &mut default_rendertarget,
+                                            window_size,
+                                            pos,
+                                            WindowMode::FullScreen(monitor)
+                                        );
+                                    }
                                 }
-                            }
-                        });
-                    } else {
-                        let window_size = get_window_size(&config);
-                        resize_main_window(&mut window, &mut default_framebuffer, &mut camera.screen_state, window_size, (200, 200), WindowMode::Windowed);
+                            });
+                        } else {
+                            window_size = get_window_size(&config);
+                            resize_main_window(&mut window, &mut default_rendertarget, window_size, (200, 200), WindowMode::Windowed);
+                        }
+                        default_framebuffer.size = default_rendertarget.framebuffer.size;
+                        is_fullscreen = !is_fullscreen;
                     }
-                    is_fullscreen = !is_fullscreen;
                 }
 
                 if imgui_ui.button(im_str!("Take screenshot"), [0.0, 32.0]) {
@@ -2197,7 +2212,7 @@ fn main() {
             let new_view_matrix = glm::rotation(camera.orientation.y, &glm::vec3(1.0, 0.0, 0.0)) *
                                   glm::rotation(camera.orientation.x, &Z_UP) *
                                   glm::translation(&(-camera.position));
-            camera.screen_state.update_view(new_view_matrix);
+            camera.update_view(new_view_matrix, window_size);
         }
 
         //Rendering
@@ -2304,7 +2319,7 @@ fn main() {
                                 }
 
                                 //Draw the companion view if we're showing HMD POV
-                                let projection = *camera.screen_state.get_clipping_from_view();
+                                let projection = camera.clipping_from_view;
                                 let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);
                                 if hmd_pov {
                                     let v_world_pos = xrutil::pose_to_mat4(&pose, &world_from_tracking);
@@ -2367,30 +2382,29 @@ fn main() {
             gl::BindFramebuffer(gl::FRAMEBUFFER, default_framebuffer.name);
             if !hmd_pov {
                 //Render shadows
-                let projection = *camera.screen_state.get_clipping_from_view();
-                let v_mat = camera.screen_state.get_view_from_world();
-                scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&scene_data.sun_shadow_map.view_space_distances, &shadow_view, v_mat, &projection);
+                let projection = &camera.clipping_from_view;
+                let v_mat = &camera.view_from_world;
+                scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&scene_data.sun_shadow_map.view_space_distances, &shadow_view, v_mat, projection);
                 render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.opaque_entities.as_slice());
 
                 //Render main scene
                 let freecam_viewdata = ViewData::new(
                     camera.position,
-                    *camera.screen_state.get_view_from_world(),
-                    *camera.screen_state.get_clipping_from_view()
+                    camera.view_from_world,
+                    camera.clipping_from_view
                 );
                 render::main_scene(&default_rendertarget.framebuffer, &scene_data, &freecam_viewdata);
                 
                 //Blit to default framebuffer
-                let fb_size = camera.screen_state.get_window_size();
+                let fb_size = window_size;
                 gl::BindFramebuffer(gl::FRAMEBUFFER, default_framebuffer.name);
                 gl::BindFramebuffer(gl::READ_FRAMEBUFFER, default_rendertarget.framebuffer.name);
                 gl::BlitFramebuffer(0, 0, fb_size.x as GLint, fb_size.y as GLint, 0, 0, fb_size.x as GLint, fb_size.y as GLint, gl::COLOR_BUFFER_BIT, gl::NEAREST);
-
             }
 
             //Take a screenshot here as to not get the dev gui in it
             if screenshot_this_frame {
-                take_screenshot(&camera.screen_state);
+                take_screenshot(window_size);
                 screenshot_this_frame = false;
             }
 
@@ -2405,7 +2419,7 @@ fn main() {
 
             //Render Dear ImGui
             gl::UseProgram(imgui_program);
-            glutil::bind_matrix4(imgui_program, "projection", camera.screen_state.get_clipping_from_screen());
+            glutil::bind_matrix4(imgui_program, "projection", &camera.clipping_from_screen);
             {
                 let draw_data = imgui_ui.render();
                 if draw_data.total_vtx_count > 0 {
@@ -2438,7 +2452,7 @@ fn main() {
                                     gl::ActiveTexture(gl::TEXTURE0);
                                     gl::BindTexture(gl::TEXTURE_2D, cmd_params.texture_id.id() as GLuint);
                                     gl::Scissor(cmd_params.clip_rect[0] as GLint,
-                                                camera.screen_state.get_window_size().y as GLint - cmd_params.clip_rect[3] as GLint,
+                                                window_size.y as GLint - cmd_params.clip_rect[3] as GLint,
                                                 (cmd_params.clip_rect[2] - cmd_params.clip_rect[0]) as GLint,
                                                 (cmd_params.clip_rect[3] - cmd_params.clip_rect[1]) as GLint
                                     );
@@ -2462,7 +2476,7 @@ fn main() {
 
             //Take a screenshot here as to get the dev gui in it
             if full_screenshot_this_frame {
-                take_screenshot(&camera.screen_state);
+                take_screenshot(window_size);
                 full_screenshot_this_frame = false;
             }
         }

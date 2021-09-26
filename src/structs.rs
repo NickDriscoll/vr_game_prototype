@@ -32,13 +32,31 @@ pub struct Camera {
     pub orientation: glm::TVec2<f32>,
     pub speed: f32,
     pub radius: f32,
+    pub aspect_ratio: f32,
+	pub fov_radians: f32,
     pub is_colliding: bool,
-    pub using_mouselook: bool,
-    pub screen_state: ScreenState
+    pub using_mouselook: bool,    
+	pub view_from_world: glm::TMat4<f32>,
+    pub clipping_from_view: glm::TMat4<f32>,
+    pub clipping_from_world: glm::TMat4<f32>,
+    pub world_from_clipping: glm::TMat4<f32>,
+	pub world_from_view: glm::TMat4<f32>,
+    pub clipping_from_screen: glm::TMat4<f32>
 }
 
 impl Camera {
-    
+    pub fn update_view(&mut self, view_from_world: glm::TMat4<f32>, window_size: glm::TVec2<u32>) {
+		let clipping_from_world = self.clipping_from_view * view_from_world;
+        let world_from_clipping = glm::affine_inverse(clipping_from_world);
+		let world_from_view = glm::affine_inverse(view_from_world);
+        let clipping_from_screen = clip_from_screen(window_size);
+		
+		self.view_from_world = view_from_world;
+		self.clipping_from_world = clipping_from_world;
+		self.world_from_clipping = world_from_clipping;
+		self.world_from_view = world_from_view;
+		self.clipping_from_screen = clipping_from_screen;
+	}
 }
 
 #[derive(PartialEq, Eq)]

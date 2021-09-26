@@ -22,20 +22,29 @@ use crate::gamestate::*;
 use crate::structs::*;
 use crate::*;
 
+pub fn clip_from_screen(screen_size: glm::TVec2<u32>) -> glm::TMat4<f32> {
+	glm::mat4(
+		2.0 / screen_size.x as f32, 0.0, 0.0, -1.0,
+		0.0, -(2.0 / screen_size.y as f32), 0.0, 1.0,
+		0.0, 0.0, 1.0, 0.0,
+		0.0, 0.0, 0.0, 1.0
+	)
+}
+
 //Saves a screenshot of the current framebuffer to disk
-pub unsafe fn take_screenshot(screen_state: &ScreenState) {
-    let mut buffer = vec![0u8; (screen_state.get_window_size().x * screen_state.get_window_size().y) as usize * 4];
+pub unsafe fn take_screenshot(window_size: glm::TVec2<u32>) {
+    let mut buffer = vec![0u8; (window_size.x * window_size.y) as usize * 4];
     gl::ReadPixels(
         0,
         0,
-        screen_state.get_window_size().x as GLint,
-        screen_state.get_window_size().y as GLint,
+        window_size.x as GLint,
+        window_size.y as GLint,
         gl::RGBA,
         gl::UNSIGNED_BYTE,
         buffer.as_mut_slice() as *mut [u8] as *mut c_void
     );
 
-    let dynamic_image = match ImageBuffer::from_raw(screen_state.get_window_size().x, screen_state.get_window_size().y, buffer) {
+    let dynamic_image = match ImageBuffer::from_raw(window_size.x, window_size.y, buffer) {
         Some(im) => { Some(DynamicImage::ImageRgba8(im).flipv()) }
         None => { 
             println!("Unable to convert raw to image::DynamicImage");
@@ -127,17 +136,6 @@ pub fn get_clicked_object<T: SphereCollider>(objects: &OptionVec<T>, click_ray: 
     hit_index
 }
 
-pub fn move_object<T: PositionAble>(objects: &mut OptionVec<T>, terrain: &Terrain, scene_data: &SceneData, camera: &Camera, mouse: &Mouse) {
-    if let Some(idx) = scene_data.selected_point_light {
-        let click_ray = compute_click_ray(&camera.screen_state, &mouse.screen_space_pos, &camera.position);
-        if let Some((_, point)) = ray_hit_terrain(terrain, &click_ray) {
-            if let Some(ob) = objects.get_mut_element(idx) {
-                ob.set_position(point + glm::vec3(0.0, 0.0, 2.0));
-            }
-        }
-    }
-}
-
 //Returns true if the difference between a and b is close enough to zero
 pub fn floats_equal(a: f32, b: f32) -> bool {
     let d = a - b;
@@ -173,10 +171,9 @@ pub fn do_radio_button<F: Eq + Default>(imgui_ui: &imgui::Ui, label: &imgui::ImS
     }
 }
 
-pub fn resize_main_window(window: &mut Window, framebuffer: &mut Framebuffer, screen_state: &mut ScreenState, size: glm::TVec2<u32>, pos: (i32, i32), window_mode: WindowMode) {    
-    framebuffer.size = (size.x as GLsizei, size.y as GLsizei);
-    *screen_state = ScreenState::new(glm::vec2(size.x, size.y), glm::identity(), glm::half_pi(), NEAR_DISTANCE, FAR_DISTANCE);
-    window.set_monitor(window_mode, pos.0, pos.1, size.x, size.y, Some(144));
+pub unsafe fn resize_main_window(window: &mut Window, rendertarget: &mut RenderTarget, window_size: glm::TVec2<u32>, pos: (i32, i32), window_mode: WindowMode) {
+    rendertarget.resize((window_size.x, window_size.y));
+    window.set_monitor(window_mode, pos.0, pos.1, window_size.x, window_size.y, Some(144));
 }
 
 pub fn write_vec4_to_buffer(buffer: &mut [f32], index: usize, vec: glm::TVec4<f32>) {
@@ -198,9 +195,9 @@ pub fn lerp(start: &glm::TVec3<f32>, end: &glm::TVec3<f32>, t: f32) -> glm::TVec
 
 //Given the mouse's position on the near clipping plane (A) and the camera's origin position (B),
 //computes the normalized ray (A - B), expressed in world-space coords
-pub fn compute_click_ray(screen_state: &ScreenState, screen_space_mouse: &glm::TVec2<f32>, camera_position: &glm::TVec3<f32>) -> Ray {
-    let fovy_radians = screen_state.get_fov_radians();
-    let fovx_radians = 2.0 * f32::atan(f32::tan(fovy_radians / 2.0) * screen_state.get_aspect_ratio());
+pub fn compute_click_ray(camera: &Camera, window_size: glm::TVec2<f32>, screen_space_mouse: &glm::TVec2<f32>, camera_position: &glm::TVec3<f32>) -> Ray {
+    let fovy_radians = camera.fov_radians;
+    let fovx_radians = 2.0 * f32::atan(f32::tan(fovy_radians / 2.0) * camera.aspect_ratio);
     let max_coords = glm::vec4(
         NEAR_DISTANCE * f32::tan(fovx_radians / 2.0),
         NEAR_DISTANCE * f32::tan(fovy_radians / 2.0),
@@ -208,13 +205,13 @@ pub fn compute_click_ray(screen_state: &ScreenState, screen_space_mouse: &glm::T
         1.0
     );
     let normalized_coords = glm::vec4(
-        screen_space_mouse.x * 2.0 / screen_state.get_window_size().x as f32 - 1.0,
-        -screen_space_mouse.y * 2.0 / screen_state.get_window_size().y as f32 + 1.0,
+        screen_space_mouse.x * 2.0 / window_size.x as f32 - 1.0,
+        -screen_space_mouse.y * 2.0 / window_size.y as f32 + 1.0,
         1.0,
         1.0
     );
     let view_space_mouse = glm::matrix_comp_mult(&normalized_coords, &max_coords);
-    let world_space_mouse = screen_state.get_world_from_view() * view_space_mouse;
+    let world_space_mouse = camera.world_from_view * view_space_mouse;
 
     let ray_origin = glm::vec3(camera_position.x, camera_position.y, camera_position.z);
     Ray {
