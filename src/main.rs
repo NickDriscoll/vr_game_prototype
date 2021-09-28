@@ -2013,7 +2013,7 @@ fn main() {
                     screenshot_this_frame = true;
                 }
 
-                if imgui_ui.button(im_str!("Totoro genocide"), [0.0, 32.0]) {
+                if imgui_ui.button(im_str!("Delete all totoros"), [0.0, 32.0]) {
                     world_state.totoros.clear();
                     world_state.selected_totoro = None;
                 }
@@ -2379,7 +2379,6 @@ fn main() {
             }
 
             //Main window rendering
-            gl::BindFramebuffer(gl::FRAMEBUFFER, default_framebuffer.name);
             if !hmd_pov {
                 //Render shadows
                 let projection = &camera.clipping_from_view;

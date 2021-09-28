@@ -9,6 +9,7 @@ use image::{ImageBuffer, DynamicImage};
 use std::fs;
 use std::path::Path;
 use std::process::exit;
+use std::ops::RangeTo;
 use std::os::raw::c_void;
 use std::sync::mpsc::Sender;
 use ozy::{glutil};
@@ -145,8 +146,10 @@ pub fn floats_equal(a: f32, b: f32) -> bool {
 pub fn compile_shader_or_crash(source_files: &[(GLenum, &str)] ) -> GLuint {
     match glutil::compile_program_from_files(&source_files) {
         Ok(program) => { program }
-        Err(e) => {
-            tfd::message_box_ok("Error compiling OpenGL shader.", &format!("An error occurred while compiling an OpenGL shader:\n\n{}", e), tfd::MessageBoxIcon::Error);
+        Err(mut e) => {
+            e.remove(e.len() - 1);
+            let err_str = format!("An error occurred while compiling an OpenGL shader:\n{}", e.replace("'", "~"));
+            tfd::message_box_ok("Error compiling OpenGL shader.", &err_str, tfd::MessageBoxIcon::Error);
             exit(-1);
         }
     }
@@ -171,8 +174,8 @@ pub fn do_radio_button<F: Eq + Default>(imgui_ui: &imgui::Ui, label: &imgui::ImS
     }
 }
 
-pub unsafe fn resize_main_window(window: &mut Window, rendertarget: &mut RenderTarget, window_size: glm::TVec2<u32>, pos: (i32, i32), window_mode: WindowMode) {
-    rendertarget.resize((window_size.x, window_size.y));
+pub unsafe fn resize_main_window(window: &mut Window, window_rt: &mut RenderTarget, window_size: glm::TVec2<u32>, pos: (i32, i32), window_mode: WindowMode) {
+    window_rt.resize((window_size.x, window_size.y));
     window.set_monitor(window_mode, pos.0, pos.1, window_size.x, window_size.y, Some(144));
 }
 
