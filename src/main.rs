@@ -31,7 +31,8 @@ use std::mem::size_of;
 use std::os::raw::c_void;
 use std::sync::mpsc;
 use std::ptr;
-use std::time::{ Instant};
+use std::thread;
+use std::time::{Duration, Instant};
 use strum::EnumCount;
 use tfd::MessageBoxIcon;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
@@ -337,45 +338,9 @@ fn main() {
         None => { glfw.window_hint(glfw::WindowHint::ContextVersion(4, 3)); }
     }
 
-    //Camera state
-    let default_camera_position = glm::vec3(0.0, -8.0, 5.5);
-    let mut window_size;
-    let mut camera = {
-        let position = default_camera_position;
-        window_size = get_window_size(&config);
-        let fov_radians = glm::half_pi();
-
-        let view_from_world = glm::identity();
-		let clipping_from_view = glm::perspective_zo(window_size.x as f32 / window_size.y as f32, fov_radians, render::NEAR_DISTANCE, render::FAR_DISTANCE);
-        let aspect_ratio = window_size.x as f32 / window_size.y as f32;
-        let clipping_from_world = clipping_from_view * view_from_world;
-        let world_from_clipping = glm::affine_inverse(clipping_from_world);
-		let world_from_view = glm::affine_inverse(view_from_world);
-        let clipping_from_screen = clip_from_screen(window_size);
-
-        Camera {
-            position,
-            last_position: position,
-            view_space_velocity: glm::zero(),
-            orientation: glm::vec2(0.0, -glm::half_pi::<f32>() * 0.6),
-            is_colliding: true,
-            using_mouselook: false,
-            radius: 0.5,
-            speed: 5.0,
-            aspect_ratio,
-            fov_radians,
-            view_from_world,
-            clipping_from_view,
-            clipping_from_world,
-            world_from_clipping,
-            world_from_view,
-            clipping_from_screen
-        }
-    };
-
+    let mut window_size = get_window_size(&config);
     //Create the window
 	glfw.window_hint(WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
-	glfw.window_hint(WindowHint::Samples(Some(render::MSAA_SAMPLES)));
     let (mut window, events) = match glfw.create_window(window_size.x, window_size.y, "THCATO", glfw::WindowMode::Windowed) {
         Some(stuff) => { stuff }
         None => {
@@ -402,7 +367,8 @@ fn main() {
         gl::Enable(gl::MULTISAMPLE);                                    //Enable MSAA
         gl::Enable(gl::BLEND);											//Enable alpha blending
 		gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);			//Set blend func to (Cs * alpha + Cd * (1.0 - alpha))
-        gl::ClearColor(0.26, 0.4, 0.46, 1.0);							//Set the clear color
+        //gl::ClearColor(0.26, 0.4, 0.46, 1.0);							//Set the clear color
+        gl::ClearColor(0.1, 0.1, 0.1, 1.0);
 
 		#[cfg(gloutput)]
 		{
@@ -538,7 +504,7 @@ fn main() {
     //MSAA rendertarget which will have the scene rendered into it before blitting to the actual HMD swapchain image
     //This gets around the fact that SteamVR refuses to allocate MSAA rendertargets :) :) :)
     let xr_swapchain_rendertarget = match xr_swapchain_size {
-        Some(size) => unsafe { Some(RenderTarget::new_multisampled((size.x as GLint, size.y as GLint), render::MSAA_SAMPLES as GLint)) }
+        Some(size) => unsafe { Some(RenderTarget::new_multisampled((size.x as GLint, size.y as GLint), render::MSAA_SAMPLES as GLint, gl::SRGB8_ALPHA8)) }
         None => { None }
     };
 
@@ -582,11 +548,28 @@ fn main() {
     };
 
     //Creating default rendertarget
-    let mut default_rendertarget = unsafe {
+    let mut core_rt = unsafe {
         RenderTarget::new_multisampled(
             (window_size.x as GLsizei, window_size.y as GLsizei),
-            render::MSAA_SAMPLES as GLint
+            render::MSAA_SAMPLES as GLint,
+            gl::SRGB8_ALPHA8
         )
+    };
+
+    //Also create textures for ping-pong image effects
+    let mut ping_rt = unsafe {
+        RenderTarget::new((window_size.x as GLint, window_size.y as GLint), gl::SRGB8_ALPHA8)
+    };
+    let ping_linear_view = unsafe {
+        let mut view_name = 0;
+        gl::GenTextures(1, &mut view_name);
+        gl::TextureView(view_name, gl::TEXTURE_2D, ping_rt.texture, gl::RGBA8, 0, 1, 0, 1);
+
+        view_name
+    };
+
+    let mut pong_rt = unsafe {
+        RenderTarget::new((window_size.x as GLint, window_size.y as GLint), gl::RGBA8)
     };
 
     //Creating Dear ImGui context
@@ -642,6 +625,39 @@ fn main() {
         }
         FontAtlasRefMut::Shared(_) => {
             panic!("Not dealing with this case.");
+        }
+    };
+    
+    let default_camera_position = glm::vec3(0.0, -8.0, 5.5);
+    let mut camera = {
+        let position = default_camera_position;
+        let fov_radians = glm::half_pi();
+
+        let view_from_world = glm::identity();
+		let clipping_from_view = glm::perspective_zo(window_size.x as f32 / window_size.y as f32, fov_radians, render::NEAR_DISTANCE, render::FAR_DISTANCE);
+        let aspect_ratio = window_size.x as f32 / window_size.y as f32;
+        let clipping_from_world = clipping_from_view * view_from_world;
+        let world_from_clipping = glm::affine_inverse(clipping_from_world);
+		let world_from_view = glm::affine_inverse(view_from_world);
+        let clipping_from_screen = clip_from_screen(window_size);
+
+        Camera {
+            position,
+            last_position: position,
+            view_space_velocity: glm::zero(),
+            orientation: glm::vec2(0.0, -glm::half_pi::<f32>() * 0.6),
+            is_colliding: true,
+            using_mouselook: false,
+            radius: 0.5,
+            speed: 5.0,
+            aspect_ratio,
+            fov_radians,
+            view_from_world,
+            clipping_from_view,
+            clipping_from_world,
+            world_from_clipping,
+            world_from_view,
+            clipping_from_screen
         }
     };
 
@@ -1992,7 +2008,7 @@ fn main() {
                                         window_size = glm::vec2(mode.width, mode.height);
                                         resize_main_window(
                                             &mut window,
-                                            &mut default_rendertarget,
+                                            &mut core_rt,
                                             window_size,
                                             pos,
                                             WindowMode::FullScreen(monitor)
@@ -2002,9 +2018,9 @@ fn main() {
                             });
                         } else {
                             window_size = get_window_size(&config);
-                            resize_main_window(&mut window, &mut default_rendertarget, window_size, (200, 200), WindowMode::Windowed);
+                            resize_main_window(&mut window, &mut core_rt, window_size, (200, 200), WindowMode::Windowed);
                         }
-                        default_framebuffer.size = default_rendertarget.framebuffer.size;
+                        default_framebuffer.size = core_rt.framebuffer.size;
                         is_fullscreen = !is_fullscreen;
                     }
                 }
@@ -2392,13 +2408,52 @@ fn main() {
                     camera.view_from_world,
                     camera.clipping_from_view
                 );
-                render::main_scene(&default_rendertarget.framebuffer, &scene_data, &freecam_viewdata);
+                render::main_scene(&core_rt.framebuffer, &scene_data, &freecam_viewdata);
+
+                //Blitting to non-MSAA rendertarget so we can do post-fx
+                gl::BindFramebuffer(gl::FRAMEBUFFER, ping_rt.framebuffer.name);
+                gl::BindFramebuffer(gl::READ_FRAMEBUFFER, core_rt.framebuffer.name);
+                gl::BlitFramebuffer(
+                    0,
+                    0,
+                    window_size.x as GLint,
+                    window_size.y as GLint,
+                    0,
+                    0,
+                    window_size.x as GLint,
+                    window_size.y as GLint,
+                    gl::COLOR_BUFFER_BIT,
+                    gl::NEAREST
+                );
+
+                //Binding the compute shader program
+                gl::UseProgram(postfx_program);
+                gl::BindImageTexture(0, ping_linear_view, 0, gl::FALSE, 0, gl::WRITE_ONLY, gl::RGBA8);
+                glutil::bind_float(postfx_program, "elapsed_time", scene_data.elapsed_time);
+
+                //Dispatching compute
+                //Hardcoded such that with 8x8 workgroups a 1920x1080 area is covered
+                gl::DispatchCompute(240/2, 135/2, 1);
+
+                //Waiting for the compute shader to finished before blitting to the default framebuffer
+                //I think gl::FRAMEBUFFER_BARRIER_BIT would be right but idk so it's all to be safe
+                gl::MemoryBarrier(gl::ALL_BARRIER_BITS);
                 
                 //Blit to default framebuffer
-                let fb_size = window_size;
                 gl::BindFramebuffer(gl::FRAMEBUFFER, default_framebuffer.name);
-                gl::BindFramebuffer(gl::READ_FRAMEBUFFER, default_rendertarget.framebuffer.name);
-                gl::BlitFramebuffer(0, 0, fb_size.x as GLint, fb_size.y as GLint, 0, 0, fb_size.x as GLint, fb_size.y as GLint, gl::COLOR_BUFFER_BIT, gl::NEAREST);
+                gl::BindFramebuffer(gl::READ_FRAMEBUFFER, ping_rt.framebuffer.name);
+                gl::BlitFramebuffer(
+                    0,
+                    0,
+                    window_size.x as GLint,
+                    window_size.y as GLint,
+                    0,
+                    0,
+                    window_size.x as GLint,
+                    window_size.y as GLint,
+                    gl::COLOR_BUFFER_BIT,
+                    gl::NEAREST
+                );
             }
 
             //Take a screenshot here as to not get the dev gui in it

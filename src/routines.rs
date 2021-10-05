@@ -148,7 +148,8 @@ pub fn compile_shader_or_crash(source_files: &[(GLenum, &str)] ) -> GLuint {
         Ok(program) => { program }
         Err(mut e) => {
             e.remove(e.len() - 1);
-            let err_str = format!("An error occurred while compiling an OpenGL shader:\n{}", e.replace("'", "~"));
+            let err_str = format!("An error occurred while compiling an OpenGL shader:\n{}", e.replace("'", "~").replace("\"", "~"));
+            println!("{}", err_str);
             tfd::message_box_ok("Error compiling OpenGL shader.", &err_str, tfd::MessageBoxIcon::Error);
             exit(-1);
         }
