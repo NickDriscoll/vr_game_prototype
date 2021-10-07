@@ -560,14 +560,6 @@ fn main() {
     let mut ping_rt = unsafe {
         RenderTarget::new((window_size.x as GLint, window_size.y as GLint), gl::SRGB8_ALPHA8)
     };
-    let ping_linear_view = unsafe {
-        let mut view_name = 0;
-        gl::GenTextures(1, &mut view_name);
-        gl::TextureView(view_name, gl::TEXTURE_2D, ping_rt.texture, gl::RGBA8, 0, 1, 0, 1);
-
-        view_name
-    };
-
     let mut pong_rt = unsafe {
         RenderTarget::new((window_size.x as GLint, window_size.y as GLint), gl::RGBA8)
     };
@@ -2009,6 +2001,8 @@ fn main() {
                                         resize_main_window(
                                             &mut window,
                                             &mut core_rt,
+                                            &mut ping_rt,
+                                            &mut pong_rt,
                                             window_size,
                                             pos,
                                             WindowMode::FullScreen(monitor)
@@ -2018,7 +2012,7 @@ fn main() {
                             });
                         } else {
                             window_size = get_window_size(&config);
-                            resize_main_window(&mut window, &mut core_rt, window_size, (200, 200), WindowMode::Windowed);
+                            resize_main_window(&mut window, &mut core_rt, &mut ping_rt, &mut pong_rt, window_size, (200, 200), WindowMode::Windowed);
                         }
                         default_framebuffer.size = core_rt.framebuffer.size;
                         is_fullscreen = !is_fullscreen;
@@ -2410,8 +2404,9 @@ fn main() {
                 );
                 render::main_scene(&core_rt.framebuffer, &scene_data, &freecam_viewdata);
 
-                //Blitting to non-MSAA rendertarget so we can do post-fx
-                gl::BindFramebuffer(gl::FRAMEBUFFER, ping_rt.framebuffer.name);
+                //Blitting to non-MSAA rendertarget to resolve it
+                //Both framebuffers have an internal format of gl::SRGB8_ALPHA8
+                gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, ping_rt.framebuffer.name);
                 gl::BindFramebuffer(gl::READ_FRAMEBUFFER, core_rt.framebuffer.name);
                 gl::BlitFramebuffer(
                     0,
@@ -2426,21 +2421,24 @@ fn main() {
                     gl::NEAREST
                 );
 
+                gl::BindTexture(gl::TEXTURE_2D, ping_rt.color_attachment_view);
+                gl::GenerateMipmap(gl::TEXTURE_2D);
+
                 //Binding the compute shader program
                 gl::UseProgram(postfx_program);
-                gl::BindImageTexture(0, ping_linear_view, 0, gl::FALSE, 0, gl::WRITE_ONLY, gl::RGBA8);
                 glutil::bind_float(postfx_program, "elapsed_time", scene_data.elapsed_time);
 
-                //Dispatching compute
-                //Hardcoded such that with 8x8 workgroups a 1920x1080 area is covered
-                gl::DispatchCompute(240/2, 135/2, 1);
+                //ping_rt.color_attachment_view is a texture view into ping_rt.texture but it's internal format is set to gl::RGBA8 so the compute shader can use it
+                gl::BindImageTexture(0, ping_rt.color_attachment_view, 0, gl::FALSE, 0, gl::READ_WRITE, gl::RGBA8);
 
-                //Waiting for the compute shader to finished before blitting to the default framebuffer
-                //I think gl::FRAMEBUFFER_BARRIER_BIT would be right but idk so it's all to be safe
+                //Dispatching compute
+                gl::DispatchCompute(window_size.x / 32 + 1, window_size.y / 32 + 1, 1);
+
+                //Waiting for the compute shader to finish before blitting to the default framebuffer
                 gl::MemoryBarrier(gl::ALL_BARRIER_BITS);
                 
                 //Blit to default framebuffer
-                gl::BindFramebuffer(gl::FRAMEBUFFER, default_framebuffer.name);
+                gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, default_framebuffer.name);
                 gl::BindFramebuffer(gl::READ_FRAMEBUFFER, ping_rt.framebuffer.name);
                 gl::BlitFramebuffer(
                     0,

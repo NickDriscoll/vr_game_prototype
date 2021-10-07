@@ -175,8 +175,10 @@ pub fn do_radio_button<F: Eq + Default>(imgui_ui: &imgui::Ui, label: &imgui::ImS
     }
 }
 
-pub unsafe fn resize_main_window(window: &mut Window, window_rt: &mut RenderTarget, window_size: glm::TVec2<u32>, pos: (i32, i32), window_mode: WindowMode) {
+pub unsafe fn resize_main_window(window: &mut Window, window_rt: &mut RenderTarget, ping_rt: &mut RenderTarget, pong_rt: &mut RenderTarget, window_size: glm::TVec2<u32>, pos: (i32, i32), window_mode: WindowMode) {
     window_rt.resize((window_size.x, window_size.y));
+    ping_rt.resize((window_size.x, window_size.y));
+    pong_rt.resize((window_size.x, window_size.y));
     window.set_monitor(window_mode, pos.0, pos.1, window_size.x, window_size.y, Some(144));
 }
 
