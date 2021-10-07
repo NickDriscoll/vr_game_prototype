@@ -2,9 +2,11 @@
 
 layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
 
-const int TAP = 5; //Must be odd
+//const float GAUSSIAN_WEIGHTS[TAP / 2 + 1] = float[](0.23273657289002558, 0.21483375959079284, 0.16879795396419436);
+//const int TAP = 5; //Must be odd
+const int TAP = 9; //Must be odd
 const int BOUND = TAP / 2;
-const float GAUSSIAN_WEIGHTS[TAP / 2 + 1] = float[](0.23273657289002558, 0.21483375959079284, 0.16879795396419436);
+const float GAUSSIAN_WEIGHTS[TAP / 2 + 1] = float[](0.17218543046357615, 0.15894039735099338, 0.12488174077578051, 0.08325449385052035, 0.04683065279091769);
 
 restrict layout(rgba8, binding = 0) uniform image2D ping_im;
 uniform float elapsed_time;
@@ -13,6 +15,7 @@ void main() {
     ivec2 image_coord = ivec2(gl_GlobalInvocationID.xy);
     vec3 pixel = imageLoad(ping_im, image_coord).rgb;
 
+    //Horizontal blur pass
     {
         vec3 res = vec3(0.0);
         for (int i = -BOUND; i <= BOUND; i++) {
@@ -25,6 +28,7 @@ void main() {
 
     barrier();
 
+    //Vertical blur pass
     {
         vec3 res = vec3(0.0);
         for (int i = -BOUND; i <= BOUND; i++) {

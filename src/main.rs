@@ -19,7 +19,7 @@ use render::{CascadedShadowMap, FragmentFlag, RenderEntity, SceneData, ViewData}
 
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
 use gl::types::*;
-use imgui::{ColorEdit, DrawCmd, EditableColor, FontAtlasRefMut, ImString, Slider, TextureId, im_str};
+use imgui::{ColorEdit, DrawCmd, EditableColor, FontAtlasRefMut, MenuItem, Slider, TextureId, im_str};
 use noise::NoiseFn;
 use core::ops::RangeInclusive;
 use std::collections::HashMap;
@@ -30,14 +30,12 @@ use std::process::exit;
 use std::mem::size_of;
 use std::os::raw::c_void;
 use std::sync::mpsc;
-use std::ptr;
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Instant};
 use strum::EnumCount;
 use tfd::MessageBoxIcon;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use ozy::{glutil, io};
-use ozy::render::{Framebuffer, RenderTarget, ScreenState, TextureKeeper};
+use ozy::render::{Framebuffer, RenderTarget, TextureKeeper};
 use ozy::routines::uniform_scale;
 use ozy::structs::OptionVec;
 use ozy::collision::*;
@@ -852,7 +850,9 @@ fn main() {
     let mut click_action = ClickAction::Select;
     let mut hmd_pov = false;
     let mut do_vsync = true;
+    let mut using_postfx = false;
     let mut do_imgui = true;
+    let mut graphics_menu = false;
     let mut screenshot_this_frame = false;
     let mut full_screenshot_this_frame = false;
     let mut turbo_clicking = false;
@@ -1873,7 +1873,133 @@ fn main() {
         if do_imgui {
             let drag_speed = 0.02;
             
-            if let Some(win_token) = imgui::Window::new(im_str!("Hacking window")).begin(&imgui_ui) {
+            if let Some(win_token) = imgui::Window::new(im_str!("Hacking window")).menu_bar(true).begin(&imgui_ui) {
+                if let Some(menu_token) = imgui_ui.begin_menu_bar() {
+                    if let Some(file_token) = imgui_ui.begin_menu(im_str!("File"), true) {
+                        if MenuItem::new(im_str!("Load level data")).build(&imgui_ui) {
+                            if let Some(path) = tfd::open_file_dialog("Load level data", "maps/", Some((&["*.lvl"], "*.lvl"))) {                
+                                //Load the scene data from the level file
+                                let lvl_name = Path::new(&path).file_stem().unwrap().to_str().unwrap();
+                                load_lvl(lvl_name, &mut world_state, &mut scene_data, &mut texture_keeper, standard_program);
+    
+                                //Load terrain data
+                                world_state.terrain = Terrain::from_ozt(&format!("models/{}.ozt", lvl_name));
+                                println!("Loaded {} collision triangles from {}.ozt", world_state.terrain.face_normals.len(), world_state.level_name);
+    
+                                //Load entity data
+                                load_ent(&format!("maps/{}.ent", lvl_name), &mut scene_data, &mut world_state);
+                            }
+                        }
+
+                        if MenuItem::new(im_str!("Save level data")).build(&imgui_ui) {
+                            fn write_f32_to_buffer(bytes: &mut Vec<u8>, n: f32) {
+                                let b = f32::to_le_bytes(n);
+                                bytes.push(b[0]);
+                                bytes.push(b[1]);
+                                bytes.push(b[2]);
+                                bytes.push(b[3]);
+                            }
+    
+                            fn write_vec3_to_buffer(bytes: &mut Vec<u8>, n: glm::TVec3<f32>) {
+                                write_f32_to_buffer(bytes, n.x);
+                                write_f32_to_buffer(bytes, n.y);
+                                write_f32_to_buffer(bytes, n.z);
+                            }
+    
+                            fn write_u32_to_buffer(bytes: &mut Vec<u8>, n: u32) {
+                                let b = u32::to_le_bytes(n);
+                                bytes.push(b[0]);
+                                bytes.push(b[1]);
+                                bytes.push(b[2]);
+                                bytes.push(b[3]);
+                            }
+    
+                            let save_error = |e: std::io::Error| {
+                                tfd::message_box_ok("Error saving level data", &format!("Could not save level data:\n{}", e), MessageBoxIcon::Error);
+                            };
+                            
+                            match File::create(format!("maps/{}.ent", world_state.level_name)) {
+                                Ok(mut file) => {
+                                    let totoros = &world_state.totoros;
+                                    io::write_pascal_strings(&mut file, &[world_state.skybox_strings[world_state.active_skybox_index].to_str()]);
+    
+                                    let floats_to_write = [
+                                        scene_data.ambient_strength,
+                                        scene_data.sun_pitch,
+                                        scene_data.sun_yaw,
+                                        scene_data.sun_color[0],
+                                        scene_data.sun_color[1],
+                                        scene_data.sun_color[2],
+                                        scene_data.shininess_lower_bound,
+                                        scene_data.shininess_upper_bound,
+                                        scene_data.sun_size,
+                                        world_state.player_spawn.x,
+                                        world_state.player_spawn.y,
+                                        world_state.player_spawn.z
+                                    ];
+                                    
+                                    let floats_per_totoro = 4;
+                                    let floats_per_light = 9;
+                                    let size = size_of::<f32>() * (floats_to_write.len() + totoros.count() * floats_per_totoro + scene_data.point_lights.count() * floats_per_light) + size_of::<u32>() * 2;
+    
+                                    //Convert to raw bytes and write to file
+                                    let mut bytes = Vec::with_capacity(size);
+                                    for i in 0..floats_to_write.len() {
+                                        write_f32_to_buffer(&mut bytes, floats_to_write[i]);
+                                    }
+    
+                                    //Write totoro data
+                                    write_u32_to_buffer(&mut bytes, totoros.count() as u32);
+                                    for i in 0..totoros.len() {
+                                        if let Some(tot) = &totoros[i] {
+                                            write_vec3_to_buffer(&mut bytes, tot.home);
+                                            write_f32_to_buffer(&mut bytes, tot.scale);
+                                        }
+                                    }
+    
+                                    //Write lights data
+                                    write_u32_to_buffer(&mut bytes, scene_data.point_lights.count() as u32);
+                                    for i in 0..scene_data.point_lights.len() {
+                                        if let Some(light) = &scene_data.point_lights[i] {
+                                            write_vec3_to_buffer(&mut bytes, light.position);
+                                            write_vec3_to_buffer(&mut bytes, glm::vec3(light.color[0], light.color[1], light.color[2]));
+                                            write_f32_to_buffer(&mut bytes, light.power);
+                                            write_f32_to_buffer(&mut bytes, light.flicker_amplitude);
+                                            write_f32_to_buffer(&mut bytes, light.flicker_timescale);
+                                        }
+                                    }
+    
+                                    match file.write(&bytes) {
+                                        Ok(n) => {
+                                            println!("Saved {}.ent ({}/{} bytes)", world_state.level_name, n, size);
+                                        }
+                                        Err(e) => {
+                                            save_error(e);
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    save_error(e);
+                                }
+                            }
+                        }
+                        
+                        if MenuItem::new(im_str!("Take screenshot")).build(&imgui_ui) { screenshot_this_frame = true; }
+
+                        if MenuItem::new(im_str!("Exit")).build(&imgui_ui) { window.set_should_close(true); }
+
+                        file_token.end(&imgui_ui);
+                    }
+
+                    if let Some(graphics_token) = imgui_ui.begin_menu(im_str!("Graphics"), true) {
+                        graphics_menu = true;
+
+                        graphics_token.end(&imgui_ui);
+                    }
+
+                    menu_token.end(&imgui_ui);
+                }
+
                 imgui_ui.text(im_str!("Frametime: {:.2}ms\tFPS: {:.2}\tFrame: {}", delta_time * 1000.0 / world_state.delta_timescale, framerate, frame_count));
                 imgui_ui.text(im_str!("Totoros spawned: {}", world_state.totoros.count()));
                 imgui_ui.text(im_str!("Point lights count: {}/{}", scene_data.point_lights.count(), render::MAX_POINT_LIGHTS));
@@ -1882,6 +2008,7 @@ fn main() {
                 imgui_ui.checkbox(im_str!("Complex normals"), &mut scene_data.complex_normals);
                 imgui_ui.checkbox(im_str!("Camera collision"), &mut camera.is_colliding);
                 imgui_ui.checkbox(im_str!("Turbo clicking"), &mut turbo_clicking);
+                imgui_ui.checkbox(im_str!("Use postfx"), &mut using_postfx);
                 if let Some(_) = &xr_instance {
                     imgui_ui.checkbox(im_str!("HMD Point-of-view"), &mut hmd_pov);
                     imgui_ui.checkbox(im_str!("Infinite ammo"), &mut infinite_ammo);
@@ -1968,180 +2095,72 @@ fn main() {
                 }
                 imgui_ui.same_line(0.0);
                 if imgui_ui.button(im_str!("Choose mp3"), [0.0, 32.0]) {
-                    send_or_error(&audio_sender, AudioCommand::SelectNewBGM);
+                        send_or_error(&audio_sender, AudioCommand::SelectNewBGM);
                 }
 
                 imgui_ui.separator();
 
                 if Slider::new(im_str!("Timescale")).range(RangeInclusive::new(0.000001, 2.0)).build(&imgui_ui, &mut world_state.delta_timescale) {
-                    send_or_error(&audio_sender, AudioCommand::SetPitchShift(world_state.delta_timescale));
+                        send_or_error(&audio_sender, AudioCommand::SetPitchShift(world_state.delta_timescale));
                 }
                 
                 //Reset player position button
                 if let Some(_) = &xr_instance {
-                    if imgui_ui.button(im_str!("Reset player position"), [0.0, 32.0]) {
-                        reset_player_position(&mut world_state);
-                    }
+                        if imgui_ui.button(im_str!("Reset player position"), [0.0, 32.0]) {
+                            reset_player_position(&mut world_state);
+                        }
                 }
 
                 if imgui_ui.button(im_str!("Reset freecam position"), [0.0, 32.0]) {
-                    camera.position = default_camera_position;
+                        camera.position = default_camera_position;
                 }
 
                 //Fullscreen button
                 unsafe {
-                    if imgui_ui.button(im_str!("Toggle fullscreen"), [0.0, 32.0]) {
-                        //Toggle window fullscreen
-                        if !is_fullscreen {
-                            glfw.with_primary_monitor_mut(|_, opt_monitor| {
-                                if let Some(monitor) = opt_monitor {
-                                    let pos = monitor.get_pos();
-                                    if let Some(mode) = monitor.get_video_mode() {
-                                        window_size = glm::vec2(mode.width, mode.height);
-                                        resize_main_window(
-                                            &mut window,
-                                            &mut core_rt,
-                                            &mut ping_rt,
-                                            &mut pong_rt,
-                                            window_size,
-                                            pos,
-                                            WindowMode::FullScreen(monitor)
-                                        );
+                        if imgui_ui.button(im_str!("Toggle fullscreen"), [0.0, 32.0]) {
+                            //Toggle window fullscreen
+                            if !is_fullscreen {
+                                glfw.with_primary_monitor_mut(|_, opt_monitor| {
+                                    if let Some(monitor) = opt_monitor {
+                                        let pos = monitor.get_pos();
+                                        if let Some(mode) = monitor.get_video_mode() {
+                                            window_size = glm::vec2(mode.width, mode.height);
+                                            resize_main_window(
+                                                &mut window,
+                                                &mut core_rt,
+                                                &mut ping_rt,
+                                                &mut pong_rt,
+                                                window_size,
+                                                pos,
+                                                WindowMode::FullScreen(monitor)
+                                            );
+                                        }
                                     }
-                                }
-                            });
-                        } else {
-                            window_size = get_window_size(&config);
-                            resize_main_window(&mut window, &mut core_rt, &mut ping_rt, &mut pong_rt, window_size, (200, 200), WindowMode::Windowed);
+                                });
+                            } else {
+                                window_size = get_window_size(&config);
+                                resize_main_window(&mut window, &mut core_rt, &mut ping_rt, &mut pong_rt, window_size, (200, 200), WindowMode::Windowed);
+                            }
+                            default_framebuffer.size = core_rt.framebuffer.size;
+                            is_fullscreen = !is_fullscreen;
                         }
-                        default_framebuffer.size = core_rt.framebuffer.size;
-                        is_fullscreen = !is_fullscreen;
-                    }
-                }
-
-                if imgui_ui.button(im_str!("Take screenshot"), [0.0, 32.0]) {
-                    screenshot_this_frame = true;
                 }
 
                 if imgui_ui.button(im_str!("Delete all totoros"), [0.0, 32.0]) {
-                    world_state.totoros.clear();
-                    world_state.selected_totoro = None;
+                        world_state.totoros.clear();
+                        world_state.selected_totoro = None;
                 }
-
-                if imgui_ui.button(im_str!("Save level data"), [0.0, 32.0]) {
-                    fn write_f32_to_buffer(bytes: &mut Vec<u8>, n: f32) {
-                        let b = f32::to_le_bytes(n);
-                        bytes.push(b[0]);
-                        bytes.push(b[1]);
-                        bytes.push(b[2]);
-                        bytes.push(b[3]);
-                    }
-
-                    fn write_vec3_to_buffer(bytes: &mut Vec<u8>, n: glm::TVec3<f32>) {
-                        write_f32_to_buffer(bytes, n.x);
-                        write_f32_to_buffer(bytes, n.y);
-                        write_f32_to_buffer(bytes, n.z);
-                    }
-
-                    fn write_u32_to_buffer(bytes: &mut Vec<u8>, n: u32) {
-                        let b = u32::to_le_bytes(n);
-                        bytes.push(b[0]);
-                        bytes.push(b[1]);
-                        bytes.push(b[2]);
-                        bytes.push(b[3]);
-                    }
-
-                    let save_error = |e: std::io::Error| {
-                        tfd::message_box_ok("Error saving level data", &format!("Could not save level data:\n{}", e), MessageBoxIcon::Error);
-                    };
-                    
-                    match File::create(format!("maps/{}.ent", world_state.level_name)) {
-                        Ok(mut file) => {
-                            let totoros = &world_state.totoros;
-                            io::write_pascal_strings(&mut file, &[world_state.skybox_strings[world_state.active_skybox_index].to_str()]);
-
-                            let floats_to_write = [
-                                scene_data.ambient_strength,
-                                scene_data.sun_pitch,
-                                scene_data.sun_yaw,
-                                scene_data.sun_color[0],
-                                scene_data.sun_color[1],
-                                scene_data.sun_color[2],
-                                scene_data.shininess_lower_bound,
-                                scene_data.shininess_upper_bound,
-                                scene_data.sun_size,
-                                world_state.player_spawn.x,
-                                world_state.player_spawn.y,
-                                world_state.player_spawn.z
-                            ];
-                            
-                            let floats_per_totoro = 4;
-                            let floats_per_light = 9;
-                            let size = size_of::<f32>() * (floats_to_write.len() + totoros.count() * floats_per_totoro + scene_data.point_lights.count() * floats_per_light) + size_of::<u32>() * 2;
-
-                            //Convert to raw bytes and write to file
-                            let mut bytes = Vec::with_capacity(size);
-                            for i in 0..floats_to_write.len() {
-                                write_f32_to_buffer(&mut bytes, floats_to_write[i]);
-                            }
-
-                            //Write totoro data
-                            write_u32_to_buffer(&mut bytes, totoros.count() as u32);
-                            for i in 0..totoros.len() {
-                                if let Some(tot) = &totoros[i] {
-                                    write_vec3_to_buffer(&mut bytes, tot.home);
-                                    write_f32_to_buffer(&mut bytes, tot.scale);
-                                }
-                            }
-
-                            //Write lights data
-                            write_u32_to_buffer(&mut bytes, scene_data.point_lights.count() as u32);
-                            for i in 0..scene_data.point_lights.len() {
-                                if let Some(light) = &scene_data.point_lights[i] {
-                                    write_vec3_to_buffer(&mut bytes, light.position);
-                                    write_vec3_to_buffer(&mut bytes, glm::vec3(light.color[0], light.color[1], light.color[2]));
-                                    write_f32_to_buffer(&mut bytes, light.power);
-                                    write_f32_to_buffer(&mut bytes, light.flicker_amplitude);
-                                    write_f32_to_buffer(&mut bytes, light.flicker_timescale);
-                                }
-                            }
-
-                            match file.write(&bytes) {
-                                Ok(n) => {
-                                    println!("Saved {}.ent ({}/{} bytes)", world_state.level_name, n, size);
-                                }
-                                Err(e) => {
-                                    save_error(e);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            save_error(e);
-                        }
-                    }
-                }
-                imgui_ui.same_line(0.0);
-
-                if imgui_ui.button(im_str!("Load level data"), [0.0, 32.0]) {
-                    if let Some(path) = tfd::open_file_dialog("Load level data", "maps/", Some((&["*.lvl"], "*.lvl"))) {                
-                        //Load the scene data from the level file
-                        let lvl_name = Path::new(&path).file_stem().unwrap().to_str().unwrap();
-                        load_lvl(lvl_name, &mut world_state, &mut scene_data, &mut texture_keeper, standard_program);
-
-                        //Load terrain data
-                        world_state.terrain = Terrain::from_ozt(&format!("models/{}.ozt", lvl_name));
-                        println!("Loaded {} collision triangles from {}.ozt", world_state.terrain.face_normals.len(), world_state.level_name);
-
-                        //Load entity data
-                        load_ent(&format!("maps/{}.ent", lvl_name), &mut scene_data, &mut world_state);
-                    }
-                }
-
-                //Do quit button
-                if imgui_ui.button(im_str!("Quit"), [0.0, 32.0]) { window.set_should_close(true); }
 
                 //End the window
                 win_token.end(&imgui_ui);
+            }
+
+            if graphics_menu {
+                if let Some(win_token) = imgui::Window::new(im_str!("Graphics")).begin(&imgui_ui) {
+                    
+
+                    win_token.end(&imgui_ui);
+                }
             }
 
             //Do selected Totoro window
@@ -2404,7 +2423,7 @@ fn main() {
                 );
                 render::main_scene(&core_rt.framebuffer, &scene_data, &freecam_viewdata);
 
-                //Blitting to non-MSAA rendertarget to resolve it
+                //Resolving the MSAA rendertarget
                 //Both framebuffers have an internal format of gl::SRGB8_ALPHA8
                 gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, ping_rt.framebuffer.name);
                 gl::BindFramebuffer(gl::READ_FRAMEBUFFER, core_rt.framebuffer.name);
@@ -2421,21 +2440,24 @@ fn main() {
                     gl::NEAREST
                 );
 
-                gl::BindTexture(gl::TEXTURE_2D, ping_rt.color_attachment_view);
-                gl::GenerateMipmap(gl::TEXTURE_2D);
+                //Post-processing step
+                if using_postfx {
+                    gl::BindTexture(gl::TEXTURE_2D, ping_rt.color_attachment_view);
+                    gl::GenerateMipmap(gl::TEXTURE_2D);
 
-                //Binding the compute shader program
-                gl::UseProgram(postfx_program);
-                glutil::bind_float(postfx_program, "elapsed_time", scene_data.elapsed_time);
+                    //Binding the compute shader program
+                    gl::UseProgram(postfx_program);
+                    glutil::bind_float(postfx_program, "elapsed_time", scene_data.elapsed_time);
 
-                //ping_rt.color_attachment_view is a texture view into ping_rt.texture but it's internal format is set to gl::RGBA8 so the compute shader can use it
-                gl::BindImageTexture(0, ping_rt.color_attachment_view, 0, gl::FALSE, 0, gl::READ_WRITE, gl::RGBA8);
+                    //ping_rt.color_attachment_view is a texture view into ping_rt.texture but it's internal format is set to gl::RGBA8 so the compute shader can use it
+                    gl::BindImageTexture(0, ping_rt.color_attachment_view, 0, gl::FALSE, 0, gl::READ_WRITE, gl::RGBA8);
 
-                //Dispatching compute
-                gl::DispatchCompute(window_size.x / 32 + 1, window_size.y / 32 + 1, 1);
+                    //Dispatching compute
+                    gl::DispatchCompute(window_size.x / 32 + 1, window_size.y / 32 + 1, 1);
 
-                //Waiting for the compute shader to finish before blitting to the default framebuffer
-                gl::MemoryBarrier(gl::ALL_BARRIER_BITS);
+                    //Waiting for the compute shader to finish before blitting to the default framebuffer
+                    gl::MemoryBarrier(gl::FRAMEBUFFER_BARRIER_BIT);
+                }
                 
                 //Blit to default framebuffer
                 gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, default_framebuffer.name);
