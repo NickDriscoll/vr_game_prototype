@@ -852,7 +852,9 @@ fn main() {
     let mut do_vsync = true;
     let mut using_postfx = false;
     let mut do_imgui = true;
-    let mut graphics_menu = false;
+    let mut debug_vis_menu = false;
+    let mut env_menu = false;
+    let mut edit_panel = false;
     let mut screenshot_this_frame = false;
     let mut full_screenshot_this_frame = false;
     let mut turbo_clicking = false;
@@ -1876,7 +1878,7 @@ fn main() {
             if let Some(win_token) = imgui::Window::new(im_str!("Hacking window")).menu_bar(true).begin(&imgui_ui) {
                 if let Some(menu_token) = imgui_ui.begin_menu_bar() {
                     if let Some(file_token) = imgui_ui.begin_menu(im_str!("File"), true) {
-                        if MenuItem::new(im_str!("Load level data")).build(&imgui_ui) {
+                        if MenuItem::new(im_str!("Load level")).build(&imgui_ui) {
                             if let Some(path) = tfd::open_file_dialog("Load level data", "maps/", Some((&["*.lvl"], "*.lvl"))) {                
                                 //Load the scene data from the level file
                                 let lvl_name = Path::new(&path).file_stem().unwrap().to_str().unwrap();
@@ -1891,7 +1893,7 @@ fn main() {
                             }
                         }
 
-                        if MenuItem::new(im_str!("Save level data")).build(&imgui_ui) {
+                        if MenuItem::new(im_str!("Save level")).build(&imgui_ui) {
                             fn write_f32_to_buffer(bytes: &mut Vec<u8>, n: f32) {
                                 let b = f32::to_le_bytes(n);
                                 bytes.push(b[0]);
@@ -1990,9 +1992,26 @@ fn main() {
 
                         file_token.end(&imgui_ui);
                     }
+                    
+                    if let Some(edit_token) = imgui_ui.begin_menu(im_str!("Edit"), true) {
+                        if MenuItem::new(im_str!("Control panel")).build(&imgui_ui) {
+                            edit_panel = true;
+                        }
+
+                        edit_token.end(&imgui_ui);
+                    }
+
+                    if let Some(menu_token) = imgui_ui.begin_menu(im_str!("Gameplay"), true) {
+                        if MenuItem::new(im_str!("Control panel")).build(&imgui_ui) {
+
+                        }
+
+                        menu_token.end(&imgui_ui);
+                    }
 
                     if let Some(graphics_token) = imgui_ui.begin_menu(im_str!("Graphics"), true) {
-                        graphics_menu = true;
+                        if MenuItem::new(im_str!("Environment")).build(&imgui_ui) { env_menu = true; }
+                        if MenuItem::new(im_str!("Debug")).build(&imgui_ui) { debug_vis_menu = true; }
 
                         graphics_token.end(&imgui_ui);
                     }
@@ -2003,14 +2022,10 @@ fn main() {
                 imgui_ui.text(im_str!("Frametime: {:.2}ms\tFPS: {:.2}\tFrame: {}", delta_time * 1000.0 / world_state.delta_timescale, framerate, frame_count));
                 imgui_ui.text(im_str!("Totoros spawned: {}", world_state.totoros.count()));
                 imgui_ui.text(im_str!("Point lights count: {}/{}", scene_data.point_lights.count(), render::MAX_POINT_LIGHTS));
-                imgui_ui.checkbox(im_str!("Wireframe view"), &mut wireframe);
-                imgui_ui.checkbox(im_str!("TRUE wireframe view"), &mut true_wireframe);
-                imgui_ui.checkbox(im_str!("Complex normals"), &mut scene_data.complex_normals);
                 imgui_ui.checkbox(im_str!("Camera collision"), &mut camera.is_colliding);
                 imgui_ui.checkbox(im_str!("Turbo clicking"), &mut turbo_clicking);
-                imgui_ui.checkbox(im_str!("Use postfx"), &mut using_postfx);
                 if let Some(_) = &xr_instance {
-                    imgui_ui.checkbox(im_str!("HMD Point-of-view"), &mut hmd_pov);
+                    imgui_ui.checkbox(im_str!("HMD Perspective"), &mut hmd_pov);
                     imgui_ui.checkbox(im_str!("Infinite ammo"), &mut infinite_ammo);
                 } else {
                     if imgui_ui.checkbox(im_str!("Lock FPS (v-sync)"), &mut do_vsync) {
@@ -2020,65 +2035,7 @@ fn main() {
                 }
                 imgui_ui.separator();
 
-                //Do visualization radio selection
-                imgui_ui.text(im_str!("Debug visualization options:"));
-                do_radio_button(&imgui_ui, im_str!("Visualize albedo"), &mut scene_data.fragment_flag, FragmentFlag::Albedo);
-                do_radio_button(&imgui_ui, im_str!("Visualize normals"), &mut scene_data.fragment_flag, FragmentFlag::Normals);
-                do_radio_button(&imgui_ui, im_str!("Visualize how shadowed"), &mut scene_data.fragment_flag, FragmentFlag::Shadowed);
-                do_radio_button(&imgui_ui, im_str!("Visualize shadow cascades"), &mut scene_data.fragment_flag, FragmentFlag::CascadeZones);
-                imgui_ui.checkbox(im_str!("View shadow atlas"), &mut showing_shadow_atlas);
-                if imgui_ui.checkbox(im_str!("View collision triangles"), &mut viewing_triangles) {
-                    if let Some(re) = scene_data.transparent_entities.get_mut_element(terrain_re_index) {
-                        let mat = if viewing_triangles { glm::identity::<f32, 4>() }
-                        else { glm::zero() };
-
-                        re.update_transform_buffer(glm::value_ptr(&mat), DEBUG_TRANSFORM_ATTRIBUTE);
-                    }
-                }
-                imgui_ui.checkbox(im_str!("View collision spheres"), &mut viewing_collision);
-                imgui_ui.checkbox(im_str!("View point lights"), &mut viewing_point_lights);
-                imgui_ui.checkbox(im_str!("View player spawn"), &mut viewing_player_spawn);
-                imgui_ui.checkbox(im_str!("Use toon shading"), &mut scene_data.toon_shading);
-                if let Some(_) = &xr_instance {
-                    imgui_ui.checkbox(im_str!("View player"), &mut viewing_player_spheres);
-                }
-
-                imgui_ui.separator();
-
-                imgui_ui.text(im_str!("Click action"));
-                do_radio_button(&imgui_ui, im_str!("Create totoro"), &mut click_action, ClickAction::CreateTotoro);
-                do_radio_button(&imgui_ui, im_str!("Create light source"), &mut click_action, ClickAction::CreatePointLight);
-                do_radio_button(&imgui_ui, im_str!("Delete object"), &mut click_action, ClickAction::DeleteObject);
-                do_radio_button(&imgui_ui, im_str!("Move player spawn"), &mut click_action, ClickAction::MovePlayerSpawn);
-                imgui_ui.separator();
-
-                imgui_ui.text(im_str!("Environment controls:"));
-                Slider::new(im_str!("Ambient light")).range(RangeInclusive::new(0.0, 0.5)).build(&imgui_ui, &mut scene_data.ambient_strength);
-                Slider::new(im_str!("Specular lower bound")).range(RangeInclusive::new(1.0, 128.0)).build(&imgui_ui, &mut scene_data.shininess_lower_bound);
-                Slider::new(im_str!("Specular upper bound")).range(RangeInclusive::new(1.0, 128.0)).build(&imgui_ui, &mut scene_data.shininess_upper_bound);
-                Slider::new(im_str!("Shadow intensity")).range(RangeInclusive::new(0.0, 1.0)).build(&imgui_ui, &mut scene_data.shadow_intensity);
-                Slider::new(im_str!("Sun pitch")).range(RangeInclusive::new(0.0, glm::pi::<f32>())).build(&imgui_ui, &mut scene_data.sun_pitch);
-                Slider::new(im_str!("Sun yaw")).range(RangeInclusive::new(0.0, glm::two_pi::<f32>())).build(&imgui_ui, &mut scene_data.sun_yaw);
-                Slider::new(im_str!("Sun size")).range(RangeInclusive::new(0.0, 1.0)).build(&imgui_ui, &mut scene_data.sun_size);
-                ColorEdit::new(im_str!("Sun color"), EditableColor::Float3(&mut scene_data.sun_color)).build(&imgui_ui);
-
-                let mut skybox_strs = Vec::with_capacity(world_state.skybox_strings.len());
-                for i in 0..world_state.skybox_strings.len() {
-                    skybox_strs.push(&world_state.skybox_strings[i]);
-                }
-
-                let old_skybox_index = world_state.active_skybox_index;
-                if imgui::ComboBox::new(im_str!("Active skybox")).build_simple_string(&imgui_ui, &mut world_state.active_skybox_index, &skybox_strs) {
-                    if old_skybox_index != world_state.active_skybox_index {
-                        let name = Path::new(skybox_strs[world_state.active_skybox_index].to_str()).file_name().unwrap().to_str().unwrap();
-                        scene_data.skybox_cubemap = unsafe {
-                            gl::DeleteTextures(1, &mut scene_data.skybox_cubemap);
-                            create_skybox_cubemap(name)
-                        };
-                    }
-                }
-
-                imgui_ui.separator();
+                
 
                 //Music controls section
                 imgui_ui.text(im_str!("Music controls"));
@@ -2155,9 +2112,84 @@ fn main() {
                 win_token.end(&imgui_ui);
             }
 
-            if graphics_menu {
+            if edit_panel {
+                if let Some(win_token) = imgui::Window::new(im_str!("Edit panel")).begin(&imgui_ui) {
+                    imgui_ui.text(im_str!("Click action"));
+                    do_radio_button(&imgui_ui, im_str!("Create totoro"), &mut click_action, ClickAction::CreateTotoro);
+                    do_radio_button(&imgui_ui, im_str!("Create light source"), &mut click_action, ClickAction::CreatePointLight);
+                    do_radio_button(&imgui_ui, im_str!("Delete object"), &mut click_action, ClickAction::DeleteObject);
+                    do_radio_button(&imgui_ui, im_str!("Move player spawn"), &mut click_action, ClickAction::MovePlayerSpawn);
+                    imgui_ui.separator();
+
+                    win_token.end(&imgui_ui);
+                }
+            }
+
+            //Do graphics menu
+            if debug_vis_menu {
                 if let Some(win_token) = imgui::Window::new(im_str!("Graphics")).begin(&imgui_ui) {
+                    imgui_ui.text(im_str!("Graphics options"));
+                    imgui_ui.checkbox(im_str!("Wireframe view"), &mut wireframe);
+                    imgui_ui.checkbox(im_str!("TRUE wireframe view"), &mut true_wireframe);
+                    imgui_ui.checkbox(im_str!("Complex normals"), &mut scene_data.complex_normals);
+                    do_radio_button(&imgui_ui, im_str!("Visualize albedo"), &mut scene_data.fragment_flag, FragmentFlag::Albedo);
+                    do_radio_button(&imgui_ui, im_str!("Visualize normals"), &mut scene_data.fragment_flag, FragmentFlag::Normals);
+                    do_radio_button(&imgui_ui, im_str!("Visualize how shadowed"), &mut scene_data.fragment_flag, FragmentFlag::Shadowed);
+                    do_radio_button(&imgui_ui, im_str!("Visualize shadow cascades"), &mut scene_data.fragment_flag, FragmentFlag::CascadeZones);
+                    imgui_ui.checkbox(im_str!("View shadow atlas"), &mut showing_shadow_atlas);
+                    if imgui_ui.checkbox(im_str!("View collision triangles"), &mut viewing_triangles) {
+                        if let Some(re) = scene_data.transparent_entities.get_mut_element(terrain_re_index) {
+                            let mat = if viewing_triangles { glm::identity::<f32, 4>() }
+                            else { glm::zero() };
+
+                            re.update_transform_buffer(glm::value_ptr(&mat), DEBUG_TRANSFORM_ATTRIBUTE);
+                        }
+                    }
+                    imgui_ui.checkbox(im_str!("View collision spheres"), &mut viewing_collision);
+                    imgui_ui.checkbox(im_str!("View point lights"), &mut viewing_point_lights);
+                    imgui_ui.checkbox(im_str!("View player spawn"), &mut viewing_player_spawn);
+                    imgui_ui.checkbox(im_str!("Use toon shading"), &mut scene_data.toon_shading);
+                    if let Some(_) = &xr_instance {
+                        imgui_ui.checkbox(im_str!("View player"), &mut viewing_player_spheres);
+                    }
                     
+                    imgui_ui.checkbox(im_str!("Use postfx"), &mut using_postfx);
+
+                    if imgui_ui.button(im_str!("Close"), [0.0, 32.0]) { debug_vis_menu = false; }
+
+                    win_token.end(&imgui_ui);
+                }
+            }
+
+            if env_menu {
+                if let Some(win_token) = imgui::Window::new(im_str!("Environment controls")).begin(&imgui_ui) {
+                    imgui_ui.text(im_str!("Environment controls:"));
+                    Slider::new(im_str!("Ambient light")).range(RangeInclusive::new(0.0, 0.5)).build(&imgui_ui, &mut scene_data.ambient_strength);
+                    Slider::new(im_str!("Specular lower bound")).range(RangeInclusive::new(1.0, 128.0)).build(&imgui_ui, &mut scene_data.shininess_lower_bound);
+                    Slider::new(im_str!("Specular upper bound")).range(RangeInclusive::new(1.0, 128.0)).build(&imgui_ui, &mut scene_data.shininess_upper_bound);
+                    Slider::new(im_str!("Shadow intensity")).range(RangeInclusive::new(0.0, 1.0)).build(&imgui_ui, &mut scene_data.shadow_intensity);
+                    Slider::new(im_str!("Sun pitch")).range(RangeInclusive::new(0.0, glm::pi::<f32>())).build(&imgui_ui, &mut scene_data.sun_pitch);
+                    Slider::new(im_str!("Sun yaw")).range(RangeInclusive::new(0.0, glm::two_pi::<f32>())).build(&imgui_ui, &mut scene_data.sun_yaw);
+                    Slider::new(im_str!("Sun size")).range(RangeInclusive::new(0.0, 1.0)).build(&imgui_ui, &mut scene_data.sun_size);
+                    ColorEdit::new(im_str!("Sun color"), EditableColor::Float3(&mut scene_data.sun_color)).build(&imgui_ui);
+
+                    let mut skybox_strs = Vec::with_capacity(world_state.skybox_strings.len());
+                    for i in 0..world_state.skybox_strings.len() {
+                        skybox_strs.push(&world_state.skybox_strings[i]);
+                    }
+
+                    let old_skybox_index = world_state.active_skybox_index;
+                    if imgui::ComboBox::new(im_str!("Active skybox")).build_simple_string(&imgui_ui, &mut world_state.active_skybox_index, &skybox_strs) {
+                        if old_skybox_index != world_state.active_skybox_index {
+                            let name = Path::new(skybox_strs[world_state.active_skybox_index].to_str()).file_name().unwrap().to_str().unwrap();
+                            scene_data.skybox_cubemap = unsafe {
+                                gl::DeleteTextures(1, &mut scene_data.skybox_cubemap);
+                                create_skybox_cubemap(name)
+                            };
+                        }
+                    }
+
+                    if imgui_ui.button(im_str!("Close"), [0.0, 32.0]) { env_menu = false; }
 
                     win_token.end(&imgui_ui);
                 }
