@@ -1094,15 +1094,24 @@ fn main() {
                 let states = [left_switch_state, right_switch_state];
                 for i in 0..states.len() {
                     if let Some(state) = states[i] {
-                        if state.changed_since_last_sync && state.current_state {
-                            let new = (*gadgets[i] as usize + 1) % GadgetType::COUNT;
-                            *gadgets[i] = GadgetType::from_usize(new);
-        
-                            if let Some(ent) = scene_data.opaque_entities.get_mut_element(gadget_indices[i]) {unsafe{ 
-                                ent.update_single_transform(i, &glm::zero(), 16);
-                            }}
-                            if let Some(ent) = gadget_model_map.get(gadgets[i]) {
-                                scene_data.opaque_entities.replace(gadget_indices[i], ent.clone());
+                        //If switch button was pressed for this hand
+                        if state.changed_since_last_sync {
+                            if state.current_state {
+                                let new = (*gadgets[i] as usize + 1) % GadgetType::COUNT;
+                                *gadgets[i] = GadgetType::from_usize(new);
+                
+                                if let Some(ent) = scene_data.opaque_entities.get_mut_element(gadget_indices[i]) {unsafe{ 
+                                    ent.update_single_transform(i, &glm::zero(), 16);
+                                }}
+                                if let Some(ent) = gadget_model_map.get(gadgets[i]) {
+                                    scene_data.opaque_entities.replace(gadget_indices[i], ent.clone());
+                                }
+
+                                world_state.delta_timescale *= 0.25;
+                                send_or_error(&audio_sender, AudioCommand::SetPitchShift(world_state.delta_timescale));
+                            } else {                                
+                                world_state.delta_timescale *= 4.0;
+                                send_or_error(&audio_sender, AudioCommand::SetPitchShift(world_state.delta_timescale));
                             }
                         }
                     }
@@ -2023,20 +2032,12 @@ fn main() {
                 imgui_ui.text(im_str!("Totoros spawned: {}", world_state.totoros.count()));
                 imgui_ui.text(im_str!("Point lights count: {}/{}", scene_data.point_lights.count(), render::MAX_POINT_LIGHTS));
                 imgui_ui.checkbox(im_str!("Camera collision"), &mut camera.is_colliding);
-                imgui_ui.checkbox(im_str!("Turbo clicking"), &mut turbo_clicking);
                 if let Some(_) = &xr_instance {
                     imgui_ui.checkbox(im_str!("HMD Perspective"), &mut hmd_pov);
                     imgui_ui.checkbox(im_str!("Infinite ammo"), &mut infinite_ammo);
-                } else {
-                    if imgui_ui.checkbox(im_str!("Lock FPS (v-sync)"), &mut do_vsync) {
-                        if do_vsync { glfw.set_swap_interval(SwapInterval::Sync(1)); }
-                        else { glfw.set_swap_interval(SwapInterval::None); }
-                    }
                 }
                 imgui_ui.separator();
-
                 
-
                 //Music controls section
                 imgui_ui.text(im_str!("Music controls"));
                 if Slider::new(im_str!("Master Volume")).range(RangeInclusive::new(0.0, 100.0)).build(&imgui_ui, &mut bgm_volume) {
@@ -2058,7 +2059,7 @@ fn main() {
                 imgui_ui.separator();
 
                 if Slider::new(im_str!("Timescale")).range(RangeInclusive::new(0.000001, 2.0)).build(&imgui_ui, &mut world_state.delta_timescale) {
-                        send_or_error(&audio_sender, AudioCommand::SetPitchShift(world_state.delta_timescale));
+                    send_or_error(&audio_sender, AudioCommand::SetPitchShift(world_state.delta_timescale));
                 }
                 
                 //Reset player position button
@@ -2120,6 +2121,9 @@ fn main() {
                     do_radio_button(&imgui_ui, im_str!("Delete object"), &mut click_action, ClickAction::DeleteObject);
                     do_radio_button(&imgui_ui, im_str!("Move player spawn"), &mut click_action, ClickAction::MovePlayerSpawn);
                     imgui_ui.separator();
+                    imgui_ui.checkbox(im_str!("Turbo clicking"), &mut turbo_clicking);
+
+                    if imgui_ui.button(im_str!("Close"), [0.0, 32.0]) { edit_panel = false; }
 
                     win_token.end(&imgui_ui);
                 }
@@ -2132,10 +2136,17 @@ fn main() {
                     imgui_ui.checkbox(im_str!("Wireframe view"), &mut wireframe);
                     imgui_ui.checkbox(im_str!("TRUE wireframe view"), &mut true_wireframe);
                     imgui_ui.checkbox(im_str!("Complex normals"), &mut scene_data.complex_normals);
+
+                    imgui_ui.separator();
+
                     do_radio_button(&imgui_ui, im_str!("Visualize albedo"), &mut scene_data.fragment_flag, FragmentFlag::Albedo);
                     do_radio_button(&imgui_ui, im_str!("Visualize normals"), &mut scene_data.fragment_flag, FragmentFlag::Normals);
                     do_radio_button(&imgui_ui, im_str!("Visualize how shadowed"), &mut scene_data.fragment_flag, FragmentFlag::Shadowed);
                     do_radio_button(&imgui_ui, im_str!("Visualize shadow cascades"), &mut scene_data.fragment_flag, FragmentFlag::CascadeZones);
+
+                    imgui_ui.separator();
+
+
                     imgui_ui.checkbox(im_str!("View shadow atlas"), &mut showing_shadow_atlas);
                     if imgui_ui.checkbox(im_str!("View collision triangles"), &mut viewing_triangles) {
                         if let Some(re) = scene_data.transparent_entities.get_mut_element(terrain_re_index) {
@@ -2151,6 +2162,11 @@ fn main() {
                     imgui_ui.checkbox(im_str!("Use toon shading"), &mut scene_data.toon_shading);
                     if let Some(_) = &xr_instance {
                         imgui_ui.checkbox(im_str!("View player"), &mut viewing_player_spheres);
+                    } else {
+                        if imgui_ui.checkbox(im_str!("Lock FPS (v-sync)"), &mut do_vsync) {
+                            if do_vsync { glfw.set_swap_interval(SwapInterval::Sync(1)); }
+                            else { glfw.set_swap_interval(SwapInterval::None); }
+                        }
                     }
                     
                     imgui_ui.checkbox(im_str!("Use postfx"), &mut using_postfx);
@@ -2168,10 +2184,15 @@ fn main() {
                     Slider::new(im_str!("Specular lower bound")).range(RangeInclusive::new(1.0, 128.0)).build(&imgui_ui, &mut scene_data.shininess_lower_bound);
                     Slider::new(im_str!("Specular upper bound")).range(RangeInclusive::new(1.0, 128.0)).build(&imgui_ui, &mut scene_data.shininess_upper_bound);
                     Slider::new(im_str!("Shadow intensity")).range(RangeInclusive::new(0.0, 1.0)).build(&imgui_ui, &mut scene_data.shadow_intensity);
+
+                    imgui_ui.separator();
+                    
                     Slider::new(im_str!("Sun pitch")).range(RangeInclusive::new(0.0, glm::pi::<f32>())).build(&imgui_ui, &mut scene_data.sun_pitch);
                     Slider::new(im_str!("Sun yaw")).range(RangeInclusive::new(0.0, glm::two_pi::<f32>())).build(&imgui_ui, &mut scene_data.sun_yaw);
                     Slider::new(im_str!("Sun size")).range(RangeInclusive::new(0.0, 1.0)).build(&imgui_ui, &mut scene_data.sun_size);
                     ColorEdit::new(im_str!("Sun color"), EditableColor::Float3(&mut scene_data.sun_color)).build(&imgui_ui);
+
+                    imgui_ui.separator();
 
                     let mut skybox_strs = Vec::with_capacity(world_state.skybox_strings.len());
                     for i in 0..world_state.skybox_strings.len() {
@@ -2225,6 +2246,8 @@ fn main() {
                     imgui_ui.separator();
                     do_radio_button(&imgui_ui, im_str!("Move totoro's home"), &mut click_action, ClickAction::MoveSelectedTotoro);
 
+                    if imgui_ui.button(im_str!("Close"), [0.0, 32.0]) { world_state.selected_totoro = None; }
+
                     token.end(&imgui_ui);
                 }
             }
@@ -2251,6 +2274,8 @@ fn main() {
                         scene_data.point_lights.delete(idx);
                         scene_data.selected_point_light = None;
                     }
+
+                    if imgui_ui.button(im_str!("Close"), [0.0, 32.0]) { scene_data.selected_point_light = None; }
 
                     token.end(&imgui_ui);
                 }
