@@ -1356,7 +1356,7 @@ fn main() {
                                 f.z = 0.0;
                                 glm::normalize(&f)
                             };
-                            totoro.state = TotoroState::Panicking;
+                            totoro.state = TotoroState::Dying;
                             totoro.state_timer = scene_data.elapsed_time;
 
                         }
@@ -1373,6 +1373,10 @@ fn main() {
                         let v = totoro.forward * totoro_speed;
                         totoro.velocity = glm::vec3(v.x, v.y, totoro.velocity.z);
 
+                    }
+                    TotoroState::Dying => {
+                        let fgkhjd = glm::rotation(glm::pi::<f32>() * 4.0 * delta_time, &Z_UP) * glm::vec3_to_vec4(&totoro.forward);
+                        totoro.forward = glm::vec4_to_vec3(&fgkhjd);
                     }
                     TotoroState::BrainDead => {}
                 }
@@ -1816,7 +1820,7 @@ fn main() {
         }
 
         //Update the uniform buffer object of point lights
-        unsafe {            
+        unsafe {
             //Create the buffer
             let floats_per_light = 9; //4N+4N+Ns
         
@@ -2186,7 +2190,7 @@ fn main() {
                     Slider::new(im_str!("Shadow intensity")).range(RangeInclusive::new(0.0, 1.0)).build(&imgui_ui, &mut scene_data.shadow_intensity);
 
                     imgui_ui.separator();
-                    
+
                     Slider::new(im_str!("Sun pitch")).range(RangeInclusive::new(0.0, glm::pi::<f32>())).build(&imgui_ui, &mut scene_data.sun_pitch);
                     Slider::new(im_str!("Sun yaw")).range(RangeInclusive::new(0.0, glm::two_pi::<f32>())).build(&imgui_ui, &mut scene_data.sun_yaw);
                     Slider::new(im_str!("Sun size")).range(RangeInclusive::new(0.0, 1.0)).build(&imgui_ui, &mut scene_data.sun_size);

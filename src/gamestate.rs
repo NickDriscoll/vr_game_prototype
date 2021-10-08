@@ -126,6 +126,7 @@ pub enum TotoroState {
     Startled,
     PrePanicking,
     Panicking,
+    Dying,
     BrainDead
 }
 
