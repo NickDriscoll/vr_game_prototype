@@ -62,6 +62,16 @@ const DEFAULT_TEX_PARAMS: [(GLenum, GLenum); 4] = [
     (gl::TEXTURE_MAG_FILTER, gl::LINEAR)
 ];
 
+fn queue_debug_sphere(sphere_queue: &mut Vec<DebugSphere>, position: glm::TVec3<f32>, color: glm::TVec4<f32>, radius: f32, highlighted: bool) {
+    let s = DebugSphere {
+        position,
+        color,
+        radius,
+        highlighted
+    };
+    sphere_queue.push(s);
+}
+
 fn main() {    
     let Z_UP = glm::vec3(0.0, 0.0, 1.0);
 
@@ -919,6 +929,9 @@ fn main() {
     //Init simplex noise function
     let simplex = noise::OpenSimplex::default();
 
+    //Immediate mode interface for drawing debug spheres
+    let mut debug_sphere_queue = Vec::with_capacity(64);
+
     //Main loop
     while !window.should_close() {
         let imgui_io = imgui_context.io_mut();
@@ -1268,6 +1281,28 @@ fn main() {
             }
         }
 
+        //Apply speed limit to player
+        {
+            if world_state.player.tracking_velocity.x > VELOCITY_CAP {
+                world_state.player.tracking_velocity.x = VELOCITY_CAP;
+            }
+            if world_state.player.tracking_velocity.x < -VELOCITY_CAP {
+                world_state.player.tracking_velocity.x = -VELOCITY_CAP;
+            }
+            if world_state.player.tracking_velocity.y > VELOCITY_CAP {
+                world_state.player.tracking_velocity.y = VELOCITY_CAP;
+            }
+            if world_state.player.tracking_velocity.y < -VELOCITY_CAP {
+                world_state.player.tracking_velocity.y = -VELOCITY_CAP;
+            }
+            if world_state.player.tracking_velocity.z > VELOCITY_CAP {
+                world_state.player.tracking_velocity.z = VELOCITY_CAP;
+            }
+            if world_state.player.tracking_velocity.z < -VELOCITY_CAP {
+                world_state.player.tracking_velocity.z = -VELOCITY_CAP;
+            }
+        }
+
         //Create capsule collider(s) for water guns
         let water_gun_colliders = {
             let gadgets = [&left_hand_gadget, &right_hand_gadget];
@@ -1291,7 +1326,7 @@ fn main() {
                     colliders[i] = Some(
                         Capsule {
                             segment: capsule_segment,
-                            radius: pillar_scales[i].x
+                            radius: pillar_scales[i].x * 4.0
                         }
                     );
                 }
@@ -1299,28 +1334,7 @@ fn main() {
 
             colliders
         };
-
-        //Apply speed limit to player
-        {
-            if world_state.player.tracking_velocity.x > VELOCITY_CAP {
-                world_state.player.tracking_velocity.x = VELOCITY_CAP;
-            }
-            if world_state.player.tracking_velocity.x < -VELOCITY_CAP {
-                world_state.player.tracking_velocity.x = -VELOCITY_CAP;
-            }
-            if world_state.player.tracking_velocity.y > VELOCITY_CAP {
-                world_state.player.tracking_velocity.y = VELOCITY_CAP;
-            }
-            if world_state.player.tracking_velocity.y < -VELOCITY_CAP {
-                world_state.player.tracking_velocity.y = -VELOCITY_CAP;
-            }
-            if world_state.player.tracking_velocity.z > VELOCITY_CAP {
-                world_state.player.tracking_velocity.z = VELOCITY_CAP;
-            }
-            if world_state.player.tracking_velocity.z < -VELOCITY_CAP {
-                world_state.player.tracking_velocity.z = -VELOCITY_CAP;
-            }
-        }
+        println!("{:?}", water_gun_colliders[1]);
 
         //Totoro update
         let totoro_speed = 2.0;
@@ -1473,6 +1487,16 @@ fn main() {
                 //Apply totoro velocity to position
                 totoro.position += totoro.velocity * delta_time;
 
+                //Queue debug sphere
+                if viewing_collision {
+                    let sph = totoro.sphere();
+                    let highlighted = match world_state.selected_totoro {
+                        Some(idx) => { idx == i }
+                        None => { false }
+                    };
+                    queue_debug_sphere(&mut debug_sphere_queue, sph.focus, glm::vec4(0.0, 0.0, 0.5, 0.5), sph.radius, highlighted);
+                }
+
                 //Kill if below a certain point
                 if totoro.position.z < -1000.0 {
                     delete_object(&mut world_state.totoros, &mut world_state.selected_totoro, i);
@@ -1587,6 +1611,35 @@ fn main() {
         //Update tracking space location
         world_state.player.tracking_position += world_state.player.tracking_velocity * delta_time;
         world_from_tracking = glm::translation(&world_state.player.tracking_position);
+
+        if viewing_player_spawn {
+            queue_debug_sphere(&mut debug_sphere_queue, world_state.player.spawn_position, glm::vec4(0.0, 0.5, 0.0, 0.5), 0.3, false);
+        }
+
+        if viewing_player_spheres {
+            let segment = &world_state.player.tracked_segment;
+            queue_debug_sphere(&mut debug_sphere_queue, segment.p0, glm::vec4(1.0, 0.5, 0.0, 0.5), Player::RADIUS, false);
+            queue_debug_sphere(&mut debug_sphere_queue, segment.p1, glm::vec4(1.0, 0.5, 0.5, 0.5), Player::RADIUS, false);
+        }
+
+        if viewing_point_lights {
+            for i in 0..scene_data.point_lights.len() {
+                if let Some(light) = &scene_data.point_lights[i] {
+                    let highlighted = match scene_data.selected_point_light {
+                        Some(idx) => { idx == i }
+                        None => { false }
+                    };
+
+                    queue_debug_sphere(
+                        &mut debug_sphere_queue,
+                        light.position,
+                        glm::vec4(light.color[0], light.color[1], light.color[2], 0.4),
+                        PointLight::COLLISION_RADIUS,
+                        highlighted
+                    );
+                }
+            }
+        }
 
         //Collision handling section
 
@@ -1800,7 +1853,7 @@ fn main() {
             let mut current_totoro = 0;
             for i in 0..totoros.len() {
                 if let Some(totoro) = &totoros[i] {
-                    //Directly constructing the rotation matrix bc we get linear algebra
+                    //Directly constructing the rotation matrix
                     let cr = glm::cross(&Z_UP, &totoro.forward);
                     let rotation_mat = glm::mat4(
                         totoro.forward.x, cr.x, 0.0, 0.0,
@@ -1828,73 +1881,23 @@ fn main() {
 
         //Update the GPU instance buffer for the debug spheres
         if let Some(entity) = scene_data.transparent_entities.get_mut_element(debug_sphere_re_index) {
-            let totoros = &world_state.totoros;
-            let instances =  {
-                let mut acc = 0;
-                if viewing_collision {acc += totoros.count();}
-                if viewing_player_spawn { acc += 1; }
-                if viewing_player_spheres { acc += 2; }
-                acc += scene_data.point_lights.count();
-                acc
-            };
-
+            let instances = debug_sphere_queue.len();
             let mut highlighted_buffer = vec![0.0; instances];
             let mut color_buffer = vec![0.0; instances * 4];
             let mut transform_buffer = vec![0.0; instances * 16];
-            let mut current_debug_sphere = 0;
-            if viewing_collision {
-                for i in 0..totoros.len() {
-                    if let Some(totoro) = &totoros[i] {
-                        let sph = totoro.sphere();
-                        let mm = glm::translation(&sph.focus) * uniform_scale(-sph.radius);
-                        write_matrix_to_buffer(&mut transform_buffer, current_debug_sphere, mm);
-                        write_vec4_to_buffer(&mut color_buffer, current_debug_sphere, glm::vec4(0.0, 0.0, 0.5, 0.5));
 
-                        if let Some(idx) = world_state.selected_totoro {
-                            if idx == i {
-                                highlighted_buffer[current_debug_sphere] = 1.0;
-                            }
-                        }
-
-                        current_debug_sphere += 1;
-                    }
-                }
-            }
-
-            if viewing_player_spawn {
-                let player_spawn_matrix = glm::translation(&world_state.player.spawn_position) * uniform_scale(-0.3);
-                write_matrix_to_buffer(&mut transform_buffer, current_debug_sphere, player_spawn_matrix);
-                write_vec4_to_buffer(&mut color_buffer, current_debug_sphere, glm::vec4(0.0, 0.5, 0.0, 0.5));
-                current_debug_sphere += 1;
-            }
-
-            if viewing_player_spheres {
-                let head_transform = glm::translation(&world_state.player.tracked_segment.p0) * uniform_scale(-Player::RADIUS);
-                let foot_transform = glm::translation(&world_state.player.tracked_segment.p1) * uniform_scale(-Player::RADIUS);
-                write_matrix_to_buffer(&mut transform_buffer, current_debug_sphere, head_transform);
-                write_vec4_to_buffer(&mut color_buffer, current_debug_sphere, glm::vec4(1.0, 0.7, 0.7, 0.4));
-                current_debug_sphere += 1;
-                write_matrix_to_buffer(&mut transform_buffer, current_debug_sphere, foot_transform);
-                write_vec4_to_buffer(&mut color_buffer, current_debug_sphere, glm::vec4(0.5, 0.5, 0.0, 0.4));
-                current_debug_sphere += 1;
-            }
-
-            if viewing_point_lights {
-                for i in 0..scene_data.point_lights.len() {
-                    if let Some(light) = &scene_data.point_lights[i] {
-                        let light_transform = glm::translation(&light.position) * uniform_scale(-PointLight::COLLISION_RADIUS);
-                        write_matrix_to_buffer(&mut transform_buffer, current_debug_sphere, light_transform);
-                        write_vec4_to_buffer(&mut color_buffer, current_debug_sphere, glm::vec4(light.color[0], light.color[1], light.color[2], 0.4));
-
-                        if let Some(idx) = scene_data.selected_point_light {
-                            if idx == i {
-                                highlighted_buffer[current_debug_sphere] = 1.0;
-                            }
-                        }
-        
-                        current_debug_sphere += 1;
-                    }
-                }
+            let mut idx = 0;
+            for sphere in debug_sphere_queue.drain(0..debug_sphere_queue.len()) {
+                let mm = glm::translation(&sphere.position) * uniform_scale(-sphere.radius);
+                write_matrix_to_buffer(&mut transform_buffer, idx, mm);
+                write_vec4_to_buffer(&mut color_buffer, idx, sphere.color);
+                highlighted_buffer[idx] = if sphere.highlighted {
+                    1.0
+                } else {
+                    0.0
+                };
+                
+                idx += 1;
             }
 
             entity.update_highlight_buffer(&highlighted_buffer, DEBUG_HIGHLIGHTED_ATTRIBUTE);
@@ -2088,20 +2091,12 @@ fn main() {
                         file_token.end(&imgui_ui);
                     }
                     
-                    if let Some(edit_token) = imgui_ui.begin_menu(im_str!("Edit"), true) {
-                        if MenuItem::new(im_str!("Control panel")).build(&imgui_ui) {
+                    if let Some(edit_token) = imgui_ui.begin_menu(im_str!("Gameplay"), true) {
+                        if MenuItem::new(im_str!("Entity panel")).build(&imgui_ui) {
                             edit_panel = true;
                         }
 
                         edit_token.end(&imgui_ui);
-                    }
-
-                    if let Some(menu_token) = imgui_ui.begin_menu(im_str!("Gameplay"), true) {
-                        if MenuItem::new(im_str!("Control panel")).build(&imgui_ui) {
-
-                        }
-
-                        menu_token.end(&imgui_ui);
                     }
 
                     if let Some(graphics_token) = imgui_ui.begin_menu(im_str!("Graphics"), true) {
@@ -2195,9 +2190,18 @@ fn main() {
             }
 
             if edit_panel {
-                if let Some(win_token) = imgui::Window::new(im_str!("Edit panel")).begin(&imgui_ui) {
+                if let Some(win_token) = imgui::Window::new(im_str!("Entity panel")).begin(&imgui_ui) {
                     imgui_ui.checkbox(im_str!("View point lights"), &mut viewing_point_lights);
                     imgui_ui.checkbox(im_str!("View player spawn"), &mut viewing_player_spawn);
+                    if imgui_ui.checkbox(im_str!("View collision triangles"), &mut viewing_triangles) {
+                        if let Some(re) = scene_data.transparent_entities.get_mut_element(terrain_re_index) {
+                            let mat = if viewing_triangles { glm::identity::<f32, 4>() }
+                            else { glm::zero() };
+
+                            re.update_transform_buffer(glm::value_ptr(&mat), DEBUG_TRANSFORM_ATTRIBUTE);
+                        }
+                    }
+                    imgui_ui.checkbox(im_str!("View collision spheres"), &mut viewing_collision);
                     imgui_ui.text(im_str!("Click actions"));
                     do_radio_button(&imgui_ui, im_str!("Create totoro"), &mut click_action, ClickAction::CreateTotoro);
                     do_radio_button(&imgui_ui, im_str!("Create light source"), &mut click_action, ClickAction::CreatePointLight);
@@ -2237,15 +2241,7 @@ fn main() {
 
 
                     imgui_ui.checkbox(im_str!("View shadow atlas"), &mut showing_shadow_atlas);
-                    if imgui_ui.checkbox(im_str!("View collision triangles"), &mut viewing_triangles) {
-                        if let Some(re) = scene_data.transparent_entities.get_mut_element(terrain_re_index) {
-                            let mat = if viewing_triangles { glm::identity::<f32, 4>() }
-                            else { glm::zero() };
 
-                            re.update_transform_buffer(glm::value_ptr(&mat), DEBUG_TRANSFORM_ATTRIBUTE);
-                        }
-                    }
-                    imgui_ui.checkbox(im_str!("View collision spheres"), &mut viewing_collision);
                     if let Some(_) = &xr_instance {
                         imgui_ui.checkbox(im_str!("View player"), &mut viewing_player_spheres);
                     } else {

@@ -208,3 +208,10 @@ pub fn get_window_size(config: &Configuration) -> glm::TVec2<u32> {
         }
     }
 }
+
+pub struct DebugSphere {
+    pub position: glm::TVec3<f32>,
+    pub color: glm::TVec4<f32>,
+    pub radius: f32,
+    pub highlighted: bool
+}
