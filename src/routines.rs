@@ -327,11 +327,11 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
             scene_data.shininess_lower_bound = raw_floats[6];
             scene_data.shininess_upper_bound = raw_floats[7];
             scene_data.sun_size = raw_floats[8];
-            world_state.player_spawn.x = raw_floats[9];
-            world_state.player_spawn.y = raw_floats[10];
-            world_state.player_spawn.z = raw_floats[11];
+            world_state.player.spawn_position.x = raw_floats[9];
+            world_state.player.spawn_position.y = raw_floats[10];
+            world_state.player.spawn_position.z = raw_floats[11];
 
-            world_state.player.tracking_position = world_state.player_spawn;
+            world_state.player.tracking_position = world_state.player.spawn_position;
             
             //Load totoros
             let floats_per_totoro = 4;

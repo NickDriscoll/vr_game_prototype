@@ -14,7 +14,6 @@ pub enum MoveState {
 
 pub struct WorldState {
     pub player: Player,
-    pub player_spawn: glm::TVec3<f32>,
     pub totoros: OptionVec<Totoro>,
     pub selected_totoro: Option<usize>,
     pub terrain: Terrain,
@@ -29,27 +28,28 @@ pub struct WorldState {
 pub struct Player {
     pub tracking_position: glm::TVec3<f32>,
     pub tracking_velocity: glm::TVec3<f32>,
+    pub spawn_position: glm::TVec3<f32>,
     pub tracked_segment: LineSegment,
     pub last_tracked_segment: LineSegment,
     pub movement_state: MoveState,
     pub stick_data: Option<StickData>,
-    pub radius: f32,
     pub jumps_remaining: usize,
     pub was_holding_jump: bool
 }
 
 impl Player {
     pub const MAX_JUMPS: usize = 1;
+    pub const RADIUS: f32 = 0.15;
 
-    pub fn new(pos: glm::TVec3<f32>) -> Self {
+    pub fn new(pos: glm::TVec3<f32>, spawn_position: glm::TVec3<f32>) -> Self {
         Player {
             tracking_position: pos,
-            tracking_velocity: glm::zero(),            
+            tracking_velocity: glm::zero(),
+            spawn_position,
             tracked_segment: LineSegment::zero(),
             last_tracked_segment: LineSegment::zero(),
             movement_state: MoveState::Falling,
             stick_data: None,
-            radius: 0.15,
             jumps_remaining: Player::MAX_JUMPS,
             was_holding_jump: false
         }
@@ -67,13 +67,13 @@ pub fn set_player_falling(player: &mut Player) {
     player.movement_state = MoveState::Falling;
 }
 
-pub fn reset_player_position(world_state: &mut WorldState) {    
-    world_state.player.tracking_position = world_state.player_spawn;
-    world_state.player.tracking_velocity = glm::zero();
-    world_state.player.tracked_segment = LineSegment::zero();
-    world_state.player.last_tracked_segment = LineSegment::zero();
-    world_state.player.jumps_remaining = Player::MAX_JUMPS;
-    world_state.player.movement_state = MoveState::Falling;
+pub fn reset_player_position(player: &mut Player) {    
+    player.tracking_position = player.spawn_position;
+    player.tracking_velocity = glm::zero();
+    player.tracked_segment = LineSegment::zero();
+    player.last_tracked_segment = LineSegment::zero();
+    player.jumps_remaining = Player::MAX_JUMPS;
+    player.movement_state = MoveState::Falling;
 }
 
 pub struct CaptureBall {

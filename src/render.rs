@@ -39,7 +39,6 @@ pub struct RenderEntity {
     pub uv_offset: glm::TVec2<f32>,
     pub uv_scale: glm::TVec2<f32>,
     pub textures: [GLuint; ENTITY_TEXTURE_COUNT],
-    pub cast_shadows: bool,
     pub transparent: bool
 }
 
@@ -61,7 +60,6 @@ impl RenderEntity {
             uv_offset: glm::zero(),
             uv_scale: glm::zero(),
             textures: [0; ENTITY_TEXTURE_COUNT],
-            cast_shadows: true,
             transparent: false
         }
     }
@@ -118,7 +116,6 @@ impl RenderEntity {
                     uv_velocity: glm::vec2(meshdata.uv_velocity[0], meshdata.uv_velocity[1]),
                     uv_scale: glm::vec2(1.0, 1.0),
                     uv_offset: glm::vec2(0.0, 0.0),
-                    cast_shadows: true,
                     transparent: meshdata.is_transparent
                 }
             }
@@ -517,10 +514,8 @@ pub unsafe fn cascaded_shadow_map(shadow_map: &CascadedShadowMap, entities: &[Op
 
         for opt_entity in entities.iter() {
             if let Some(entity) = opt_entity {
-                if entity.cast_shadows {
-                    gl::BindVertexArray(entity.vao);
-                    gl::DrawElementsInstanced(gl::TRIANGLES, entity.index_count, gl::UNSIGNED_SHORT, ptr::null(), entity.active_instances as GLint);
-                }
+                gl::BindVertexArray(entity.vao);
+                gl::DrawElementsInstanced(gl::TRIANGLES, entity.index_count, gl::UNSIGNED_SHORT, ptr::null(), entity.active_instances as GLint);
             }
         }
     }
