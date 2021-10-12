@@ -1314,7 +1314,7 @@ fn main() {
                 if let GadgetType::WaterCannon = gadgets[i] {                    
                     let mut capsule_segment = LineSegment {
                         p0: glm::zero(),
-                        p1: glm::vec3(0.0, pillar_scales[i].y * 10.0, 0.0)
+                        p1: glm::vec3(0.0, pillar_scales[i].y, 0.0)
                     };
 
                     if let Some(hand_aim_pose) = xrutil::locate_space(aim_spaces[i], &tracking_space, last_xr_render_time) {
@@ -1323,10 +1323,14 @@ fn main() {
                         capsule_segment.p1 = glm::vec4_to_vec3(&(transform * glm::vec4(capsule_segment.p1.x, capsule_segment.p1.y, capsule_segment.p1.z, 1.0)));
                     }
 
+                    let radius = pillar_scales[i].x;
+                    queue_debug_sphere(&mut debug_sphere_queue, capsule_segment.p0, glm::vec4(0.0, 0.3, 1.0, 0.5), radius, false);
+                    queue_debug_sphere(&mut debug_sphere_queue, capsule_segment.p1, glm::vec4(0.0, 0.4, 1.0, 0.5), radius, false);
+
                     colliders[i] = Some(
                         Capsule {
                             segment: capsule_segment,
-                            radius: pillar_scales[i].x * 4.0
+                            radius
                         }
                     );
                 }
@@ -1334,7 +1338,6 @@ fn main() {
 
             colliders
         };
-        println!("{:?}", water_gun_colliders[1]);
 
         //Totoro update
         let totoro_speed = 2.0;
@@ -1354,8 +1357,9 @@ fn main() {
                             let segment = &water_gun_capsule.segment;
                             let t_vector = tot_sphere.focus - segment.p0;
                             let l_vector = glm::normalize(&(segment.p1 - segment.p0));
-                            let t = glm::dot(&t_vector, &l_vector);
+                            let t = clamp(glm::dot(&t_vector, &l_vector), 0.0, 1.0);
 
+                            println!("{}", t);
                             let test_sphere = Sphere {
                                 focus: (1.0 - t) * segment.p0 + t * segment.p1,
                                 radius: water_gun_capsule.radius

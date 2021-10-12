@@ -23,6 +23,12 @@ use crate::gamestate::*;
 use crate::structs::*;
 use crate::*;
 
+pub fn clamp<T: PartialOrd>(x: T, min: T, max: T) -> T {
+    if x > max { max }
+    else if x < min { min }
+    else { x }
+}
+
 pub fn clip_from_screen(screen_size: glm::TVec2<u32>) -> glm::TMat4<f32> {
 	glm::mat4(
 		2.0 / screen_size.x as f32, 0.0, 0.0, -1.0,
