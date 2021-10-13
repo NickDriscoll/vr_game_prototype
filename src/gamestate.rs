@@ -89,6 +89,7 @@ pub struct Totoro {
     pub position: glm::TVec3<f32>,
     pub velocity: glm::TVec3<f32>,
     pub scale: f32,
+    pub health: f32,
     pub home: glm::TVec3<f32>,
     pub forward: glm::TVec3<f32>,
     pub desired_forward: glm::TVec3<f32>,
@@ -99,6 +100,8 @@ pub struct Totoro {
 }
 
 impl Totoro {
+    pub const MAX_HEALTH: f32 = 100.0;
+
     pub fn new(position: glm::TVec3<f32>, creation_time: f32) -> Self {
         //Generate random orientation and scale
         let forward = glm::normalize(&glm::vec3(rand::random::<f32>() * 2.0 - 1.0, rand::random::<f32>() * 2.0 - 1.0, 0.0));
@@ -108,6 +111,7 @@ impl Totoro {
             position,
             velocity: glm::zero(),
             scale,
+            health: Self::MAX_HEALTH,
             home: position,
             forward,
             desired_forward: forward,

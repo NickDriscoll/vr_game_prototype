@@ -866,7 +866,7 @@ fn main() {
     let mut screenshot_this_frame = false;
     let mut full_screenshot_this_frame = false;
     let mut turbo_clicking = false;
-    let mut viewing_collision = false;
+    let mut viewing_collision_spheres = false;
     let mut viewing_triangles = false;
     let mut viewing_player_spawn = false;
     let mut viewing_player_spheres = false;
@@ -1305,34 +1305,41 @@ fn main() {
 
         //Create capsule collider(s) for water guns
         let water_gun_colliders = {
+            let trigger_states = [&left_trigger_state, &right_trigger_state];
             let gadgets = [&left_hand_gadget, &right_hand_gadget];
             let pillar_scales = [&mut left_water_pillar_scale, &mut right_water_pillar_scale];
             let aim_spaces = [&left_hand_aim_space, &right_hand_aim_space];
             let mut colliders = [None, None];
 
             for i in 0..2 {
-                if let GadgetType::WaterCannon = gadgets[i] {                    
-                    let mut capsule_segment = LineSegment {
-                        p0: glm::zero(),
-                        p1: glm::vec3(0.0, pillar_scales[i].y, 0.0)
-                    };
+                if let Some(state) = trigger_states[i] {
+                    if state.current_state > 0.0 {
+                        if let GadgetType::WaterCannon = gadgets[i] {
+                            let mut capsule_segment = LineSegment {
+                                p0: glm::zero(),
+                                p1: glm::vec3(0.0, pillar_scales[i].y * 2.0, 0.0)
+                            };
 
-                    if let Some(hand_aim_pose) = xrutil::locate_space(aim_spaces[i], &tracking_space, last_xr_render_time) {
-                        let transform = xrutil::pose_to_mat4(&hand_aim_pose, &world_from_tracking);
-                        capsule_segment.p0 = glm::vec4_to_vec3(&(transform * glm::vec4(capsule_segment.p0.x, capsule_segment.p0.y, capsule_segment.p0.z, 1.0)));
-                        capsule_segment.p1 = glm::vec4_to_vec3(&(transform * glm::vec4(capsule_segment.p1.x, capsule_segment.p1.y, capsule_segment.p1.z, 1.0)));
-                    }
+                            if let Some(hand_aim_pose) = xrutil::locate_space(aim_spaces[i], &tracking_space, last_xr_render_time) {
+                                let transform = xrutil::pose_to_mat4(&hand_aim_pose, &world_from_tracking);
+                                capsule_segment.p0 = glm::vec4_to_vec3(&(transform * glm::vec4(capsule_segment.p0.x, capsule_segment.p0.y, capsule_segment.p0.z, 1.0)));
+                                capsule_segment.p1 = glm::vec4_to_vec3(&(transform * glm::vec4(capsule_segment.p1.x, capsule_segment.p1.y, capsule_segment.p1.z, 1.0)));
+                            }
 
-                    let radius = pillar_scales[i].x;
-                    queue_debug_sphere(&mut debug_sphere_queue, capsule_segment.p0, glm::vec4(0.0, 0.3, 1.0, 0.5), radius, false);
-                    queue_debug_sphere(&mut debug_sphere_queue, capsule_segment.p1, glm::vec4(0.0, 0.4, 1.0, 0.5), radius, false);
+                            let radius = pillar_scales[i].x * 0.5;
+                            if viewing_collision_spheres {
+                                queue_debug_sphere(&mut debug_sphere_queue, capsule_segment.p0, glm::vec4(0.0, 0.3, 1.0, 0.5), radius, false);
+                                queue_debug_sphere(&mut debug_sphere_queue, capsule_segment.p1, glm::vec4(0.0, 0.4, 1.0, 0.5), radius, false);
+                            }
 
-                    colliders[i] = Some(
-                        Capsule {
-                            segment: capsule_segment,
-                            radius
+                            colliders[i] = Some(
+                                Capsule {
+                                    segment: capsule_segment,
+                                    radius
+                                }
+                            );
                         }
-                    );
+                    }
                 }
             }
 
@@ -1352,21 +1359,26 @@ fn main() {
                     let mut res = false;
                     let tot_sphere = totoro.sphere();
 
+                    //Both hands
                     for i in 0..2 {
                         if let Some(water_gun_capsule) = &water_gun_colliders[i] {
                             let segment = &water_gun_capsule.segment;
                             let t_vector = tot_sphere.focus - segment.p0;
-                            let l_vector = glm::normalize(&(segment.p1 - segment.p0));
-                            let t = clamp(glm::dot(&t_vector, &l_vector), 0.0, 1.0);
+                            let l_vector = segment.p1 - segment.p0;
+                            let length = glm::length(&l_vector);
+                            let t = clamp(glm::dot(&t_vector, &(l_vector / length)) / length, 0.0, 1.0);
 
-                            println!("{}", t);
                             let test_sphere = Sphere {
-                                focus: (1.0 - t) * segment.p0 + t * segment.p1,
+                                focus: segment.p0 + t * l_vector,
                                 radius: water_gun_capsule.radius
                             };
+                            if viewing_collision_spheres {
+                                queue_debug_sphere(&mut debug_sphere_queue, test_sphere.focus, glm::vec4(1.0, 0.0, 0.0, 0.6), test_sphere.radius, false);
+                            }
 
                             if spheres_collide(&test_sphere, &tot_sphere) {
                                 res = true;
+                                println!("Hitting on frame {}", frame_count);
                                 break;
                             }
                         }
@@ -1473,7 +1485,11 @@ fn main() {
                     }
                     TotoroState::Dying => {
                         if being_hit_by_water {
-                            let ford = glm::rotation(glm::pi::<f32>() * 4.0 * delta_time, &Z_UP) * glm::vec3_to_vec4(&totoro.forward);
+                            let base_spin_rate = glm::pi::<f32>() * 4.0;
+                            let spin_rate = base_spin_rate * ((Totoro::MAX_HEALTH - totoro.health) / Totoro::MAX_HEALTH * 5.0 + 1.0);
+                            let depletion_rate = Totoro::MAX_HEALTH * 4.0 / 3.0;
+                            totoro.health -= depletion_rate * delta_time;
+                            let ford = glm::rotation(spin_rate * delta_time, &Z_UP) * glm::vec3_to_vec4(&totoro.forward);
                             totoro.forward = glm::vec4_to_vec3(&ford);
                         } else {
                             totoro.state = TotoroState::Panicking;
@@ -1492,7 +1508,7 @@ fn main() {
                 totoro.position += totoro.velocity * delta_time;
 
                 //Queue debug sphere
-                if viewing_collision {
+                if viewing_collision_spheres {
                     let sph = totoro.sphere();
                     let highlighted = match world_state.selected_totoro {
                         Some(idx) => { idx == i }
@@ -1501,8 +1517,8 @@ fn main() {
                     queue_debug_sphere(&mut debug_sphere_queue, sph.focus, glm::vec4(0.0, 0.0, 0.5, 0.5), sph.radius, highlighted);
                 }
 
-                //Kill if below a certain point
-                if totoro.position.z < -1000.0 {
+                //Kill if below a certain point or health depleted
+                if totoro.position.z < -1000.0 || totoro.health <= 0.0 {
                     delete_object(&mut world_state.totoros, &mut world_state.selected_totoro, i);
                 }
             }
@@ -2205,7 +2221,7 @@ fn main() {
                             re.update_transform_buffer(glm::value_ptr(&mat), DEBUG_TRANSFORM_ATTRIBUTE);
                         }
                     }
-                    imgui_ui.checkbox(im_str!("View collision spheres"), &mut viewing_collision);
+                    imgui_ui.checkbox(im_str!("View collision spheres"), &mut viewing_collision_spheres);
                     imgui_ui.text(im_str!("Click actions"));
                     do_radio_button(&imgui_ui, im_str!("Create totoro"), &mut click_action, ClickAction::CreateTotoro);
                     do_radio_button(&imgui_ui, im_str!("Create light source"), &mut click_action, ClickAction::CreatePointLight);
