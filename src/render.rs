@@ -298,6 +298,7 @@ pub struct SceneData {
     pub fragment_flag: FragmentFlag,
     pub complex_normals: bool,
     pub toon_shading: bool,
+    pub using_postfx: bool,
     pub skybox_cubemap: GLuint,
     pub skybox_vao: GLuint,
     pub skybox_program: GLuint,
@@ -336,6 +337,7 @@ impl Default for SceneData {
             fragment_flag: FragmentFlag::Default,
             complex_normals: true,
             toon_shading: true,
+            using_postfx: false,
             skybox_cubemap: 0,
             skybox_vao: ozy::prims::skybox_cube_vao(),
             skybox_program: 0,
@@ -576,4 +578,24 @@ pub fn compute_shadow_cascade_matrices(shadow_cascade_distances: &[f32; SHADOW_C
         out_mats[i] = shadow_projection * shadow_view;
     }
     out_mats
+}
+
+pub unsafe fn post_processing(ping_rt: &RenderTarget, window_size: glm::TVec2<u32>, postfx_program: GLuint, elapsed_time: f32) {
+    gl::BindTexture(gl::TEXTURE_2D, ping_rt.color_attachment_view);
+    gl::GenerateMipmap(gl::TEXTURE_2D);
+
+    //Binding the compute shader program
+    gl::UseProgram(postfx_program);
+    glutil::bind_float(postfx_program, "elapsed_time", elapsed_time);
+
+    //ping_rt.color_attachment_view is a texture view into ping_rt.texture but it's internal format is set to gl::RGBA8 so the compute shader can use it
+    gl::BindImageTexture(0, ping_rt.color_attachment_view, 0, gl::FALSE, 0, gl::READ_WRITE, gl::RGBA8);
+
+    //Dispatching compute
+    let additional_x = if window_size.x % 32 != 0 { 1 } else { 0 };
+    let additional_y = if window_size.y % 32 != 0 { 1 } else { 0 };
+    gl::DispatchCompute(window_size.x / 32 + additional_x, window_size.y / 32 + additional_y, 1);
+
+    //Waiting for the compute shader to finish before blitting to the default framebuffer
+    gl::MemoryBarrier(gl::FRAMEBUFFER_BARRIER_BIT);
 }

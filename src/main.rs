@@ -62,6 +62,25 @@ const DEFAULT_TEX_PARAMS: [(GLenum, GLenum); 4] = [
     (gl::TEXTURE_MAG_FILTER, gl::LINEAR)
 ];
 
+unsafe fn blit_full_color_buffer(src_rt: &Framebuffer, dst_rt: &Framebuffer) {
+    //Resolving the MSAA rendertarget
+    //Both framebuffers have an internal format of gl::SRGB8_ALPHA8    
+    gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, dst_rt.name);
+    gl::BindFramebuffer(gl::READ_FRAMEBUFFER, src_rt.name);
+    gl::BlitFramebuffer(
+        0,
+        0,
+        src_rt.size.0 as GLint,
+        src_rt.size.1 as GLint,
+        0,
+        0,
+        dst_rt.size.0 as GLint,
+        dst_rt.size.1 as GLint,
+        gl::COLOR_BUFFER_BIT,
+        gl::NEAREST
+    );
+}
+
 fn queue_debug_sphere(sphere_queue: &mut Vec<DebugSphere>, position: glm::TVec3<f32>, color: glm::TVec4<f32>, radius: f32, highlighted: bool) {
     let s = DebugSphere {
         position,
@@ -2516,7 +2535,19 @@ fn main() {
                                         v_mat,
                                         projection
                                     );
-                                    render::main_scene(&default_framebuffer, &scene_data, &view_state);
+                                    render::main_scene(&core_rt.framebuffer, &scene_data, &view_state);
+
+                                    //Resolving the MSAA rendertarget
+                                    //Both framebuffers have an internal format of gl::SRGB8_ALPHA8
+                                    blit_full_color_buffer(&core_rt.framebuffer, &ping_rt.framebuffer);
+
+                                    //Post-processing step
+                                    if using_postfx {
+                                        render::post_processing(&ping_rt, window_size, postfx_program, scene_data.elapsed_time);
+                                    }
+
+                                    //Blit to default framebuffer
+                                    blit_full_color_buffer(&ping_rt.framebuffer, &default_framebuffer);
                                 }
                             }                           
 
@@ -2584,55 +2615,15 @@ fn main() {
 
                 //Resolving the MSAA rendertarget
                 //Both framebuffers have an internal format of gl::SRGB8_ALPHA8
-                gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, ping_rt.framebuffer.name);
-                gl::BindFramebuffer(gl::READ_FRAMEBUFFER, core_rt.framebuffer.name);
-                gl::BlitFramebuffer(
-                    0,
-                    0,
-                    window_size.x as GLint,
-                    window_size.y as GLint,
-                    0,
-                    0,
-                    window_size.x as GLint,
-                    window_size.y as GLint,
-                    gl::COLOR_BUFFER_BIT,
-                    gl::NEAREST
-                );
+                blit_full_color_buffer(&core_rt.framebuffer, &ping_rt.framebuffer);
 
                 //Post-processing step
                 if using_postfx {
-                    gl::BindTexture(gl::TEXTURE_2D, ping_rt.color_attachment_view);
-                    gl::GenerateMipmap(gl::TEXTURE_2D);
-
-                    //Binding the compute shader program
-                    gl::UseProgram(postfx_program);
-                    glutil::bind_float(postfx_program, "elapsed_time", scene_data.elapsed_time);
-
-                    //ping_rt.color_attachment_view is a texture view into ping_rt.texture but it's internal format is set to gl::RGBA8 so the compute shader can use it
-                    gl::BindImageTexture(0, ping_rt.color_attachment_view, 0, gl::FALSE, 0, gl::READ_WRITE, gl::RGBA8);
-
-                    //Dispatching compute
-                    gl::DispatchCompute(window_size.x / 32 + 1, window_size.y / 32 + 1, 1);
-
-                    //Waiting for the compute shader to finish before blitting to the default framebuffer
-                    gl::MemoryBarrier(gl::FRAMEBUFFER_BARRIER_BIT);
+                    render::post_processing(&ping_rt, window_size, postfx_program, scene_data.elapsed_time);
                 }
                 
                 //Blit to default framebuffer
-                gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, default_framebuffer.name);
-                gl::BindFramebuffer(gl::READ_FRAMEBUFFER, ping_rt.framebuffer.name);
-                gl::BlitFramebuffer(
-                    0,
-                    0,
-                    window_size.x as GLint,
-                    window_size.y as GLint,
-                    0,
-                    0,
-                    window_size.x as GLint,
-                    window_size.y as GLint,
-                    gl::COLOR_BUFFER_BIT,
-                    gl::NEAREST
-                );
+                blit_full_color_buffer(&ping_rt.framebuffer, &default_framebuffer);
             }
 
             //Take a screenshot here as to not get the dev gui in it
