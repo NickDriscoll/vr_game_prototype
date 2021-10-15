@@ -12,7 +12,7 @@ use gl::types::*;
 use crate::traits::SphereCollider;
 
 pub const NEAR_DISTANCE: f32 = 0.0625;
-pub const FAR_DISTANCE: f32 = 100_000.0;
+pub const FAR_DISTANCE: f32 = 1_000.0;
 pub const MSAA_SAMPLES: u32 = 8;
 pub const SHADOW_CASCADE_COUNT: usize = 5;
 pub const ENTITY_TEXTURE_COUNT: usize = 3;
@@ -39,7 +39,8 @@ pub struct RenderEntity {
     pub uv_offset: glm::TVec2<f32>,
     pub uv_scale: glm::TVec2<f32>,
     pub textures: [GLuint; ENTITY_TEXTURE_COUNT],
-    pub transparent: bool
+    pub transparent: bool,
+    pub ignore_depth: bool
 }
 
 impl RenderEntity {
@@ -60,7 +61,8 @@ impl RenderEntity {
             uv_offset: glm::zero(),
             uv_scale: glm::zero(),
             textures: [0; ENTITY_TEXTURE_COUNT],
-            transparent: false
+            transparent: false,
+            ignore_depth: false
         }
     }
 
@@ -116,7 +118,8 @@ impl RenderEntity {
                     uv_velocity: glm::vec2(meshdata.uv_velocity[0], meshdata.uv_velocity[1]),
                     uv_scale: glm::vec2(1.0, 1.0),
                     uv_offset: glm::vec2(0.0, 0.0),
-                    transparent: meshdata.is_transparent
+                    transparent: meshdata.is_transparent,
+                    ignore_depth: false
                 }
             }
             None => {
@@ -499,10 +502,18 @@ unsafe fn render_entity(entity: &RenderEntity, program: GLuint, scene_data: &Sce
         glutil::bind_int(p, texture_sampler_names[i], i as GLint);
         gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
         gl::BindTexture(gl::TEXTURE_2D, entity.textures[i]);
-    }            
+    }
+    
+    if entity.ignore_depth {
+        gl::Disable(gl::DEPTH_TEST);
+    }
 
     gl::BindVertexArray(entity.vao);
-    gl::DrawElementsInstanced(gl::TRIANGLES, entity.index_count, gl::UNSIGNED_SHORT, ptr::null(), entity.active_instances as GLint);    
+    gl::DrawElementsInstanced(gl::TRIANGLES, entity.index_count, gl::UNSIGNED_SHORT, ptr::null(), entity.active_instances as GLint);
+    
+    if entity.ignore_depth {
+        gl::Enable(gl::DEPTH_TEST);
+    }   
 }
 
 pub unsafe fn cascaded_shadow_map(shadow_map: &CascadedShadowMap, entities: &[Option<RenderEntity>]) {    
@@ -523,7 +534,12 @@ pub unsafe fn cascaded_shadow_map(shadow_map: &CascadedShadowMap, entities: &[Op
     }
 }
 
-pub fn compute_shadow_cascade_matrices(shadow_cascade_distances: &[f32; SHADOW_CASCADE_COUNT + 1], shadow_view: &glm::TMat4<f32>, v_mat: &glm::TMat4<f32>, projection: &glm::TMat4<f32>) -> [glm::TMat4<f32>; SHADOW_CASCADE_COUNT] {       
+pub fn compute_shadow_cascade_matrices(
+    shadow_cascade_distances: &[f32; SHADOW_CASCADE_COUNT + 1],
+    shadow_view: &glm::TMat4<f32>,
+    v_mat: &glm::TMat4<f32>,
+    projection: &glm::TMat4<f32>
+) -> [glm::TMat4<f32>; SHADOW_CASCADE_COUNT] {       
     let mut out_mats = [glm::identity(); SHADOW_CASCADE_COUNT];
 
     let shadow_from_view = shadow_view * glm::affine_inverse(*v_mat);
@@ -598,4 +614,21 @@ pub unsafe fn post_processing(ping_rt: &RenderTarget, window_size: glm::TVec2<u3
 
     //Waiting for the compute shader to finish before blitting to the default framebuffer
     gl::MemoryBarrier(gl::FRAMEBUFFER_BARRIER_BIT);
+}
+
+pub unsafe fn blit_full_color_buffer(src_fb: &Framebuffer, dst_fb: &Framebuffer) {
+    gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, dst_fb.name);
+    gl::BindFramebuffer(gl::READ_FRAMEBUFFER, src_fb.name);
+    gl::BlitFramebuffer(
+        0,
+        0,
+        src_fb.size.0 as GLint,
+        src_fb.size.1 as GLint,
+        0,
+        0,
+        dst_fb.size.0 as GLint,
+        dst_fb.size.1 as GLint,
+        gl::COLOR_BUFFER_BIT,
+        gl::NEAREST
+    );
 }

@@ -12,7 +12,8 @@ restrict layout(rgba8, binding = 0) uniform image2D ping_im;
 uniform float elapsed_time;
 
 void main() {
-    ivec2 image_coord = (ivec2(gl_GlobalInvocationID.xy) + ivec2(elapsed_time * 100.0, sin(elapsed_time * 3.0) * 100.0 + 100.0)) % ivec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy);
+    //ivec2 image_coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 image_coord = (ivec2(gl_GlobalInvocationID.xy) + ivec2(elapsed_time * 100.0, elapsed_time * 400.0)) % ivec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy);
     vec3 pixel = imageLoad(ping_im, image_coord).rgb;
 
 /*
@@ -41,7 +42,9 @@ void main() {
     }
 */
 
-    vec3 tint = vec3(vec2(gl_LocalInvocationID.xy) / vec2(gl_WorkGroupSize.xy), 1.0);
+    vec2 local_pos = vec2(gl_LocalInvocationID.xy);
+    vec2 local_size = vec2(gl_WorkGroupSize.xy);
+    vec3 tint = vec3((local_pos / local_size + sin(elapsed_time) * 0.5 + 0.5), 1.1);
     imageStore(ping_im, image_coord, vec4(pixel * tint, 1.0));
 }
 

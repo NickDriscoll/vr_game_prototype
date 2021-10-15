@@ -21,6 +21,7 @@ use ozy::collision::*;
 use crate::traits::{PositionAble, SphereCollider};
 use crate::gamestate::*;
 use crate::structs::*;
+use crate::render::NEAR_DISTANCE;
 use crate::*;
 
 pub fn clamp<T: PartialOrd>(x: T, min: T, max: T) -> T {

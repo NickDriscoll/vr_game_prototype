@@ -44,7 +44,7 @@ use crate::audio::{AudioCommand, SoundEffect};
 use crate::gamestate::*;
 use crate::structs::*;
 use crate::routines::*;
-use crate::render::*;
+use crate::render::{PointLight, MAX_POINT_LIGHTS, NEAR_DISTANCE, FAR_DISTANCE, STANDARD_TRANSFORM_ATTRIBUTE, STANDARD_HIGHLIGHTED_ATTRIBUTE, DEBUG_TRANSFORM_ATTRIBUTE, DEBUG_COLOR_ATTRIBUTE, DEBUG_HIGHLIGHTED_ATTRIBUTE};
 use crate::traits::SphereCollider;
 
 #[cfg(windows)]
@@ -61,25 +61,6 @@ const DEFAULT_TEX_PARAMS: [(GLenum, GLenum); 4] = [
     (gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR),
     (gl::TEXTURE_MAG_FILTER, gl::LINEAR)
 ];
-
-unsafe fn blit_full_color_buffer(src_rt: &Framebuffer, dst_rt: &Framebuffer) {
-    //Resolving the MSAA rendertarget
-    //Both framebuffers have an internal format of gl::SRGB8_ALPHA8    
-    gl::BindFramebuffer(gl::DRAW_FRAMEBUFFER, dst_rt.name);
-    gl::BindFramebuffer(gl::READ_FRAMEBUFFER, src_rt.name);
-    gl::BlitFramebuffer(
-        0,
-        0,
-        src_rt.size.0 as GLint,
-        src_rt.size.1 as GLint,
-        0,
-        0,
-        dst_rt.size.0 as GLint,
-        dst_rt.size.1 as GLint,
-        gl::COLOR_BUFFER_BIT,
-        gl::NEAREST
-    );
-}
 
 fn queue_debug_sphere(sphere_queue: &mut Vec<DebugSphere>, position: glm::TVec3<f32>, color: glm::TVec4<f32>, radius: f32, highlighted: bool) {
     let s = DebugSphere {
@@ -809,6 +790,7 @@ fn main() {
 
         let vao = glutil::create_vertex_array_object(&verts, inds, &[3, 3]);
         let mut re = RenderEntity::from_vao(vao, debug_program, inds.len(), 1, DEBUG_TRANSFORM_ATTRIBUTE);
+        re.ignore_depth = true;
         re.init_new_instanced_buffer(4, DEBUG_COLOR_ATTRIBUTE, RenderEntity::COLOR_BUFFER_INDEX);
 
         let color = [0.5, 0.0, 0.0, 0.5];
@@ -1220,7 +1202,7 @@ fn main() {
                                     water_gun_force = glm::vec4_to_vec3(&(-state.current_state * world_space_vec));
                     
                                     if state.current_state > 0.0 {
-                                        pillar_scales[i].y = 2.0;
+                                        pillar_scales[i].y = 0.75;
                                         if player.movement_state != MoveState::Falling {
                                             set_player_falling(player);
                                         }
@@ -1345,7 +1327,7 @@ fn main() {
                                 capsule_segment.p1 = glm::vec4_to_vec3(&(transform * glm::vec4(capsule_segment.p1.x, capsule_segment.p1.y, capsule_segment.p1.z, 1.0)));
                             }
 
-                            let radius = pillar_scales[i].x * 0.5;
+                            let radius = pillar_scales[i].x * 0.2;
                             if viewing_collision_spheres {
                                 queue_debug_sphere(&mut debug_sphere_queue, capsule_segment.p0, glm::vec4(0.0, 0.3, 1.0, 0.5), radius, false);
                                 queue_debug_sphere(&mut debug_sphere_queue, capsule_segment.p1, glm::vec4(0.0, 0.4, 1.0, 0.5), radius, false);
@@ -1397,7 +1379,6 @@ fn main() {
 
                             if spheres_collide(&test_sphere, &tot_sphere) {
                                 res = true;
-                                println!("Hitting on frame {}", frame_count);
                                 break;
                             }
                         }
@@ -1882,133 +1863,6 @@ fn main() {
         camera.last_position = camera.position;
         mouse.was_clicked = mouse.clicked;
 
-        //Pre-render phase
-
-        //Update the GPU instance buffer for the Totoros
-        if let Some(entity) = scene_data.opaque_entities.get_mut_element(totoro_re_index) {
-            let totoros = &world_state.totoros;
-            let mut highlighted_buffer = vec![0.0; totoros.count()];
-            let mut transform_buffer = vec![0.0; totoros.count() * 16];
-            let mut current_totoro = 0;
-            for i in 0..totoros.len() {
-                if let Some(totoro) = &totoros[i] {
-                    //Directly constructing the rotation matrix
-                    let cr = glm::cross(&Z_UP, &totoro.forward);
-                    let rotation_mat = glm::mat4(
-                        totoro.forward.x, cr.x, 0.0, 0.0,
-                        totoro.forward.y, cr.y, 0.0, 0.0,
-                        totoro.forward.z, cr.z, 1.0, 0.0,
-                        0.0, 0.0, 0.0, 1.0
-                    );
-
-                    let mm = glm::translation(&totoro.position) * rotation_mat * uniform_scale(totoro.scale);
-                    write_matrix_to_buffer(&mut transform_buffer, current_totoro, mm);
-
-                    if let Some(idx) = world_state.selected_totoro {
-                        if idx == i {
-                            highlighted_buffer[current_totoro] = 1.0;
-                        }
-                    }
-
-                    current_totoro += 1;
-                }
-            }
-
-            entity.update_highlight_buffer(&highlighted_buffer, STANDARD_HIGHLIGHTED_ATTRIBUTE);
-            entity.update_transform_buffer(&transform_buffer, STANDARD_TRANSFORM_ATTRIBUTE);
-        }
-
-        //Update the GPU instance buffer for the debug spheres
-        if let Some(entity) = scene_data.transparent_entities.get_mut_element(debug_sphere_re_index) {
-            let instances = debug_sphere_queue.len();
-            let mut highlighted_buffer = vec![0.0; instances];
-            let mut color_buffer = vec![0.0; instances * 4];
-            let mut transform_buffer = vec![0.0; instances * 16];
-
-            let mut idx = 0;
-            for sphere in debug_sphere_queue.drain(0..debug_sphere_queue.len()) {
-                let mm = glm::translation(&sphere.position) * uniform_scale(-sphere.radius);
-                write_matrix_to_buffer(&mut transform_buffer, idx, mm);
-                write_vec4_to_buffer(&mut color_buffer, idx, sphere.color);
-                highlighted_buffer[idx] = if sphere.highlighted {
-                    1.0
-                } else {
-                    0.0
-                };
-                
-                idx += 1;
-            }
-
-            entity.update_highlight_buffer(&highlighted_buffer, DEBUG_HIGHLIGHTED_ATTRIBUTE);
-            entity.update_transform_buffer(&transform_buffer, DEBUG_TRANSFORM_ATTRIBUTE);
-            entity.update_color_buffer(&color_buffer, DEBUG_COLOR_ATTRIBUTE);
-        }
-
-        //Update the uniform buffer object of point lights
-        unsafe {
-            //Create the buffer
-            let floats_per_light = 9; //4N+4N+Ns
-        
-            //Create the buffer
-            let mut buffer = vec![0.0; MAX_POINT_LIGHTS * floats_per_light];        
-            let mut current_light = 0;
-            for i in 0..scene_data.point_lights.len() {
-                if let Some(light) = &scene_data.point_lights[i] {
-                    buffer[current_light * 4] = light.position.x;
-                    buffer[current_light * 4 + 1] = light.position.y;
-                    buffer[current_light * 4 + 2] = light.position.z;
-        
-                    buffer[(current_light + MAX_POINT_LIGHTS) * 4] = light.color[0];
-                    buffer[(current_light + MAX_POINT_LIGHTS) * 4 + 1] = light.color[1];
-                    buffer[(current_light + MAX_POINT_LIGHTS) * 4 + 2] = light.color[2];
-                    
-                    //Modulate power                    
-                    //let offset = 0.25 * simplex.get([0.0, 6.0 * scene_data.elapsed_time as f64]) as f32;
-                    let offset = light.flicker_amplitude * simplex.get([0.0, light.flicker_timescale as f64 * scene_data.elapsed_time as f64]) as f32;
-                    buffer[(2 * MAX_POINT_LIGHTS) * 4 + current_light] = light.power + offset;
-        
-                    current_light += 1;
-                }
-            }
-            
-            gl::BindBuffer(gl::UNIFORM_BUFFER, scene_data.point_lights_ubo);
-            let mut current_buffer_size = 0;
-            gl::GetBufferParameteriv(gl::UNIFORM_BUFFER, gl::BUFFER_SIZE, &mut current_buffer_size);
-    
-            if buffer.len() * size_of::<GLfloat>() > current_buffer_size as usize {
-                let mut b = 0;
-                gl::DeleteBuffers(1, &scene_data.point_lights_ubo as *const u32);
-                gl::GenBuffers(1, &mut b);
-                scene_data.point_lights_ubo = b;
-                
-                gl::BindBuffer(gl::UNIFORM_BUFFER, scene_data.point_lights_ubo);
-                gl::BufferData(
-                    gl::UNIFORM_BUFFER,
-                    (buffer.len() * size_of::<GLfloat>()) as GLsizeiptr,
-                    &buffer[0] as *const GLfloat as *const c_void,
-                    gl::DYNAMIC_DRAW
-                );
-                
-                //Bind the point light ubo
-                gl::UseProgram(standard_program);
-                gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, scene_data.point_lights_ubo);
-            } else if buffer.len() > 0 {
-                gl::BufferSubData(
-                    gl::UNIFORM_BUFFER,
-                    0 as GLsizeiptr,
-                    (buffer.len() * size_of::<GLfloat>()) as GLsizeiptr,
-                    &buffer[0] as *const GLfloat as *const c_void
-                );
-            }
-        }
-
-        //Compute sun direction from pitch and yaw
-        scene_data.sun_direction = glm::vec4_to_vec3(&(
-            glm::rotation(scene_data.sun_yaw, &Z_UP) *
-            glm::rotation(scene_data.sun_pitch, &glm::vec3(0.0, 1.0, 0.0)) *
-            glm::vec4(-1.0, 0.0, 0.0, 0.0)
-        ));
-
         //Draw ImGui
         if do_imgui {
             let drag_speed = 0.02;            
@@ -2198,6 +2052,7 @@ fn main() {
                         if imgui_ui.button(im_str!("Toggle fullscreen"), [0.0, 32.0]) {
                             //Toggle window fullscreen
                             if !is_fullscreen {
+                                window.set_decorated(false);
                                 glfw.with_primary_monitor_mut(|_, opt_monitor| {
                                     if let Some(monitor) = opt_monitor {
                                         let pos = monitor.get_pos();
@@ -2210,13 +2065,14 @@ fn main() {
                                                 &mut pong_rt,
                                                 window_size,
                                                 pos,
-                                                WindowMode::FullScreen(monitor)
+                                                WindowMode::Windowed
                                             );
                                         }
                                     }
                                 });
                             } else {
                                 window_size = get_window_size(&config);
+                                window.set_decorated(true);
                                 resize_main_window(&mut window, &mut core_rt, &mut ping_rt, &mut pong_rt, window_size, (200, 200), WindowMode::Windowed);
                             }
                             default_framebuffer.size = core_rt.framebuffer.size;
@@ -2414,6 +2270,133 @@ fn main() {
             }
         }
 
+        //Pre-render phase
+
+        //Update the GPU instance buffer for the Totoros
+        if let Some(entity) = scene_data.opaque_entities.get_mut_element(totoro_re_index) {
+            let totoros = &world_state.totoros;
+            let mut highlighted_buffer = vec![0.0; totoros.count()];
+            let mut transform_buffer = vec![0.0; totoros.count() * 16];
+            let mut current_totoro = 0;
+            for i in 0..totoros.len() {
+                if let Some(totoro) = &totoros[i] {
+                    //Directly constructing the rotation matrix
+                    let cr = glm::cross(&Z_UP, &totoro.forward);
+                    let rotation_mat = glm::mat4(
+                        totoro.forward.x, cr.x, 0.0, 0.0,
+                        totoro.forward.y, cr.y, 0.0, 0.0,
+                        totoro.forward.z, cr.z, 1.0, 0.0,
+                        0.0, 0.0, 0.0, 1.0
+                    );
+
+                    let mm = glm::translation(&totoro.position) * rotation_mat * uniform_scale(totoro.scale);
+                    write_matrix_to_buffer(&mut transform_buffer, current_totoro, mm);
+
+                    if let Some(idx) = world_state.selected_totoro {
+                        if idx == i {
+                            highlighted_buffer[current_totoro] = 1.0;
+                        }
+                    }
+
+                    current_totoro += 1;
+                }
+            }
+
+            entity.update_highlight_buffer(&highlighted_buffer, STANDARD_HIGHLIGHTED_ATTRIBUTE);
+            entity.update_transform_buffer(&transform_buffer, STANDARD_TRANSFORM_ATTRIBUTE);
+        }
+
+        //Update the GPU instance buffer for the debug spheres
+        if let Some(entity) = scene_data.transparent_entities.get_mut_element(debug_sphere_re_index) {
+            let instances = debug_sphere_queue.len();
+            let mut highlighted_buffer = vec![0.0; instances];
+            let mut color_buffer = vec![0.0; instances * 4];
+            let mut transform_buffer = vec![0.0; instances * 16];
+
+            let mut idx = 0;
+            for sphere in debug_sphere_queue.drain(0..debug_sphere_queue.len()) {
+                let mm = glm::translation(&sphere.position) * uniform_scale(-sphere.radius);
+                write_matrix_to_buffer(&mut transform_buffer, idx, mm);
+                write_vec4_to_buffer(&mut color_buffer, idx, sphere.color);
+                highlighted_buffer[idx] = if sphere.highlighted {
+                    1.0
+                } else {
+                    0.0
+                };
+                
+                idx += 1;
+            }
+
+            entity.update_highlight_buffer(&highlighted_buffer, DEBUG_HIGHLIGHTED_ATTRIBUTE);
+            entity.update_transform_buffer(&transform_buffer, DEBUG_TRANSFORM_ATTRIBUTE);
+            entity.update_color_buffer(&color_buffer, DEBUG_COLOR_ATTRIBUTE);
+        }
+
+        //Update the uniform buffer object of point lights
+        unsafe {
+            //Create the buffer
+            let floats_per_light = 9; //4N+4N+Ns
+        
+            //Create the buffer
+            let mut buffer = vec![0.0; MAX_POINT_LIGHTS * floats_per_light];        
+            let mut current_light = 0;
+            for i in 0..scene_data.point_lights.len() {
+                if let Some(light) = &scene_data.point_lights[i] {
+                    buffer[current_light * 4] = light.position.x;
+                    buffer[current_light * 4 + 1] = light.position.y;
+                    buffer[current_light * 4 + 2] = light.position.z;
+        
+                    buffer[(current_light + MAX_POINT_LIGHTS) * 4] = light.color[0];
+                    buffer[(current_light + MAX_POINT_LIGHTS) * 4 + 1] = light.color[1];
+                    buffer[(current_light + MAX_POINT_LIGHTS) * 4 + 2] = light.color[2];
+                    
+                    //Modulate power                    
+                    //let offset = 0.25 * simplex.get([0.0, 6.0 * scene_data.elapsed_time as f64]) as f32;
+                    let offset = light.flicker_amplitude * simplex.get([0.0, light.flicker_timescale as f64 * scene_data.elapsed_time as f64]) as f32;
+                    buffer[(2 * MAX_POINT_LIGHTS) * 4 + current_light] = light.power + offset;
+        
+                    current_light += 1;
+                }
+            }
+            
+            gl::BindBuffer(gl::UNIFORM_BUFFER, scene_data.point_lights_ubo);
+            let mut current_buffer_size = 0;
+            gl::GetBufferParameteriv(gl::UNIFORM_BUFFER, gl::BUFFER_SIZE, &mut current_buffer_size);
+    
+            if buffer.len() * size_of::<GLfloat>() > current_buffer_size as usize {
+                let mut b = 0;
+                gl::DeleteBuffers(1, &scene_data.point_lights_ubo as *const u32);
+                gl::GenBuffers(1, &mut b);
+                scene_data.point_lights_ubo = b;
+                
+                gl::BindBuffer(gl::UNIFORM_BUFFER, scene_data.point_lights_ubo);
+                gl::BufferData(
+                    gl::UNIFORM_BUFFER,
+                    (buffer.len() * size_of::<GLfloat>()) as GLsizeiptr,
+                    &buffer[0] as *const GLfloat as *const c_void,
+                    gl::DYNAMIC_DRAW
+                );
+                
+                //Bind the point light ubo
+                gl::UseProgram(standard_program);
+                gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, scene_data.point_lights_ubo);
+            } else if buffer.len() > 0 {
+                gl::BufferSubData(
+                    gl::UNIFORM_BUFFER,
+                    0 as GLsizeiptr,
+                    (buffer.len() * size_of::<GLfloat>()) as GLsizeiptr,
+                    &buffer[0] as *const GLfloat as *const c_void
+                );
+            }
+        }
+
+        //Compute sun direction from pitch and yaw
+        scene_data.sun_direction = glm::vec4_to_vec3(&(
+            glm::rotation(scene_data.sun_yaw, &Z_UP) *
+            glm::rotation(scene_data.sun_pitch, &glm::vec3(0.0, 1.0, 0.0)) *
+            glm::vec4(-1.0, 0.0, 0.0, 0.0)
+        ));
+
         //Create a view matrix from the camera state
         {
             let new_view_matrix = glm::rotation(camera.orientation.y, &glm::vec3(1.0, 0.0, 0.0)) *
@@ -2504,7 +2487,7 @@ fn main() {
                                     );
 
                                     //Render the CSM for this eye
-                                    scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&scene_data.sun_shadow_map.view_space_distances, &shadow_view, &eye_view_matrix, &perspective);
+                                    scene_data.sun_shadow_map.matrices = render::compute_shadow_cascade_matrices(&scene_data.sun_shadow_map.view_space_distances, &shadow_view, &eye_view_matrix, &perspective);
                                     render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.opaque_entities.as_slice());
     
                                     //Actually rendering
@@ -2539,7 +2522,7 @@ fn main() {
 
                                     //Resolving the MSAA rendertarget
                                     //Both framebuffers have an internal format of gl::SRGB8_ALPHA8
-                                    blit_full_color_buffer(&core_rt.framebuffer, &ping_rt.framebuffer);
+                                    render::blit_full_color_buffer(&core_rt.framebuffer, &ping_rt.framebuffer);
 
                                     //Post-processing step
                                     if using_postfx {
@@ -2547,7 +2530,7 @@ fn main() {
                                     }
 
                                     //Blit to default framebuffer
-                                    blit_full_color_buffer(&ping_rt.framebuffer, &default_framebuffer);
+                                    render::blit_full_color_buffer(&ping_rt.framebuffer, &default_framebuffer);
                                 }
                             }                           
 
@@ -2602,7 +2585,7 @@ fn main() {
                 //Render shadows
                 let projection = &camera.clipping_from_view;
                 let v_mat = &camera.view_from_world;
-                scene_data.sun_shadow_map.matrices = compute_shadow_cascade_matrices(&scene_data.sun_shadow_map.view_space_distances, &shadow_view, v_mat, projection);
+                scene_data.sun_shadow_map.matrices = render::compute_shadow_cascade_matrices(&scene_data.sun_shadow_map.view_space_distances, &shadow_view, v_mat, projection);
                 render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.opaque_entities.as_slice());
 
                 //Render main scene
@@ -2615,7 +2598,7 @@ fn main() {
 
                 //Resolving the MSAA rendertarget
                 //Both framebuffers have an internal format of gl::SRGB8_ALPHA8
-                blit_full_color_buffer(&core_rt.framebuffer, &ping_rt.framebuffer);
+                render::blit_full_color_buffer(&core_rt.framebuffer, &ping_rt.framebuffer);
 
                 //Post-processing step
                 if using_postfx {
@@ -2623,7 +2606,7 @@ fn main() {
                 }
                 
                 //Blit to default framebuffer
-                blit_full_color_buffer(&ping_rt.framebuffer, &default_framebuffer);
+                render::blit_full_color_buffer(&ping_rt.framebuffer, &default_framebuffer);
             }
 
             //Take a screenshot here as to not get the dev gui in it
