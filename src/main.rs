@@ -39,8 +39,9 @@ use ozy::render::{Framebuffer, RenderTarget, TextureKeeper};
 use ozy::routines::uniform_scale;
 use ozy::structs::OptionVec;
 use ozy::collision::*;
+use std::net::UdpSocket;
 
-use crate::audio::{AudioCommand, SoundEffect};
+use crate::audio::{AudioCommand, RequestedSoundEffect};
 use crate::gamestate::*;
 use crate::structs::*;
 use crate::routines::*;
@@ -61,6 +62,15 @@ const DEFAULT_TEX_PARAMS: [(GLenum, GLenum); 4] = [
     (gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR),
     (gl::TEXTURE_MAG_FILTER, gl::LINEAR)
 ];
+
+fn get_lookup_texture_pixels(count: usize) -> usize {
+    let one_more = if count % 8 == 0 {
+        0
+    } else {
+        1
+    };
+    count / 8 + one_more
+}
 
 fn queue_debug_sphere(sphere_queue: &mut Vec<DebugSphere>, position: glm::TVec3<f32>, color: glm::TVec4<f32>, radius: f32, highlighted: bool) {
     let s = DebugSphere {
@@ -356,6 +366,15 @@ fn main() {
         }
     };
     window.set_resizable(false);
+    //window.set_decorated(false);
+    //window.set_floating(true);
+
+    glfw.with_primary_monitor_mut(|_, opt_monitor|{
+        if let Some(monitor) = opt_monitor {
+            let size = monitor.get_physical_size();
+            window.set_pos(size.0 / 2, size.1 / 2);
+        }
+    });
 
     //Enable polling for various event types
     window.set_key_polling(true);
@@ -619,7 +638,7 @@ fn main() {
 
             gl::GenTextures(1, &mut tex);
             gl::BindTexture(gl::TEXTURE_2D, tex);            
-            glutil::apply_texture_parameters(&font_atlas_params);
+            glutil::apply_texture_parameters(gl::TEXTURE_2D, &font_atlas_params);
             gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RED as GLsizei, font_atlas.width as GLsizei, font_atlas.height as GLsizei, 0, gl::RED, gl::UNSIGNED_BYTE, font_atlas.data.as_ptr() as _);
             atlas.tex_id = TextureId::new(tex as usize);  //Giving Dear Imgui a reference to the font atlas GPU texture
         }
@@ -715,7 +734,7 @@ fn main() {
 
         //Bind the point light ubo
         gl::UseProgram(standard_program);
-        gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, ubo);
+        gl::BindBufferBase(gl::UNIFORM_BUFFER, render::POINT_LIGHTS_BINDING_POINT, ubo);
 
         ubo
     };
@@ -754,11 +773,12 @@ fn main() {
 
         let terrain = Terrain::from_ozt(&format!("models/{}.ozt", level_name));
         println!("Loaded {} collision triangles from {}.ozt", terrain.face_normals.len(), level_name);
+        let collision = StaticCollision::new(terrain);
         let mut word = WorldState {
             player: Player::new(glm::zero(), glm::zero()),
             totoros: OptionVec::with_capacity(64),
             selected_totoro: None,
-            terrain,
+            collision,
             opaque_terrain_indices: Vec::new(),
             transparent_terrain_indices: Vec::new(),
             skybox_strings: Vec::new(),
@@ -776,10 +796,10 @@ fn main() {
 
     //Make RenderEntity for visualizing collision tris
     let terrain_re_index = unsafe {
-        let inds = &world_state.terrain.indices;
-        let mut verts = vec![0.0; world_state.terrain.vertices.len() * 6];
-        for i in 0..world_state.terrain.vertices.len() {
-            let v = &world_state.terrain.vertices[i];
+        let inds = &world_state.collision.terrain.indices;
+        let mut verts = vec![0.0; world_state.collision.terrain.vertices.len() * 6];
+        for i in 0..world_state.collision.terrain.vertices.len() {
+            let v = &world_state.collision.terrain.vertices[i];
             verts[6 * i] = v.x;
             verts[6 * i + 1] = v.y;
             verts[6 * i + 2] = v.z;
@@ -795,6 +815,25 @@ fn main() {
 
         let color = [0.5, 0.0, 0.0, 0.5];
         re.update_color_buffer(&color, DEBUG_COLOR_ATTRIBUTE);
+
+        //Create lookup texture for selected triangles
+        {
+            gl::GenTextures(1, &mut re.lookup_texture);
+            gl::BindTexture(gl::TEXTURE_1D, re.lookup_texture);
+
+            let triangle_count = world_state.collision.terrain.face_normals.len();
+            let width = get_lookup_texture_pixels(triangle_count);
+            gl::TexImage1D(gl::TEXTURE_1D, 0, gl::R8UI as GLint, width as GLint, 0, gl::RED_INTEGER, gl::UNSIGNED_BYTE, std::ptr::null());
+
+            let simple_tex_params = [
+                (gl::TEXTURE_WRAP_S, gl::REPEAT),
+                (gl::TEXTURE_WRAP_T, gl::REPEAT),
+                (gl::TEXTURE_MIN_FILTER, gl::NEAREST),
+                (gl::TEXTURE_MAG_FILTER, gl::NEAREST)
+            ];
+            glutil::apply_texture_parameters(gl::TEXTURE_1D, &simple_tex_params);
+            gl::GenerateMipmap(gl::TEXTURE_1D);
+        }
 
         scene_data.transparent_entities.insert(re)
     };
@@ -857,6 +896,7 @@ fn main() {
     let mut wireframe = false;
     let mut true_wireframe = false;
     let mut click_action = ClickAction::Select;
+    let mut last_toggled_tri = None;
     let mut hmd_pov = false;
     let mut do_vsync = true;
     let mut using_postfx = false;
@@ -891,15 +931,17 @@ fn main() {
     };
     let (audio_sender, audio_receiver) = mpsc::channel();
     audio::audio_main(audio_receiver, &config);          //This spawns a thread to run the audio system
+    let mut next_named_sfx = 0;
 
     //Load totoro sound effects
-    let totoro_sfx_paths = match read_dir("sfx/totoro") {
+    let yell_path = "sfx/totoro/yells";
+    let totoro_yell_paths = match read_dir(yell_path) {
         Ok(iter) => {
             let mut paths = Vec::new();
             for entry in iter {
                 match entry {
                     Ok(ent) => {
-                        let name = format!("sfx/totoro/{}", ent.file_name().into_string().unwrap());
+                        let name = format!("{}/{}", yell_path, ent.file_name().into_string().unwrap());
                         paths.push(name.clone());
                         send_or_error(&audio_sender, AudioCommand::LoadSFX(name));
                     }
@@ -915,6 +957,8 @@ fn main() {
             Vec::new()
         }
     };
+    let totoro_drowning_path = "sfx/totoro/drown.mp3";
+    send_or_error(&audio_sender, AudioCommand::LoadSFX(String::from(totoro_drowning_path)));
 
     let key_directions = {
         let mut hm = HashMap::new();
@@ -932,6 +976,10 @@ fn main() {
 
     //Immediate mode interface for drawing debug spheres
     let mut debug_sphere_queue = Vec::with_capacity(64);
+
+    //Socket for communicating with the server
+    let udp_socket = UdpSocket::bind("0.0.0.0:6000").unwrap();
+    let mut udp_id = 0;
 
     //Main loop
     while !window.should_close() {
@@ -1023,6 +1071,7 @@ fn main() {
                         }
                         Action::Release => {
                             imgui_io.mouse_down[0] = false;
+                            last_toggled_tri = None;
                         }
                         Action::Repeat => {}
                     }
@@ -1393,7 +1442,7 @@ fn main() {
                         if player_is_near {
                             totoro.state = TotoroState::Startled;
                         } else if being_hit_by_water {
-                            totoro.state = TotoroState::Dying;
+                            totoro.state = TotoroState::StartDying;
                             totoro.velocity = glm::zero();
                         } else if ai_time >= totoro.state_transition_after {
                             totoro.state_timer = scene_data.elapsed_time;
@@ -1416,7 +1465,7 @@ fn main() {
                             if player_is_near {
                                 totoro.state = TotoroState::Startled;
                             } else if being_hit_by_water {
-                                totoro.state = TotoroState::Dying;
+                                totoro.state = TotoroState::StartDying;
                                 totoro.velocity = glm::zero();
                             } else {
                                 let turn_speed = totoro_speed * 2.0;
@@ -1441,20 +1490,21 @@ fn main() {
                         totoro.state = TotoroState::PrePanicking;
                         totoro.state_timer = scene_data.elapsed_time;
 
-                        if totoro_sfx_paths.len() > 0 {
-                            let path = totoro_sfx_paths[rand::random::<usize>() % totoro_sfx_paths.len()].clone();
-                            let yell_sfx = SoundEffect {
+                        if totoro_yell_paths.len() > 0 {
+                            let path = totoro_yell_paths[rand::random::<usize>() % totoro_yell_paths.len()].clone();
+                            let yell_req = RequestedSoundEffect {
+                                id: None,
                                 path,
                                 position: vec_to_array(totoro.position),
-                                linear_gain: 200.0
+                                linear_gain: 200.0,
+                                looping: false
                             };
-                            send_or_error(&audio_sender, AudioCommand::PlaySFX(yell_sfx));
+                            send_or_error(&audio_sender, AudioCommand::PlaySFX(yell_req));
                         }
                     }
                     TotoroState::PrePanicking => {
                         if being_hit_by_water {
-                            totoro.state = TotoroState::Dying;
-                            totoro.velocity = glm::zero();
+                            totoro.state = TotoroState::StartDying;
                         } else if ai_time >= 0.25 {
                             totoro.forward = {
                                 let mut f = totoro.position - world_state.player.tracked_segment.p1;
@@ -1463,13 +1513,11 @@ fn main() {
                             };
                             totoro.state = TotoroState::Panicking;
                             totoro.state_timer = scene_data.elapsed_time;
-
                         }
                     }
                     TotoroState::Panicking => {
                         if being_hit_by_water {
-                            totoro.state = TotoroState::Dying;
-                            totoro.velocity = glm::zero();
+                            totoro.state = TotoroState::StartDying;
                         } else {
                             let mut new_forward = glm::normalize(&(totoro.position - world_state.player.tracked_segment.p1));
                             new_forward.z = 0.0;
@@ -1483,6 +1531,20 @@ fn main() {
                             totoro.velocity = glm::vec3(v.x, v.y, totoro.velocity.z);
                         }
                     }
+                    TotoroState::StartDying => {
+                        let drown_req = RequestedSoundEffect {
+                            id: Some(next_named_sfx),
+                            path: String::from(totoro_drowning_path),
+                            position: vec_to_array(totoro.position),
+                            linear_gain: 500.0,
+                            looping: true
+                        };
+                        totoro.drown_sfx_id = Some(next_named_sfx);
+                        totoro.state = TotoroState::Dying;
+                        totoro.velocity = glm::zero();
+                        next_named_sfx += 1;
+                        send_or_error(&audio_sender, AudioCommand::PlaySFX(drown_req));
+                    }
                     TotoroState::Dying => {
                         if being_hit_by_water {
                             let base_spin_rate = glm::pi::<f32>() * 4.0;
@@ -1493,6 +1555,10 @@ fn main() {
                             totoro.forward = glm::vec4_to_vec3(&ford);
                         } else {
                             totoro.state = TotoroState::Panicking;
+                            if let Some(id) = totoro.drown_sfx_id {
+                                send_or_error(&audio_sender, AudioCommand::StopSFX(id));
+                                totoro.drown_sfx_id = None;
+                            }
                         }
                     }
                     TotoroState::BrainDead => {}
@@ -1518,7 +1584,13 @@ fn main() {
                 }
 
                 //Kill if below a certain point or health depleted
-                if totoro.position.z < -1000.0 || totoro.health <= 0.0 {
+                if totoro.position.z < -100.0 || totoro.health <= 0.0 {
+                    //Stop the drowning sfx
+                    if let Some(id) = totoro.drown_sfx_id {
+                        send_or_error(&audio_sender, AudioCommand::StopSFX(id));
+                        totoro.drown_sfx_id = None;
+                    }
+
                     delete_object(&mut world_state.totoros, &mut world_state.selected_totoro, i);
                 }
             }
@@ -1544,7 +1616,7 @@ fn main() {
                 }
             }
 
-            let mut get_clicked_closure = |click_ray: &Ray| {
+            let mut get_clicked_closure = |click_ray: &Ray, world_state: &mut WorldState| {
                 let mut r_t = f32::INFINITY;
                 let mut r_i = None;
                 let mut f = None;
@@ -1563,19 +1635,20 @@ fn main() {
             //Compute click ray
             let w = glm::vec2(window_size.x as f32, window_size.y as f32);
             let click_ray = compute_click_ray(&camera, w, &mouse.screen_space_pos, &camera.position);
+            let terrain = &world_state.collision.terrain;
 
             //Branch based on which click action is selected
             match click_action {
                 ClickAction::CreateTotoro => {
                     //Create Totoro if the ray hit
-                    if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
-                        let tot = Totoro::new(point, scene_data.elapsed_time);
+                    if let Some(collision) = ray_hit_terrain(terrain, &click_ray) {
+                        let tot = Totoro::new(collision.point, scene_data.elapsed_time);
                         let i = world_state.totoros.insert(tot);
                         world_state.selected_totoro = Some(i);
                     }
                 }
                 ClickAction::Select => {
-                    if let (Some(f), Some(idx)) =  get_clicked_closure(&click_ray) {
+                    if let (Some(f), Some(idx)) =  get_clicked_closure(&click_ray, &mut world_state) {
                         match f {
                             0 => { world_state.selected_totoro = Some(idx); }
                             1 => { scene_data.selected_point_light = Some(idx); }
@@ -1584,7 +1657,7 @@ fn main() {
                     }
                 }
                 ClickAction::DeleteObject => {
-                    if let (Some(f), Some(idx)) = get_clicked_closure(&click_ray) {
+                    if let (Some(f), Some(idx)) = get_clicked_closure(&click_ray, &mut world_state) {
                         match f {
                             0 => { delete_object(&mut world_state.totoros, &mut world_state.selected_totoro, idx); }
                             1 => { delete_object(&mut scene_data.point_lights, &mut scene_data.selected_point_light, idx); }
@@ -1594,23 +1667,23 @@ fn main() {
                 }
                 ClickAction::MoveSelectedTotoro => {
                     if let Some(idx) = world_state.selected_totoro {
-                        if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
+                        if let Some(collision) = ray_hit_terrain(terrain, &click_ray) {
                             if let Some(tot) = world_state.totoros.get_mut_element(idx) {
-                                tot.position = point;
-                                tot.home = point;
+                                tot.position = collision.point;
+                                tot.home = collision.point;
                             }
                         }
                     }
                 }
                 ClickAction::MovePlayerSpawn => {
-                    if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
-                        world_state.player.spawn_position = point;
+                    if let Some(collision) = ray_hit_terrain(terrain, &click_ray) {
+                        world_state.player.spawn_position = collision.point;
                     }
                 }
                 ClickAction::CreatePointLight => {
                     if scene_data.point_lights.count() < render::MAX_POINT_LIGHTS { 
-                        if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
-                            let light = PointLight::new(point + glm::vec3(0.0, 0.0, 2.0), [rand::random(), rand::random(), rand::random()], 3.0);
+                        if let Some(collision) = ray_hit_terrain(terrain, &click_ray) {
+                            let light = PointLight::new(collision.point + glm::vec3(0.0, 0.0, 2.0), [rand::random(), rand::random(), rand::random()], 3.0);
                             let i = scene_data.point_lights.insert(light);
                             scene_data.selected_point_light = Some(i);
                         }
@@ -1618,11 +1691,45 @@ fn main() {
                 }
                 ClickAction::MovePointLight => {
                     if let Some(idx) = scene_data.selected_point_light {
-                        if let Some((_, point)) = ray_hit_terrain(&world_state.terrain, &click_ray) {
+                        if let Some(collision) = ray_hit_terrain(terrain, &click_ray) {
                             if let Some(light) = scene_data.point_lights.get_mut_element(idx) {
-                                light.position = point + glm::vec3(0.0, 0.0, 2.0);
+                                light.position = collision.point + glm::vec3(0.0, 0.0, 2.0);
                             }
                         }
+                    }
+                }
+                ClickAction::ToggleGrabbableTriangle => {
+                    if let Some(collision) = ray_hit_terrain(terrain, &click_ray) {
+                        let flags = &mut world_state.collision.grabbable_flags;
+                        let idx = collision.triangle_index;
+
+                        let mut do_toggle = true;
+                        if let Some(last_tri_idx) = last_toggled_tri {
+                            if last_tri_idx == idx {
+                                do_toggle = false;
+                            }
+                        }
+
+                        if do_toggle {
+                            flags[idx] = !flags[idx];
+                            last_toggled_tri = Some(idx);
+                            unsafe {
+                                if let Some(entity) = scene_data.transparent_entities.get_mut_element(terrain_re_index) {
+                                    let mut pixel = 0x00u8;
+                                    let start = idx - (idx % 8);
+                                    let end = start + 8;
+                                    for i in start..end {
+                                        if flags[i] {
+                                            pixel |= 0x01 << i % 8;
+                                        }
+                                    }
+                                    gl::BindTexture(gl::TEXTURE_1D, entity.lookup_texture);
+                                    gl::TexSubImage1D(gl::TEXTURE_1D, 0, idx as GLint / 8, 1, gl::RED_INTEGER, gl::UNSIGNED_BYTE, &pixel as *const u8 as *const c_void);
+                                }
+                            }
+                        }
+                    } else {
+                        last_toggled_tri = None;
                     }
                 }
             }            
@@ -1669,8 +1776,8 @@ fn main() {
 
         //We try to do all work related to terrain collision here in order
         //to avoid iterating over all of the triangles more than once
-        for i in (0..world_state.terrain.indices.len()).step_by(3) {
-            let triangle = get_terrain_triangle(&world_state.terrain, i);                              //Get the triangle in question
+        for i in (0..world_state.collision.terrain.indices.len()).step_by(3) {
+            let triangle = get_terrain_triangle(&world_state.collision.terrain, i);                              //Get the triangle in question
             let triangle_plane = Plane::new(
                 triangle.a,
                 triangle.normal
@@ -1863,6 +1970,10 @@ fn main() {
         camera.last_position = camera.position;
         mouse.was_clicked = mouse.clicked;
 
+        //Send an update to the server
+        udp_socket.send_to(&[udp_id; 1], "127.0.0.1:6969").unwrap();
+        udp_id = (udp_id + 1) % 255;
+
         //Draw ImGui
         if do_imgui {
             let drag_speed = 0.02;            
@@ -1876,8 +1987,8 @@ fn main() {
                                 load_lvl(lvl_name, &mut world_state, &mut scene_data, &mut texture_keeper, standard_program);
     
                                 //Load terrain data
-                                world_state.terrain = Terrain::from_ozt(&format!("models/{}.ozt", lvl_name));
-                                println!("Loaded {} collision triangles from {}.ozt", world_state.terrain.face_normals.len(), world_state.level_name);
+                                world_state.collision.terrain = Terrain::from_ozt(&format!("models/{}.ozt", lvl_name));
+                                println!("Loaded {} collision triangles from {}.ozt", world_state.collision.terrain.face_normals.len(), world_state.level_name);
     
                                 //Load entity data
                                 load_ent(&format!("maps/{}.ent", lvl_name), &mut scene_data, &mut world_state);
@@ -2005,6 +2116,13 @@ fn main() {
                 imgui_ui.text(im_str!("Frametime: {:.2}ms\tFPS: {:.2}\tFrame: {}", delta_time * 1000.0 / world_state.delta_timescale, framerate, frame_count));
                 imgui_ui.text(im_str!("Totoros spawned: {}", world_state.totoros.count()));
                 imgui_ui.text(im_str!("Point lights count: {}/{}", scene_data.point_lights.count(), render::MAX_POINT_LIGHTS));
+                
+                if let None = &xr_instance {
+                    if imgui_ui.checkbox(im_str!("Lock FPS (v-sync)"), &mut do_vsync) {
+                        if do_vsync { glfw.set_swap_interval(SwapInterval::Sync(1)); }
+                        else { glfw.set_swap_interval(SwapInterval::None); }
+                    }
+                }
                 imgui_ui.checkbox(im_str!("Camera collision"), &mut camera.is_colliding);
                 if let Some(_) = &xr_instance {
                     imgui_ui.checkbox(im_str!("HMD Perspective"), &mut hmd_pov);
@@ -2102,12 +2220,28 @@ fn main() {
                     do_radio_button(&imgui_ui, im_str!("Create light source"), &mut click_action, ClickAction::CreatePointLight);
                     do_radio_button(&imgui_ui, im_str!("Delete object"), &mut click_action, ClickAction::DeleteObject);
                     do_radio_button(&imgui_ui, im_str!("Move player spawn"), &mut click_action, ClickAction::MovePlayerSpawn);
+                    do_radio_button(&imgui_ui, im_str!("Toggle collision triangle's grabbability"), &mut click_action, ClickAction::ToggleGrabbableTriangle);
                     imgui_ui.separator();
                     imgui_ui.checkbox(im_str!("Turbo clicking"), &mut turbo_clicking);
 
                     if imgui_ui.button(im_str!("Delete all totoros"), [0.0, 32.0]) {
                         world_state.totoros.clear();
                         world_state.selected_totoro = None;
+                    }
+
+                    unsafe {
+                        if imgui_ui.button(im_str!("Clear grabbable triangles"), [0.0, 32.0]) {
+                            for i in 0..world_state.collision.grabbable_flags.len() {
+                                world_state.collision.grabbable_flags[i] = false;
+                                if let Some(entity) = scene_data.transparent_entities.get_mut_element(terrain_re_index) {
+                                    let triangle_count = world_state.collision.terrain.face_normals.len();
+                                    let width = get_lookup_texture_pixels(triangle_count);
+                                    let pixels = vec![0x00u8; width];
+                                    gl::BindTexture(gl::TEXTURE_1D, entity.lookup_texture);
+                                    gl::TexSubImage1D(gl::TEXTURE_1D, 0, 0, width as GLsizei, gl::RED_INTEGER, gl::UNSIGNED_BYTE, &pixels[0] as *const u8 as *const c_void);
+                                }
+                            }
+                        }
                     }
 
                     if imgui_ui.button(im_str!("Close"), [0.0, 32.0]) { edit_panel = false; }
@@ -2314,7 +2448,7 @@ fn main() {
             let mut transform_buffer = vec![0.0; instances * 16];
 
             let mut idx = 0;
-            for sphere in debug_sphere_queue.drain(0..debug_sphere_queue.len()) {
+            for sphere in debug_sphere_queue.drain(0..instances) {
                 let mm = glm::translation(&sphere.position) * uniform_scale(-sphere.radius);
                 write_matrix_to_buffer(&mut transform_buffer, idx, mm);
                 write_vec4_to_buffer(&mut color_buffer, idx, sphere.color);
@@ -2350,8 +2484,7 @@ fn main() {
                     buffer[(current_light + MAX_POINT_LIGHTS) * 4 + 1] = light.color[1];
                     buffer[(current_light + MAX_POINT_LIGHTS) * 4 + 2] = light.color[2];
                     
-                    //Modulate power                    
-                    //let offset = 0.25 * simplex.get([0.0, 6.0 * scene_data.elapsed_time as f64]) as f32;
+                    //Modulate power
                     let offset = light.flicker_amplitude * simplex.get([0.0, light.flicker_timescale as f64 * scene_data.elapsed_time as f64]) as f32;
                     buffer[(2 * MAX_POINT_LIGHTS) * 4 + current_light] = light.power + offset;
         
@@ -2379,7 +2512,7 @@ fn main() {
                 
                 //Bind the point light ubo
                 gl::UseProgram(standard_program);
-                gl::BindBufferBase(gl::UNIFORM_BUFFER, 0, scene_data.point_lights_ubo);
+                gl::BindBufferBase(gl::UNIFORM_BUFFER, render::POINT_LIGHTS_BINDING_POINT, scene_data.point_lights_ubo);
             } else if buffer.len() > 0 {
                 gl::BufferSubData(
                     gl::UNIFORM_BUFFER,
@@ -2461,6 +2594,8 @@ fn main() {
                             }
 
                             if let Some(pose) = xrutil::locate_space(&view_space, &tracking_space, wait_info.predicted_display_time) {
+
+                                //Rendering for each eye
                                 for i in 0..views.len() {
                                     let image_index = swapchains[i].acquire_image().unwrap();
                                     swapchains[i].wait_image(xr::Duration::INFINITE).unwrap();
@@ -2526,7 +2661,7 @@ fn main() {
 
                                     //Post-processing step
                                     if using_postfx {
-                                        render::post_processing(&ping_rt, window_size, postfx_program, scene_data.elapsed_time);
+                                        render::post_processing(ping_rt.color_attachment_view, window_size, postfx_program, scene_data.elapsed_time);
                                     }
 
                                     //Blit to default framebuffer
@@ -2602,7 +2737,7 @@ fn main() {
 
                 //Post-processing step
                 if using_postfx {
-                    render::post_processing(&ping_rt, window_size, postfx_program, scene_data.elapsed_time);
+                    render::post_processing(ping_rt.color_attachment_view, window_size, postfx_program, scene_data.elapsed_time);
                 }
                 
                 //Blit to default framebuffer

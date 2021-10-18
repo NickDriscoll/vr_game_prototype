@@ -16,13 +16,28 @@ pub struct WorldState {
     pub player: Player,
     pub totoros: OptionVec<Totoro>,
     pub selected_totoro: Option<usize>,
-    pub terrain: Terrain,
+    pub collision: StaticCollision,
     pub opaque_terrain_indices: Vec<usize>,     //Indices of the terrain's graphics data in a RenderEntities array
     pub transparent_terrain_indices: Vec<usize>,     //Indices of the terrain's graphics data in a RenderEntities array
     pub skybox_strings: Vec<ImString>,
     pub level_name: String,
     pub active_skybox_index: usize,
     pub delta_timescale: f32
+}
+
+pub struct StaticCollision {
+    pub terrain: Terrain,
+    pub grabbable_flags: Vec<bool>
+}
+
+impl StaticCollision {
+    pub fn new(terrain: Terrain) -> Self {
+        let grabbable_flags = vec![false; terrain.face_normals.len()];
+        StaticCollision {
+            terrain,
+            grabbable_flags
+        }
+    }
 }
 
 pub struct Player {
@@ -96,7 +111,8 @@ pub struct Totoro {
     pub state: TotoroState,
     pub state_timer: f32,
     pub state_transition_after: f32,
-    pub saw_player_last: f32
+    pub drown_sfx_id: Option<usize>,
+    pub saw_player_last: f32,
 }
 
 impl Totoro {
@@ -118,7 +134,8 @@ impl Totoro {
             state_timer: creation_time,
             state: TotoroState::Relaxed,
             state_transition_after: 2.0,
-            saw_player_last: 0.0
+            saw_player_last: 0.0,
+            drown_sfx_id: None
         }
     }
 }
@@ -130,6 +147,7 @@ pub enum TotoroState {
     Startled,
     PrePanicking,
     Panicking,
+    StartDying,
     Dying,
     BrainDead
 }

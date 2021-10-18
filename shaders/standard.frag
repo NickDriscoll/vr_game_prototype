@@ -26,14 +26,13 @@ in mat3 tangent_from_world;
 
 out vec4 frag_color;
 
-uniform float current_time;
-
 //Material textures
 uniform sampler2D albedo_sampler;
 uniform sampler2D normal_sampler;
 uniform sampler2D roughness_sampler;
 
 uniform sampler2D shadow_map;                       //Shadow map texture
+
 uniform vec3 view_position;                         //World space position of the camera
 uniform bool complex_normals = false;               //Flag that controls whether or not we sample the normal from the normal map
 
@@ -52,27 +51,22 @@ uniform float shininess_lower_bound = 8.0;
 uniform float shininess_upper_bound = 128.0;
 uniform float shadow_intensity = 0.1;
 uniform float cascade_distances[SHADOW_CASCADES];
+uniform float current_time;
+
+/*
+layout (std140, binding = 0) uniform SceneData {
+    
+};
+*/
 
 const int MAX_POINT_LIGHTS = 8;
-layout (std140, binding = 0) uniform PointLights {
+layout (std140, binding = 1) uniform PointLights {
     vec3 positions[MAX_POINT_LIGHTS];
     vec3 colors[MAX_POINT_LIGHTS];
 
     vec4 radii[MAX_POINT_LIGHTS / 4];   //These are individual floats packed as vec4's to save memory given the std140 layout
 } point_lights;
 uniform int point_lights_count = 0;
-
-const int MAX_SPOT_LIGHTS = 8;
-layout (std140, binding = 1) uniform SpotLights {
-    vec3 positions[MAX_SPOT_LIGHTS];
-    vec3 colors[MAX_SPOT_LIGHTS];
-    vec3 directions[MAX_SPOT_LIGHTS];
-
-    //These are individual floats packed into vec4's to save memory given the std140 layout
-    vec4 radii[MAX_SPOT_LIGHTS / 4]; 
-    vec4 angles[MAX_SPOT_LIGHTS / 4];
-} spot_lights;
-uniform int spot_lights_count = 0;
 
 vec3 tangent_space_normal() {
     //Compute this frag's tangent space normal

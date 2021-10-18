@@ -17,6 +17,7 @@ pub const MSAA_SAMPLES: u32 = 8;
 pub const SHADOW_CASCADE_COUNT: usize = 5;
 pub const ENTITY_TEXTURE_COUNT: usize = 3;
 pub const MAX_POINT_LIGHTS: usize = 8;
+pub const POINT_LIGHTS_BINDING_POINT: GLuint = 1;
 
 pub const STANDARD_HIGHLIGHTED_ATTRIBUTE: GLuint = 5;
 pub const STANDARD_TRANSFORM_ATTRIBUTE: GLuint = 6;
@@ -38,9 +39,10 @@ pub struct RenderEntity {
     pub uv_velocity: glm::TVec2<f32>,
     pub uv_offset: glm::TVec2<f32>,
     pub uv_scale: glm::TVec2<f32>,
-    pub textures: [GLuint; ENTITY_TEXTURE_COUNT],
+    pub material_textures: [GLuint; ENTITY_TEXTURE_COUNT],      //The 2D maps that define a material
+    pub lookup_texture: GLuint,                                 //A 1D lookup texture whose use is defined by the shader
     pub transparent: bool,
-    pub ignore_depth: bool
+    pub ignore_depth: bool                                      //Ignore depth testing for this entity
 }
 
 impl RenderEntity {
@@ -60,7 +62,8 @@ impl RenderEntity {
             uv_velocity: glm::zero(),
             uv_offset: glm::zero(),
             uv_scale: glm::zero(),
-            textures: [0; ENTITY_TEXTURE_COUNT],
+            material_textures: [0; ENTITY_TEXTURE_COUNT],
+            lookup_texture: 0,
             transparent: false,
             ignore_depth: false
         }
@@ -91,19 +94,19 @@ impl RenderEntity {
                     //The UV data on the mesh will choose which color goes where
                     gl::GenTextures(1, &mut albedo);
                     gl::BindTexture(gl::TEXTURE_2D, albedo);
-                    glutil::apply_texture_parameters(&simple_tex_params);
+                    glutil::apply_texture_parameters(gl::TEXTURE_2D, &simple_tex_params);
                     gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA32F as GLint, (meshdata.colors.len() / 4) as GLint, 1, 0, gl::RGBA, gl::FLOAT, &meshdata.colors[0] as *const f32 as *const c_void);
 
                     //Normal map
                     gl::GenTextures(1, &mut normal);
                     gl::BindTexture(gl::TEXTURE_2D, normal);
-                    glutil::apply_texture_parameters(&simple_tex_params);
+                    glutil::apply_texture_parameters(gl::TEXTURE_2D, &simple_tex_params);
                     gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA32F as GLint, 1, 1, 0, gl::RGBA, gl::FLOAT, &[0.5f32, 0.5, 1.0, 0.0] as *const f32 as *const c_void);
 
                     //Roughness map
                     gl::GenTextures(1, &mut roughness);
                     gl::BindTexture(gl::TEXTURE_2D, roughness);
-                    glutil::apply_texture_parameters(&simple_tex_params);
+                    glutil::apply_texture_parameters(gl::TEXTURE_2D, &simple_tex_params);
                     gl::TexImage2D(gl::TEXTURE_2D, 0, gl::R32F as GLint, 1, 1, 0, gl::RED, gl::FLOAT, &[0.5f32] as *const f32 as *const c_void);
                 }
 
@@ -114,7 +117,8 @@ impl RenderEntity {
                     index_count: meshdata.vertex_array.indices.len() as GLint,
                     active_instances: instances,
                     shader: program,                    
-                    textures: [albedo, normal, roughness],
+                    material_textures: [albedo, normal, roughness],
+                    lookup_texture: 0,
                     uv_velocity: glm::vec2(meshdata.uv_velocity[0], meshdata.uv_velocity[1]),
                     uv_scale: glm::vec2(1.0, 1.0),
                     uv_offset: glm::vec2(0.0, 0.0),
@@ -306,6 +310,7 @@ pub struct SceneData {
     pub skybox_vao: GLuint,
     pub skybox_program: GLuint,
     pub depth_program: GLuint,
+    pub ubo: GLuint,
     pub shininess_lower_bound: f32,
     pub shininess_upper_bound: f32,
     pub sun_pitch: f32,
@@ -336,6 +341,11 @@ impl Default for SceneData {
             view_space_distances: [0.0; SHADOW_CASCADE_COUNT + 1],
         };
 
+        let ubo = {
+
+            0
+        };
+
         SceneData {
             fragment_flag: FragmentFlag::Default,
             complex_normals: true,
@@ -345,6 +355,7 @@ impl Default for SceneData {
             skybox_vao: ozy::prims::skybox_cube_vao(),
             skybox_program: 0,
             depth_program: 0,
+            ubo,
             shininess_lower_bound: 8.0,
             shininess_upper_bound: 128.0,
             sun_pitch: 0.0,
@@ -481,11 +492,6 @@ unsafe fn render_entity(entity: &RenderEntity, program: GLuint, scene_data: &Sce
     glutil::bind_int(p, "skybox_sampler", ENTITY_TEXTURE_COUNT as GLint + 1);
     glutil::bind_vector3(p, "view_position", &view_data.view_position);
 
-    //These actually do need to be bound per entity
-    glutil::bind_vector2(p, "uv_velocity", &entity.uv_velocity);
-    glutil::bind_vector2(p, "uv_scale", &entity.uv_scale);
-    glutil::bind_vector2(p, "uv_offset", &entity.uv_offset);
-
     //fragment flag stuff        
     for name in FRAGMENT_FLAG_NAMES.iter() {
         glutil::bind_int(p, name, 0);
@@ -498,11 +504,20 @@ unsafe fn render_entity(entity: &RenderEntity, program: GLuint, scene_data: &Sce
         FragmentFlag::Default => {}
     }
     
+
+    //These actually do need to be bound per entity
+    glutil::bind_vector2(p, "uv_velocity", &entity.uv_velocity);
+    glutil::bind_vector2(p, "uv_scale", &entity.uv_scale);
+    glutil::bind_vector2(p, "uv_offset", &entity.uv_offset);
     for i in 0..ENTITY_TEXTURE_COUNT {
         glutil::bind_int(p, texture_sampler_names[i], i as GLint);
         gl::ActiveTexture(gl::TEXTURE0 + i as GLenum);
-        gl::BindTexture(gl::TEXTURE_2D, entity.textures[i]);
+        gl::BindTexture(gl::TEXTURE_2D, entity.material_textures[i]);
     }
+
+    //Bind lookup texture
+    gl::ActiveTexture(gl::TEXTURE0);
+    gl::BindTexture(gl::TEXTURE_1D, entity.lookup_texture);
     
     if entity.ignore_depth {
         gl::Disable(gl::DEPTH_TEST);
@@ -596,8 +611,8 @@ pub fn compute_shadow_cascade_matrices(
     out_mats
 }
 
-pub unsafe fn post_processing(ping_rt: &RenderTarget, window_size: glm::TVec2<u32>, postfx_program: GLuint, elapsed_time: f32) {
-    gl::BindTexture(gl::TEXTURE_2D, ping_rt.color_attachment_view);
+pub unsafe fn post_processing(fbo_texture_view: GLuint, window_size: glm::TVec2<u32>, postfx_program: GLuint, elapsed_time: f32) {
+    gl::BindTexture(gl::TEXTURE_2D, fbo_texture_view);
     gl::GenerateMipmap(gl::TEXTURE_2D);
 
     //Binding the compute shader program
@@ -605,9 +620,9 @@ pub unsafe fn post_processing(ping_rt: &RenderTarget, window_size: glm::TVec2<u3
     glutil::bind_float(postfx_program, "elapsed_time", elapsed_time);
 
     //ping_rt.color_attachment_view is a texture view into ping_rt.texture but it's internal format is set to gl::RGBA8 so the compute shader can use it
-    gl::BindImageTexture(0, ping_rt.color_attachment_view, 0, gl::FALSE, 0, gl::READ_WRITE, gl::RGBA8);
+    gl::BindImageTexture(0, fbo_texture_view, 0, gl::FALSE, 0, gl::READ_WRITE, gl::RGBA8);
 
-    //Dispatching compute
+    //Dispatching compute. Extra groups may be required if the resolution isn't divisible by 32x32
     let additional_x = if window_size.x % 32 != 0 { 1 } else { 0 };
     let additional_y = if window_size.y % 32 != 0 { 1 } else { 0 };
     gl::DispatchCompute(window_size.x / 32 + additional_x, window_size.y / 32 + additional_y, 1);

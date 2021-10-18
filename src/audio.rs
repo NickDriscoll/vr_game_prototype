@@ -1,22 +1,30 @@
-use alto::{sys::ALint, Buffer, Source, SourceState};
+use alto::{sys::ALint, Buffer, Source, SourceState, StaticSource};
 use tfd::MessageBoxIcon;
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::fs::{File};
 use std::io::{Seek, SeekFrom};
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 use crate::structs::Configuration;
+use crate::routines::send_or_error;
 
 pub const DEFAULT_BGM_PATH: &str = "music/cryptic_relics.mp3";
 
 const IDEAL_FRAMES_QUEUED: ALint = 5;   //Ideal number of queued audio frames for streaming sources
 
-pub struct SoundEffect {
+pub struct RequestedSoundEffect {
+    pub id: Option<usize>,
     pub path: String,
     pub position: [f32; 3],
-    pub linear_gain: f32
+    pub linear_gain: f32,
+    pub looping: bool
+}
+
+pub struct ActiveSoundEffect {
+    pub id: Option<usize>,
+    pub source: StaticSource    
 }
 
 //Represents the kinds of messages the audio system can receive from the main thread
@@ -27,7 +35,8 @@ pub enum AudioCommand {
     SetListenerGain(f32),
     SetPitchShift(f32),
     LoadSFX(String),
-    PlaySFX(SoundEffect),
+    PlaySFX(RequestedSoundEffect),
+    StopSFX(usize),
     SelectNewBGM,
     RestartBGM,
     PlayPause
@@ -109,10 +118,17 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, config: &Configuration
         let mut sfx_buffers = HashMap::new();
 
         const STATIC_SOURCE_LIMIT: usize = 64;
-        let mut sfx_sources = Vec::with_capacity(STATIC_SOURCE_LIMIT);
-        for _ in 0..STATIC_SOURCE_LIMIT {
-            sfx_sources.push(alto_context.new_static_source().unwrap());
+        let mut active_sfx: Vec<ActiveSoundEffect> = Vec::with_capacity(STATIC_SOURCE_LIMIT);
+        /*
+        for i in 0..STATIC_SOURCE_LIMIT {
+            let source = alto_context.new_static_source().unwrap();
+            let sfx = ActiveSoundEffect {
+                id: i,
+                source
+            };
+            active_sfx.push(sfx);
         }
+        */
 
         //Initialize the mp3 decoder with the default bgm
         let mut bgm_decoder = load_decoder(&bgm_path);
@@ -163,15 +179,32 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, config: &Configuration
                         match sfx_buffers.get(&sound_effect.path) {
                             Some(buffer) => {
                                 let mut available = false;
-                                for source in &mut sfx_sources {
+                                for sfx in &mut active_sfx {
+                                    let source = &mut sfx.source;
                                     if source.state() != SourceState::Playing {
+                                        sfx.id = sound_effect.id;
                                         source.set_position(sound_effect.position).unwrap();
                                         source.set_buffer(buffer.clone()).unwrap();
                                         source.set_gain(linearize_gain(sound_effect.linear_gain)).unwrap();
+                                        source.set_looping(sound_effect.looping);
                                         source.play();
                                         available = true;
                                         break;
                                     }
+                                }
+
+                                if active_sfx.len() < STATIC_SOURCE_LIMIT {
+                                    let mut source = alto_context.new_static_source().unwrap();
+                                    source.set_position(sound_effect.position).unwrap();
+                                    source.set_buffer(buffer.clone()).unwrap();
+                                    source.set_gain(linearize_gain(sound_effect.linear_gain)).unwrap();
+                                    source.play();
+                                    available = true;
+                                    let sfx = ActiveSoundEffect {
+                                        id: sound_effect.id,
+                                        source
+                                    };
+                                    active_sfx.push(sfx);
                                 }
 
                                 if !available {
@@ -180,6 +213,16 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, config: &Configuration
                             }
                             None => {
                                 println!("{} hasn't been loaded yet", sound_effect.path);
+                            }
+                        }
+                    }
+                    AudioCommand::StopSFX(req_id) => {
+                        for sfx in &mut active_sfx {
+                            if let Some(id) = sfx.id {
+                                if id == req_id {
+                                    sfx.source.stop();
+                                    break;
+                                }
                             }
                         }
                     }
@@ -277,8 +320,13 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, config: &Configuration
 
             //Match sfx pitches with the bgm pitch
             let pitch = bgm_source.pitch();
-            for source in &mut sfx_sources {
-                source.set_pitch(pitch).unwrap();
+            for sfx in &mut active_sfx {
+                let source = &mut sfx.source;
+                if source.state() == SourceState::Playing {
+                    if let Err(e) = source.set_pitch(pitch) {
+                        println!("Error setting audio source pitch: {}", e);
+                    }
+                }
             }
 
             //Unqueue any processed buffers
@@ -291,7 +339,7 @@ pub fn audio_main(audio_receiver: Receiver<AudioCommand>, config: &Configuration
                 start_bgm = false;
             }
 
-            //Sleeping to avoid throttling the CPU core
+            //Sleep for 10ms to avoid throttling the CPU core
             thread::sleep(Duration::from_millis(10));
         }
     });

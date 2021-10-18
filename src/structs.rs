@@ -12,7 +12,8 @@ pub enum ClickAction {
     DeleteObject,
     MovePlayerSpawn,
     MoveSelectedTotoro,
-    MovePointLight
+    MovePointLight,
+    ToggleGrabbableTriangle
 }
 
 impl Default for ClickAction {
