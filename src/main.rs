@@ -813,7 +813,7 @@ fn main() {
         re.ignore_depth = true;
         re.init_new_instanced_buffer(4, DEBUG_COLOR_ATTRIBUTE, RenderEntity::COLOR_BUFFER_INDEX);
 
-        let color = [0.5, 0.0, 0.0, 0.5];
+        let color = [1.0, 0.0, 1.0, 0.2];
         re.update_color_buffer(&color, DEBUG_COLOR_ATTRIBUTE);
 
         //Create lookup texture for selected triangles
@@ -832,7 +832,6 @@ fn main() {
                 (gl::TEXTURE_MAG_FILTER, gl::NEAREST)
             ];
             glutil::apply_texture_parameters(gl::TEXTURE_1D, &simple_tex_params);
-            gl::GenerateMipmap(gl::TEXTURE_1D);
         }
 
         scene_data.transparent_entities.insert(re)
@@ -1717,7 +1716,7 @@ fn main() {
                                 if let Some(entity) = scene_data.transparent_entities.get_mut_element(terrain_re_index) {
                                     let mut pixel = 0x00u8;
                                     let start = idx - (idx % 8);
-                                    let end = start + 8;
+                                    let end = usize::min(start + 8, flags.len());
                                     for i in start..end {
                                         if flags[i] {
                                             pixel |= 0x01 << i % 8;
@@ -1868,41 +1867,44 @@ fn main() {
             }
 
             //Resolve player's attempt to stick to a wall
-            if let Some(action) = &sticky_action {
-                fn grip_triangle(world_state: &mut WorldState, focus: glm::TVec3<f32>, radius: f32, triangle: &Triangle, triangle_sphere: &Sphere, grab_flag: &mut bool, is_left: bool) {
-                    let sphere = Sphere {
-                        focus,
-                        radius: radius
-                    };
-    
-                    if let Some((_, collision_point)) = triangle_sphere_collision_point(&sphere, triangle, triangle_sphere) {
-                        world_state.player.tracking_position += collision_point - sphere.focus;
-                        world_state.player.tracking_velocity = glm::zero();
-                        *grab_flag = true;
-                        
-                        if is_left {
-                            world_state.player.stick_data = Some(StickData::Left(collision_point));
-                        } else {
-                            world_state.player.stick_data = Some(StickData::Right(collision_point));
-                        }
-                    }
-                }
-
-                let stick_sphere_radius = 0.05;
-                match action {
-                    StickData::Left(focus) => {
-                        match world_state.player.stick_data {
-                            Some(StickData::Left(_)) => {}
-                            _ => {
-                                grip_triangle(&mut world_state, *focus, stick_sphere_radius, &triangle, &triangle_sphere, &mut left_sticky_grabbing, true);
+            let triangle_idx = i / 3;
+            if world_state.collision.grabbable_flags[triangle_idx] {
+                if let Some(action) = &sticky_action {
+                    fn grip_triangle(world_state: &mut WorldState, focus: glm::TVec3<f32>, radius: f32, triangle: &Triangle, triangle_sphere: &Sphere, grab_flag: &mut bool, is_left: bool) {
+                        let sphere = Sphere {
+                            focus,
+                            radius: radius
+                        };
+        
+                        if let Some((_, collision_point)) = triangle_sphere_collision_point(&sphere, triangle, triangle_sphere) {
+                            world_state.player.tracking_position += collision_point - sphere.focus;
+                            world_state.player.tracking_velocity = glm::zero();
+                            *grab_flag = true;
+                            
+                            if is_left {
+                                world_state.player.stick_data = Some(StickData::Left(collision_point));
+                            } else {
+                                world_state.player.stick_data = Some(StickData::Right(collision_point));
                             }
                         }
                     }
-                    StickData::Right(focus) => {
-                        match world_state.player.stick_data {
-                            Some(StickData::Right(_)) => {}
-                            _ => {
-                                grip_triangle(&mut world_state, *focus, stick_sphere_radius, &triangle, &triangle_sphere, &mut right_sticky_grabbing, false);
+
+                    let stick_sphere_radius = 0.05;
+                    match action {
+                        StickData::Left(focus) => {
+                            match world_state.player.stick_data {
+                                Some(StickData::Left(_)) => {}
+                                _ => {
+                                    grip_triangle(&mut world_state, *focus, stick_sphere_radius, &triangle, &triangle_sphere, &mut left_sticky_grabbing, true);
+                                }
+                            }
+                        }
+                        StickData::Right(focus) => {
+                            match world_state.player.stick_data {
+                                Some(StickData::Right(_)) => {}
+                                _ => {
+                                    grip_triangle(&mut world_state, *focus, stick_sphere_radius, &triangle, &triangle_sphere, &mut right_sticky_grabbing, false);
+                                }
                             }
                         }
                     }

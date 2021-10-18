@@ -17,6 +17,7 @@ void main() {
     vec3 view_dir = normalize(view_position - vec3(f_pos));
     vec3 world_normal = normalize(vec3(f_normal));
 
+    
     float unit = 1.0 / textureSize(selected_primitives, 0);
     uint bucket = texture(selected_primitives, (gl_PrimitiveID / 8 + 0.5) * unit).r;
     bool is_triangle_selected = (bucket & 1 << gl_PrimitiveID % 8) > 0;
