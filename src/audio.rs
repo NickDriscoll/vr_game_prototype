@@ -1,3 +1,5 @@
+extern crate minimp3 as mp3;
+
 use alto::{sys::ALint, Buffer, Source, SourceState, StaticSource};
 use tfd::MessageBoxIcon;
 use std::sync::Arc;

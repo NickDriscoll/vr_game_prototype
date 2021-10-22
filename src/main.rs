@@ -1,6 +1,5 @@
 //#![windows_subsystem = "windows"]
 #![allow(non_snake_case)]
-extern crate minimp3 as mp3;
 extern crate nalgebra_glm as glm;
 extern crate openxr as xr;
 extern crate tinyfiledialogs as tfd;
@@ -267,12 +266,6 @@ fn main() {
 
     //Suggest interaction profile bindings
     if let Some(inst) = &xr_instance {
-        fn push_binding<'a, T: xr::ActionTy>(array: &mut Vec<xr::Binding<'a>>, binding: (&'a Option<xr::Action<T>>, Option<xr::Path>)) {            
-            if let (Some(action), Some(path)) = binding {
-                array.push(xr::Binding::new(action, path));
-            }
-        }
-
         //All VR setups will have these be the same
         let pose_bindings = [
             (&left_hand_grip_action, left_grip_pose_path),
@@ -314,6 +307,13 @@ fn main() {
         let mut oculus_bindings = Vec::with_capacity(bindings_count);
         let binding_arrays = [&mut index_bindings, &mut vive_bindings, &mut oculus_bindings];
         let interaction_profiles = [xrutil::VALVE_INDEX_INTERACTION_PROFILE, xrutil::HTC_VIVE_INTERACTION_PROFILE, xrutil::OCULUS_TOUCH_INTERACTION_PROFILE];
+
+        //Define fn to push a potential binding to an array
+        fn push_binding<'a, T: xr::ActionTy>(array: &mut Vec<xr::Binding<'a>>, binding: (&'a Option<xr::Action<T>>, Option<xr::Path>)) {            
+            if let (Some(action), Some(path)) = binding {
+                array.push(xr::Binding::new(action, path));
+            }
+        }
 
         //Do generic bindings
         for i in 0..binding_arrays.len() {
@@ -367,7 +367,6 @@ fn main() {
     };
     window.set_resizable(false);
     //window.set_decorated(false);
-    //window.set_floating(true);
 
     glfw.with_primary_monitor_mut(|_, opt_monitor|{
         if let Some(monitor) = opt_monitor {
@@ -395,7 +394,7 @@ fn main() {
         gl::Enable(gl::BLEND);											//Enable alpha blending
 		gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);			//Set blend func to (Cs * alpha + Cd * (1.0 - alpha))
         //gl::ClearColor(0.26, 0.4, 0.46, 1.0);							//Set the clear color
-        gl::ClearColor(0.1, 0.1, 0.1, 1.0);
+        gl::ClearColor(0.0, 0.0, 0.0, 1.0);
 
 		#[cfg(gloutput)]
 		{
@@ -522,6 +521,7 @@ fn main() {
     };
 
     //Create swapchain FBO
+    //The swapchain image is made the color attachment of this fbo each frame for the purposes of blitting
     let xr_swapchain_framebuffer = unsafe {
         let mut p = 0;
         gl::GenFramebuffers(1, &mut p);
@@ -888,7 +888,16 @@ fn main() {
     let mut left_water_pillar_scale: glm::TVec3<f32> = glm::zero();
     let mut right_water_pillar_scale: glm::TVec3<f32> = glm::zero();
     let water_cylinder_path = "models/water_cylinder.ozy";
-    let water_cylinder_entity_index = scene_data.transparent_entities.insert(RenderEntity::from_ozy(water_cylinder_path, standard_program, 2, STANDARD_TRANSFORM_ATTRIBUTE, &mut texture_keeper, &DEFAULT_TEX_PARAMS));
+    let water_cylinder_entity_index = scene_data.opaque_entities.insert(
+        RenderEntity::from_ozy(
+            water_cylinder_path,
+            standard_program,
+            2,
+            STANDARD_TRANSFORM_ATTRIBUTE,
+            &mut texture_keeper,
+            &DEFAULT_TEX_PARAMS
+        )
+    );
 
     //Set up global flags lol
     let mut is_fullscreen = false;
@@ -1269,7 +1278,7 @@ fn main() {
                                     pillar_scales[i].z = xz_scale;
                                     player.tracking_velocity += update_force;
         
-                                    if let Some(entity) = scene_data.transparent_entities.get_mut_element(water_cylinder_entity_index) {
+                                    if let Some(entity) = scene_data.opaque_entities.get_mut_element(water_cylinder_entity_index) {
                                         //Update the water gun's pillar of water
                                         entity.uv_offset += glm::vec2(0.0, 5.0) * delta_time;
                                         entity.uv_scale.y = pillar_scales[i].y;
@@ -1599,6 +1608,15 @@ fn main() {
         if camera.using_mouselook {
             window.set_cursor_pos(window_size.x as f64 / 2.0, window_size.y as f64 / 2.0);
         }
+
+        /*
+        glfw.with_primary_monitor_mut(|_, opt_monitor|{
+            if let Some(monitor) = opt_monitor {
+                let size = monitor.get_physical_size();
+                window.set_pos(size.0 / 2 + (200.0 * f32::sin(scene_data.elapsed_time)) as i32, size.1 / 2);
+            }
+        });
+        */
 
         let camera_velocity = camera.speed * glm::vec4_to_vec3(&(glm::affine_inverse(camera.view_from_world) * glm::vec3_to_vec4(&camera.view_space_velocity)));
         camera.position += camera_velocity * delta_time / world_state.delta_timescale;
@@ -2043,10 +2061,15 @@ fn main() {
                                         world_state.player.spawn_position.y,
                                         world_state.player.spawn_position.z
                                     ];
-                                    
                                     let floats_per_totoro = 4;
                                     let floats_per_light = 9;
-                                    let size = size_of::<f32>() * (floats_to_write.len() + totoros.count() * floats_per_totoro + scene_data.point_lights.count() * floats_per_light) + size_of::<u32>() * 2;
+                                    
+                                    //Precompute final filesize
+                                    let size = {
+                                        let totoro_floats = floats_per_totoro * totoros.count();
+                                        let point_light_floats = scene_data.point_lights.count() * floats_per_light;
+                                        size_of::<f32>() * (floats_to_write.len() + totoro_floats + point_light_floats) + size_of::<u32>() * 2
+                                    };
     
                                     //Convert to raw bytes and write to file
                                     let mut bytes = Vec::with_capacity(size);

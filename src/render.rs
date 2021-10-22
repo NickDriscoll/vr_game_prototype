@@ -74,14 +74,13 @@ impl RenderEntity {
             Some(meshdata) => unsafe {
                 let vao = glutil::create_vertex_array_object(&meshdata.vertex_array.vertices, &meshdata.vertex_array.indices, &meshdata.vertex_array.attribute_offsets);
 
-                //GL texture names
-                let (mut albedo, mut normal, mut roughness) = (0, 0, 0);
+                let mut textures = [0; 3];
 
                 //We have to load or create a texture based on whether or not this mesh uses solid colors
                 if meshdata.colors.len() == 0 {
-                    albedo = texture_keeper.fetch_texture(&meshdata.texture_name, "albedo", &tex_params, ColorSpace::Gamma);
-                    normal = texture_keeper.fetch_texture(&meshdata.texture_name, "normal", &tex_params, ColorSpace::Linear);
-                    roughness = texture_keeper.fetch_texture(&meshdata.texture_name, "roughness", &tex_params, ColorSpace::Linear);
+                    textures[0] = texture_keeper.fetch_texture(&meshdata.texture_name, "albedo", &tex_params, ColorSpace::Gamma);
+                    textures[1] = texture_keeper.fetch_texture(&meshdata.texture_name, "normal", &tex_params, ColorSpace::Linear);
+                    textures[2] = texture_keeper.fetch_texture(&meshdata.texture_name, "roughness", &tex_params, ColorSpace::Linear);
                 } else {
                     let simple_tex_params = [
                         (gl::TEXTURE_WRAP_S, gl::REPEAT),
@@ -90,22 +89,22 @@ impl RenderEntity {
                         (gl::TEXTURE_MAG_FILTER, gl::NEAREST)
                     ];
 
+                    //Gen the three textures
+                    gl::GenTextures(3, &mut textures[0]);
+
                     //The albedo texture will simply be a one-dimensional array of solid colors
                     //The UV data on the mesh will choose which color goes where
-                    gl::GenTextures(1, &mut albedo);
-                    gl::BindTexture(gl::TEXTURE_2D, albedo);
+                    gl::BindTexture(gl::TEXTURE_2D, textures[0]);
                     glutil::apply_texture_parameters(gl::TEXTURE_2D, &simple_tex_params);
                     gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA32F as GLint, (meshdata.colors.len() / 4) as GLint, 1, 0, gl::RGBA, gl::FLOAT, &meshdata.colors[0] as *const f32 as *const c_void);
 
                     //Normal map
-                    gl::GenTextures(1, &mut normal);
-                    gl::BindTexture(gl::TEXTURE_2D, normal);
+                    gl::BindTexture(gl::TEXTURE_2D, textures[1]);
                     glutil::apply_texture_parameters(gl::TEXTURE_2D, &simple_tex_params);
                     gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA32F as GLint, 1, 1, 0, gl::RGBA, gl::FLOAT, &[0.5f32, 0.5, 1.0, 0.0] as *const f32 as *const c_void);
 
                     //Roughness map
-                    gl::GenTextures(1, &mut roughness);
-                    gl::BindTexture(gl::TEXTURE_2D, roughness);
+                    gl::BindTexture(gl::TEXTURE_2D, textures[2]);
                     glutil::apply_texture_parameters(gl::TEXTURE_2D, &simple_tex_params);
                     gl::TexImage2D(gl::TEXTURE_2D, 0, gl::R32F as GLint, 1, 1, 0, gl::RED, gl::FLOAT, &[0.5f32] as *const f32 as *const c_void);
                 }
@@ -117,7 +116,7 @@ impl RenderEntity {
                     index_count: meshdata.vertex_array.indices.len() as GLint,
                     active_instances: instances,
                     shader: program,                    
-                    material_textures: [albedo, normal, roughness],
+                    material_textures: textures,
                     lookup_texture: 0,
                     uv_velocity: glm::vec2(meshdata.uv_velocity[0], meshdata.uv_velocity[1]),
                     uv_scale: glm::vec2(1.0, 1.0),

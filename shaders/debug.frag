@@ -17,14 +17,14 @@ void main() {
     vec3 view_dir = normalize(view_position - vec3(f_pos));
     vec3 world_normal = normalize(vec3(f_normal));
 
-    
+    //Determining if this pixel's triangle's bit is high in the selected_primitives LUT
     float unit = 1.0 / textureSize(selected_primitives, 0);
     uint bucket = texture(selected_primitives, (gl_PrimitiveID / 8 + 0.5) * unit).r;
     bool is_triangle_selected = (bucket & 1 << gl_PrimitiveID % 8) > 0;
 
     vec4 final_color = f_color;
     if (is_triangle_selected) {
-        final_color = 1.0 - final_color;
+        final_color = vec4(vec3(1.0 - final_color.rgb), final_color.a);
     }
 
     //Rim-lighting if this one is highlighted

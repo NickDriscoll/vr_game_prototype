@@ -323,8 +323,8 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
             let r = io::read_pascal_strings(&mut file, 1);
             let new_skybox = io_or_error(r, path)[0].clone();
 
+            //Load and assign raw floats
             let raw_floats = io_or_error(io::read_f32_data(&mut file, floats_at_start), path);
-
             scene_data.ambient_strength = raw_floats[0];
             scene_data.sun_pitch = raw_floats[1];
             scene_data.sun_yaw = raw_floats[2];
