@@ -74,13 +74,13 @@ impl RenderEntity {
             Some(meshdata) => unsafe {
                 let vao = glutil::create_vertex_array_object(&meshdata.vertex_array.vertices, &meshdata.vertex_array.indices, &meshdata.vertex_array.attribute_offsets);
 
-                let mut textures = [0; 3];
+                let mut textures = [0; 3];  //[albedo, normal, roughness]
 
                 //We have to load or create a texture based on whether or not this mesh uses solid colors
                 if meshdata.colors.len() == 0 {
-                    textures[0] = texture_keeper.fetch_texture(&meshdata.texture_name, "albedo", &tex_params, ColorSpace::Gamma);
-                    textures[1] = texture_keeper.fetch_texture(&meshdata.texture_name, "normal", &tex_params, ColorSpace::Linear);
-                    textures[2] = texture_keeper.fetch_texture(&meshdata.texture_name, "roughness", &tex_params, ColorSpace::Linear);
+                    textures[0] = texture_keeper.fetch_material(&meshdata.texture_name, "albedo", &tex_params, ColorSpace::Gamma);
+                    textures[1] = texture_keeper.fetch_material(&meshdata.texture_name, "normal", &tex_params, ColorSpace::Linear);
+                    textures[2] = texture_keeper.fetch_material(&meshdata.texture_name, "roughness", &tex_params, ColorSpace::Linear);
                 } else {
                     let simple_tex_params = [
                         (gl::TEXTURE_WRAP_S, gl::REPEAT),
@@ -234,6 +234,16 @@ impl RenderEntity {
 
         //Update GPU buffer storing transforms
         unsafe { self.write_buffer_to_GPU(bools, instanced_attribute, 1, Self::HIGHLIGHTED_BUFFER_INDEX); }
+    }
+}
+
+impl Drop for RenderEntity {
+    fn drop(&mut self) {
+        let texs = [self.lookup_texture];
+        unsafe {
+            gl::DeleteTextures(texs.len() as GLsizei, &texs[0]);
+            gl::DeleteBuffers(self.instanced_buffers.len() as GLsizei, &self.instanced_buffers[0]);
+        }
     }
 }
 
@@ -501,8 +511,7 @@ unsafe fn render_entity(entity: &RenderEntity, program: GLuint, scene_data: &Sce
         FragmentFlag::Normals => { glutil::bind_int(p, "visualize_normals", 1); }
         FragmentFlag::CascadeZones => { glutil::bind_int(p, "visualize_cascade_zone", 1); }
         FragmentFlag::Default => {}
-    }
-    
+    }    
 
     //These actually do need to be bound per entity
     glutil::bind_vector2(p, "uv_velocity", &entity.uv_velocity);

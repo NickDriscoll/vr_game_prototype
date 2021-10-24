@@ -81,6 +81,19 @@ fn queue_debug_sphere(sphere_queue: &mut Vec<DebugSphere>, position: glm::TVec3<
     sphere_queue.push(s);
 }
 
+fn LUT_pixels_from_flags(flags: &[bool]) -> Vec<u8> {
+    let triangle_count = flags.len();
+    let width = get_lookup_texture_pixels(triangle_count);
+    let mut pixels = vec![0u8; width];            
+    for i in 0..triangle_count {
+        let p_idx = i / 8;
+        let bit = i % 8;
+        let flag = flags[i] as u8;
+        pixels[p_idx] |= flag << bit;
+    }
+    pixels
+}
+
 fn main() {    
     let Z_UP = glm::vec3(0.0, 0.0, 1.0);
 
@@ -361,13 +374,12 @@ fn main() {
 	glfw.window_hint(WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
     let (mut window, events) = match glfw.create_window(window_size.x, window_size.y, "THCATO", glfw::WindowMode::Windowed) {
         Some(stuff) => { stuff }
-        None => {
-            panic!("Unable to create a window!");
-        }
+        None => { panic!("Unable to create a window!"); }
     };
     window.set_resizable(false);
     //window.set_decorated(false);
 
+    //Center window on the screen
     glfw.with_primary_monitor_mut(|_, opt_monitor|{
         if let Some(monitor) = opt_monitor {
             let size = monitor.get_physical_size();
@@ -384,6 +396,7 @@ fn main() {
     window.set_char_polling(true);
 
     //Load OpenGL function pointers
+    //This must be called before any other gl::* functions
     gl::load_with(|symbol| window.get_proc_address(symbol));
 
     //OpenGL static configuration
@@ -461,7 +474,7 @@ fn main() {
         _ => {}
     }
 
-    //Define tracking space with z-up instead of the default y-up
+    //Define tracking space with z-up instead of the default y-up so that it matches world space
     let space_pose = {
         let quat = glm::quat_rotation(&Z_UP, &glm::vec3(0.0, 1.0, 0.0));
         xr::Posef {
@@ -588,7 +601,7 @@ fn main() {
         RenderTarget::new((window_size.x as GLint, window_size.y as GLint), gl::SRGB8_ALPHA8)
     };
     let mut pong_rt = unsafe {
-        RenderTarget::new((window_size.x as GLint, window_size.y as GLint), gl::RGBA8)
+        RenderTarget::new((window_size.x as GLint, window_size.y as GLint), gl::SRGB8_ALPHA8)
     };
 
     //Creating Dear ImGui context
@@ -760,7 +773,7 @@ fn main() {
     
     //Matrices for relating tracking space and world space
     let mut world_from_tracking = glm::identity();
-    let mut tracking_from_world = glm::affine_inverse(world_from_tracking);
+    let mut tracking_from_world;
 
     let mut left_sticky_grabbing = false;
     let mut right_sticky_grabbing = false;
@@ -821,10 +834,6 @@ fn main() {
             gl::GenTextures(1, &mut re.lookup_texture);
             gl::BindTexture(gl::TEXTURE_1D, re.lookup_texture);
 
-            let triangle_count = world_state.collision.terrain.face_normals.len();
-            let width = get_lookup_texture_pixels(triangle_count);
-            gl::TexImage1D(gl::TEXTURE_1D, 0, gl::R8UI as GLint, width as GLint, 0, gl::RED_INTEGER, gl::UNSIGNED_BYTE, std::ptr::null());
-
             let simple_tex_params = [
                 (gl::TEXTURE_WRAP_S, gl::REPEAT),
                 (gl::TEXTURE_WRAP_T, gl::REPEAT),
@@ -832,6 +841,9 @@ fn main() {
                 (gl::TEXTURE_MAG_FILTER, gl::NEAREST)
             ];
             glutil::apply_texture_parameters(gl::TEXTURE_1D, &simple_tex_params);
+            
+            let pixels = LUT_pixels_from_flags(&world_state.collision.grabbable_flags);
+            gl::TexImage1D(gl::TEXTURE_1D, 0, gl::R8UI as GLint, pixels.len() as GLsizei, 0, gl::RED_INTEGER, gl::UNSIGNED_BYTE, &pixels[0] as *const u8 as *const c_void);
         }
 
         scene_data.transparent_entities.insert(re)
@@ -989,7 +1001,6 @@ fn main() {
     let udp_socket = UdpSocket::bind("0.0.0.0:6000").unwrap();
     let mut udp_id = 0;
 
-    //Main loop
     while !window.should_close() {
         let imgui_io = imgui_context.io_mut();
         //Compute the number of seconds since the start of the last frame (i.e at 60fps, delta_time ~= 0.016667)
@@ -1024,8 +1035,7 @@ fn main() {
         let right_trigger_state = xrutil::get_actionstate(&xr_session, &right_gadget_action);
         let right_trackpad_force_state = xrutil::get_actionstate(&xr_session, &go_home_action);
 
-        //Poll window events and handle them
-        glfw.poll_events();
+        //Handle window events
         for (_, event) in glfw::flush_messages(&events) {
             match event {
                 WindowEvent::Close => { window.set_should_close(true); }
@@ -1654,7 +1664,7 @@ fn main() {
             let click_ray = compute_click_ray(&camera, w, &mouse.screen_space_pos, &camera.position);
             let terrain = &world_state.collision.terrain;
 
-            //Branch based on which click action is selected
+            //Branch based on which click action is active
             match click_action {
                 ClickAction::CreateTotoro => {
                     //Create Totoro if the ray hit
@@ -1730,26 +1740,21 @@ fn main() {
                         if do_toggle {
                             flags[idx] = !flags[idx];
                             last_toggled_tri = Some(idx);
-                            unsafe {
-                                if let Some(entity) = scene_data.transparent_entities.get_mut_element(terrain_re_index) {
-                                    let mut pixel = 0x00u8;
-                                    let start = idx - (idx % 8);
-                                    let end = usize::min(start + 8, flags.len());
-                                    for i in start..end {
-                                        if flags[i] {
-                                            pixel |= 0x01 << i % 8;
-                                        }
-                                    }
-                                    gl::BindTexture(gl::TEXTURE_1D, entity.lookup_texture);
-                                    gl::TexSubImage1D(gl::TEXTURE_1D, 0, idx as GLint / 8, 1, gl::RED_INTEGER, gl::UNSIGNED_BYTE, &pixel as *const u8 as *const c_void);
-                                }
-                            }
                         }
                     } else {
                         last_toggled_tri = None;
                     }
                 }
             }            
+        }
+
+        //Keep the selected triangles texture up to date
+        if let Some(entity) = scene_data.transparent_entities.get_mut_element(terrain_re_index) {
+            let pixels = LUT_pixels_from_flags(&world_state.collision.grabbable_flags);
+            unsafe {
+                gl::BindTexture(gl::TEXTURE_1D, entity.lookup_texture);
+                gl::TexSubImage1D(gl::TEXTURE_1D, 0, 0, pixels.len() as GLsizei, gl::RED_INTEGER, gl::UNSIGNED_BYTE, &pixels[0] as *const u8 as *const c_void);
+            }
         }
         
         //Update tracking space location
@@ -2001,15 +2006,15 @@ fn main() {
                 if let Some(menu_token) = imgui_ui.begin_menu_bar() {
                     if let Some(file_token) = imgui_ui.begin_menu(im_str!("File"), true) {
                         if MenuItem::new(im_str!("Load level")).build(&imgui_ui) {
-                            if let Some(path) = tfd::open_file_dialog("Load level data", "maps/", Some((&["*.lvl"], "*.lvl"))) {                
+                            if let Some(path) = tfd::open_file_dialog("Load level data", "maps/", Some((&["*.lvl"], "*.lvl"))) {
                                 //Load the scene data from the level file
                                 let lvl_name = Path::new(&path).file_stem().unwrap().to_str().unwrap();
                                 load_lvl(lvl_name, &mut world_state, &mut scene_data, &mut texture_keeper, standard_program);
-    
+        
                                 //Load terrain data
                                 world_state.collision.terrain = Terrain::from_ozt(&format!("models/{}.ozt", lvl_name));
                                 println!("Loaded {} collision triangles from {}.ozt", world_state.collision.terrain.face_normals.len(), world_state.level_name);
-    
+        
                                 //Load entity data
                                 load_ent(&format!("maps/{}.ent", lvl_name), &mut scene_data, &mut world_state);
                             }
@@ -2036,6 +2041,10 @@ fn main() {
                                 bytes.push(b[1]);
                                 bytes.push(b[2]);
                                 bytes.push(b[3]);
+                            }
+
+                            fn write_u8_to_buffer(bytes: &mut Vec<u8>, n: u8) {
+                                bytes.push(n);
                             }
     
                             let save_error = |e: std::io::Error| {
@@ -2065,16 +2074,26 @@ fn main() {
                                     let floats_per_light = 9;
                                     
                                     //Precompute final filesize
+                                    let grab_flags = &world_state.collision.grabbable_flags;
                                     let size = {
                                         let totoro_floats = floats_per_totoro * totoros.count();
                                         let point_light_floats = scene_data.point_lights.count() * floats_per_light;
-                                        size_of::<f32>() * (floats_to_write.len() + totoro_floats + point_light_floats) + size_of::<u32>() * 2
+                                        let grab_bool_bytes = grab_flags.len();
+                                        let stored_sizes = 3;
+                                        size_of::<f32>() * (floats_to_write.len() + totoro_floats + point_light_floats) + grab_bool_bytes + size_of::<u32>() * stored_sizes
                                     };
     
                                     //Convert to raw bytes and write to file
                                     let mut bytes = Vec::with_capacity(size);
                                     for i in 0..floats_to_write.len() {
                                         write_f32_to_buffer(&mut bytes, floats_to_write[i]);
+                                    }
+
+                                    //Write grabbable triangle data
+                                    write_u32_to_buffer(&mut bytes, grab_flags.len() as u32);
+                                    for i in 0..grab_flags.len() {
+                                        let f = grab_flags[i] as u8;
+                                        write_u8_to_buffer(&mut bytes, f);
                                     }
     
                                     //Write totoro data
@@ -2298,11 +2317,6 @@ fn main() {
 
                     if let Some(_) = &xr_instance {
                         imgui_ui.checkbox(im_str!("View player"), &mut viewing_player_spheres);
-                    } else {
-                        if imgui_ui.checkbox(im_str!("Lock FPS (v-sync)"), &mut do_vsync) {
-                            if do_vsync { glfw.set_swap_interval(SwapInterval::Sync(1)); }
-                            else { glfw.set_swap_interval(SwapInterval::None); }
-                        }
                     }
                     
                     imgui_ui.checkbox(im_str!("Use postfx"), &mut using_postfx);
@@ -2582,7 +2596,7 @@ fn main() {
                         Ok(wait_info) => {
                             last_xr_render_time = wait_info.predicted_display_time;
                             framestream.begin().unwrap();
-                            let (viewflags, views) = session.locate_views(xr::ViewConfigurationType::PRIMARY_STEREO, wait_info.predicted_display_time, t_space).unwrap();
+                            let (_, views) = session.locate_views(xr::ViewConfigurationType::PRIMARY_STEREO, wait_info.predicted_display_time, t_space).unwrap();
                             
                             //Fetch the hand poses from the runtime
                             let left_grip_pose = xrutil::locate_space(&left_hand_grip_space, &tracking_space, wait_info.predicted_display_time);
@@ -2849,5 +2863,6 @@ fn main() {
         }
 
         window.swap_buffers();  //Display the rendered frame to the window
+        glfw.poll_events();     //Poll events for next frame
     }
 }

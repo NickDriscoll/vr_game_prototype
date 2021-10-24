@@ -27,9 +27,9 @@ in mat3 tangent_from_world;
 out vec4 frag_color;
 
 //Material textures
-uniform sampler2D albedo_sampler;
-uniform sampler2D normal_sampler;
-uniform sampler2D roughness_sampler;
+layout (location = 0) uniform sampler2D albedo_sampler;
+layout (location = 1) uniform sampler2D normal_sampler;
+layout (location = 2) uniform sampler2D roughness_sampler;
 
 uniform sampler2D shadow_map;                       //Shadow map texture
 
@@ -55,6 +55,10 @@ uniform float current_time;
 
 /*
 layout (std140, binding = 0) uniform SceneData {
+    float ambient_strength;
+    float shininess_lower_bound;
+    float shininess_upper_bound;
+    float shadow_intensity;
     
 };
 */

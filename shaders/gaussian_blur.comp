@@ -9,7 +9,8 @@ const int BOUND = TAP / 2;
 const float GAUSSIAN_WEIGHTS[TAP / 2 + 1] = float[](0.17218543046357615, 0.15894039735099338, 0.12488174077578051, 0.08325449385052035, 0.04683065279091769);
 
 restrict layout(rgba8, binding = 0) uniform image2D ping_im;
-uniform sampler2D ping_tex;
+layout (binding = 0) uniform sampler2D ping_tex;
+layout (binding = 1) uniform sampler2D noise_tex;
 uniform float elapsed_time;
 
 void main() {
@@ -17,36 +18,38 @@ void main() {
     image_coord = (image_coord + ivec2(elapsed_time * 100.0, elapsed_time * 400.0)) % ivec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy);
     vec3 pixel = imageLoad(ping_im, image_coord).rgb;
 
+    for (int i = 0; i < 2; i++) {
+        //Horizontal blur pass
+        {
+            vec3 res = vec3(0.0);
+            for (int i = -BOUND; i <= BOUND; i++) {
+                ivec2 unit_offset = ivec2(1, 0);
+                vec3 sam = imageLoad(ping_im, image_coord + i * unit_offset).rgb;
+                res += sam * GAUSSIAN_WEIGHTS[abs(i)];
+            }
+            imageStore(ping_im, image_coord, vec4(res, 1.0));
+        }
+
+        barrier();
+
+        //Vertical blur pass
+        {
+            vec3 res = vec3(0.0);
+            for (int i = -BOUND; i <= BOUND; i++) {
+                ivec2 unit_offset = ivec2(0, 1);
+                vec3 sam = imageLoad(ping_im, image_coord + i * unit_offset).rgb;
+                res += sam * GAUSSIAN_WEIGHTS[abs(i)];
+            }
+            imageStore(ping_im, image_coord, vec4(res, 1.0));
+        }
+    }
+
 /*
-    //Horizontal blur pass
-    {
-        vec3 res = vec3(0.0);
-        for (int i = -BOUND; i <= BOUND; i++) {
-            ivec2 unit_offset = ivec2(1, 0);
-            vec3 sam = imageLoad(ping_im, image_coord + i * unit_offset).rgb;
-            res += sam * GAUSSIAN_WEIGHTS[abs(i)];
-        }
-        imageStore(ping_im, image_coord, vec4(res, 1.0));
-    }
-
-    barrier();
-
-    //Vertical blur pass
-    {
-        vec3 res = vec3(0.0);
-        for (int i = -BOUND; i <= BOUND; i++) {
-            ivec2 unit_offset = ivec2(0, 1);
-            vec3 sam = imageLoad(ping_im, image_coord + i * unit_offset).rgb;
-            res += sam * GAUSSIAN_WEIGHTS[abs(i)];
-        }
-        imageStore(ping_im, image_coord, vec4(res, 1.0));
-    }
-*/
-
     vec2 local_pos = vec2(gl_LocalInvocationID.xy);
     vec2 local_size = vec2(gl_WorkGroupSize.xy);
-    vec3 tint = vec3((local_pos / local_size + sin(elapsed_time) * 0.5 + 0.5), 1.1);
+    vec3 tint = vec3((local_pos / local_size + step(0.5, sin(elapsed_time*100.0) * 0.5 + 0.5)), 1.1);
     imageStore(ping_im, image_coord, vec4(pixel * tint, 1.0));
+*/
 }
 
 

@@ -9,16 +9,14 @@ use image::{ImageBuffer, DynamicImage};
 use std::fs;
 use std::path::Path;
 use std::process::exit;
-use std::ops::RangeTo;
 use std::os::raw::c_void;
 use std::sync::mpsc::Sender;
 use ozy::{glutil};
 use ozy::glutil::ColorSpace;
-use ozy::render::{Framebuffer, ScreenState};
 use ozy::structs::OptionVec;
 use ozy::collision::*;
 
-use crate::traits::{PositionAble, SphereCollider};
+use crate::traits::{SphereCollider};
 use crate::gamestate::*;
 use crate::structs::*;
 use crate::render::NEAR_DISTANCE;
@@ -339,6 +337,16 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
             world_state.player.spawn_position.z = raw_floats[11];
 
             world_state.player.tracking_position = world_state.player.spawn_position;
+
+            //Load triangle grab info
+            {
+                let tri_count = io_or_error(io::read_u32(&mut file), path);
+                let bytes = io_or_error(io::read_u8_data(&mut file, tri_count as usize), path);
+                let flags = &mut world_state.collision.grabbable_flags;
+                for i in 0..flags.len() {
+                    flags[i] = bytes[i] > 0;
+                }
+            }    
             
             //Load totoros
             let floats_per_totoro = 4;

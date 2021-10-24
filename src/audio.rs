@@ -1,16 +1,15 @@
 extern crate minimp3 as mp3;
 
-use alto::{sys::ALint, Buffer, Source, SourceState, StaticSource};
+use alto::{sys::ALint, Source, SourceState, StaticSource};
 use tfd::MessageBoxIcon;
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::fs::{File};
 use std::io::{Seek, SeekFrom};
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{Receiver};
 use std::thread;
 use std::time::Duration;
 use crate::structs::Configuration;
-use crate::routines::send_or_error;
 
 pub const DEFAULT_BGM_PATH: &str = "music/cryptic_relics.mp3";
 
