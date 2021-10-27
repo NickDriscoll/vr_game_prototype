@@ -5,7 +5,7 @@ use ozy::collision::Sphere;
 use ozy::io::OzyMesh;
 use ozy::render::{Framebuffer, RenderTarget, TextureKeeper};
 use ozy::structs::OptionVec;
-use ozy::glutil::ColorSpace;
+use ozy::glutil::{ColorSpace, VertexArrayNames};
 use ozy::{glutil};
 use tfd::MessageBoxIcon;
 use gl::types::*;
@@ -31,7 +31,7 @@ const CUBE_INDICES_COUNT: GLsizei = 36;
 //Represents all of the data necessary to render an object (potentially instanced) that exists in the 3D scene
 #[derive(Clone, Debug)]
 pub struct RenderEntity {
-    pub vao: GLuint,
+    pub vao: VertexArrayNames,
     pub instanced_buffers: [GLuint; Self::INSTANCED_BUFFERS_COUNT],         //GL names of instanced buffers
     pub index_count: GLint,
     pub active_instances: usize,
@@ -40,6 +40,7 @@ pub struct RenderEntity {
     pub uv_offset: glm::TVec2<f32>,
     pub uv_scale: glm::TVec2<f32>,
     pub material_textures: [GLuint; ENTITY_TEXTURE_COUNT],      //The 2D maps that define a material
+    pub using_cached_textures: bool,
     pub lookup_texture: GLuint,                                 //A 1D lookup texture whose use is defined by the shader
     pub transparent: bool,
     pub ignore_depth: bool                                      //Ignore depth testing for this entity
@@ -51,8 +52,8 @@ impl RenderEntity {
     pub const TRANSFORM_BUFFER_INDEX: usize = 2;
     pub const INSTANCED_BUFFERS_COUNT: usize = 3;
 
-    pub fn from_vao(vao: GLuint, program: GLuint, index_count: usize, instances: usize, instanced_attribute: GLuint) -> Self {
-        let transform_buffer = unsafe { glutil::create_instanced_transform_buffer(vao, instances, instanced_attribute) };
+    pub fn from_vao(vao: VertexArrayNames, program: GLuint, index_count: usize, instances: usize, instanced_attribute: GLuint, using_cached_textures: bool) -> Self {
+        let transform_buffer = unsafe { glutil::create_instanced_transform_buffer(vao.vao, instances, instanced_attribute) };
         RenderEntity {
             vao,
             instanced_buffers: [0, 0, transform_buffer],
@@ -63,6 +64,7 @@ impl RenderEntity {
             uv_offset: glm::zero(),
             uv_scale: glm::zero(),
             material_textures: [0; ENTITY_TEXTURE_COUNT],
+            using_cached_textures,
             lookup_texture: 0,
             transparent: false,
             ignore_depth: false
@@ -77,10 +79,12 @@ impl RenderEntity {
                 let mut textures = [0; 3];  //[albedo, normal, roughness]
 
                 //We have to load or create a texture based on whether or not this mesh uses solid colors
+                let using_cached_textures;
                 if meshdata.colors.len() == 0 {
                     textures[0] = texture_keeper.fetch_material(&meshdata.texture_name, "albedo", &tex_params, ColorSpace::Gamma);
                     textures[1] = texture_keeper.fetch_material(&meshdata.texture_name, "normal", &tex_params, ColorSpace::Linear);
                     textures[2] = texture_keeper.fetch_material(&meshdata.texture_name, "roughness", &tex_params, ColorSpace::Linear);
+                    using_cached_textures = true;
                 } else {
                     let simple_tex_params = [
                         (gl::TEXTURE_WRAP_S, gl::REPEAT),
@@ -96,20 +100,21 @@ impl RenderEntity {
                     //The UV data on the mesh will choose which color goes where
                     gl::BindTexture(gl::TEXTURE_2D, textures[0]);
                     glutil::apply_texture_parameters(gl::TEXTURE_2D, &simple_tex_params);
-                    gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA32F as GLint, (meshdata.colors.len() / 4) as GLint, 1, 0, gl::RGBA, gl::FLOAT, &meshdata.colors[0] as *const f32 as *const c_void);
+                    gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8 as GLint, (meshdata.colors.len() / 4) as GLint, 1, 0, gl::RGBA, gl::FLOAT, &meshdata.colors[0] as *const f32 as *const c_void);
 
                     //Normal map
                     gl::BindTexture(gl::TEXTURE_2D, textures[1]);
                     glutil::apply_texture_parameters(gl::TEXTURE_2D, &simple_tex_params);
-                    gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA32F as GLint, 1, 1, 0, gl::RGBA, gl::FLOAT, &[0.5f32, 0.5, 1.0, 0.0] as *const f32 as *const c_void);
+                    gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RGBA8 as GLint, 1, 1, 0, gl::RGBA, gl::FLOAT, &[0.5f32, 0.5, 1.0, 0.0] as *const f32 as *const c_void);
 
                     //Roughness map
                     gl::BindTexture(gl::TEXTURE_2D, textures[2]);
                     glutil::apply_texture_parameters(gl::TEXTURE_2D, &simple_tex_params);
-                    gl::TexImage2D(gl::TEXTURE_2D, 0, gl::R32F as GLint, 1, 1, 0, gl::RED, gl::FLOAT, &[0.5f32] as *const f32 as *const c_void);
+                    gl::TexImage2D(gl::TEXTURE_2D, 0, gl::R8 as GLint, 1, 1, 0, gl::RED, gl::FLOAT, &[0.5f32] as *const f32 as *const c_void);
+                    using_cached_textures = false;
                 }
 
-                let transform_buffer = glutil::create_instanced_transform_buffer(vao, instances, instanced_attribute);
+                let transform_buffer = glutil::create_instanced_transform_buffer(vao.vao, instances, instanced_attribute);
                 RenderEntity {
                     vao,
                     instanced_buffers: [0, 0, transform_buffer],
@@ -117,6 +122,7 @@ impl RenderEntity {
                     active_instances: instances,
                     shader: program,                    
                     material_textures: textures,
+                    using_cached_textures,
                     lookup_texture: 0,
                     uv_velocity: glm::vec2(meshdata.uv_velocity[0], meshdata.uv_velocity[1]),
                     uv_scale: glm::vec2(1.0, 1.0),
@@ -133,7 +139,7 @@ impl RenderEntity {
     }
 
     pub unsafe fn init_new_instanced_buffer(&mut self, floats_per: usize, attribute: GLuint, attribute_buffer_idx: usize) {
-        gl::BindVertexArray(self.vao);
+        gl::BindVertexArray(self.vao.vao);
 
         let data = vec![0.0f32; self.active_instances * floats_per];
         let mut b = 0;
@@ -184,7 +190,7 @@ impl RenderEntity {
             );
 
             //Bad branch bad
-            gl::BindVertexArray(self.vao);
+            gl::BindVertexArray(self.vao.vao);
             if attribute_floats == 16 {
                 glutil::bind_new_transform_buffer(attribute);
             } else {                
@@ -239,8 +245,16 @@ impl RenderEntity {
 
 impl Drop for RenderEntity {
     fn drop(&mut self) {
-        let texs = [self.lookup_texture];
+        let texs = if self.using_cached_textures {
+            vec![self.lookup_texture]
+        } else {
+            vec![self.material_textures[0], self.material_textures[1], self.material_textures[2], self.lookup_texture]
+        };
+
         unsafe {
+            let bufs = [self.vao.vbo, self.vao.ebo];
+            gl::DeleteBuffers(2, &bufs[0]);
+            gl::DeleteVertexArrays(1, &self.vao.vao);
             gl::DeleteTextures(texs.len() as GLsizei, &texs[0]);
             gl::DeleteBuffers(self.instanced_buffers.len() as GLsizei, &self.instanced_buffers[0]);
         }
@@ -361,7 +375,7 @@ impl Default for SceneData {
             toon_shading: true,
             using_postfx: false,
             skybox_cubemap: 0,
-            skybox_vao: ozy::prims::skybox_cube_vao(),
+            skybox_vao: ozy::prims::skybox_cube_vao().vao,
             skybox_program: 0,
             depth_program: 0,
             ubo,
@@ -531,7 +545,7 @@ unsafe fn render_entity(entity: &RenderEntity, program: GLuint, scene_data: &Sce
         gl::Disable(gl::DEPTH_TEST);
     }
 
-    gl::BindVertexArray(entity.vao);
+    gl::BindVertexArray(entity.vao.vao);
     gl::DrawElementsInstanced(gl::TRIANGLES, entity.index_count, gl::UNSIGNED_SHORT, ptr::null(), entity.active_instances as GLint);
     
     if entity.ignore_depth {
@@ -550,7 +564,7 @@ pub unsafe fn cascaded_shadow_map(shadow_map: &CascadedShadowMap, entities: &[Op
 
         for opt_entity in entities.iter() {
             if let Some(entity) = opt_entity {
-                gl::BindVertexArray(entity.vao);
+                gl::BindVertexArray(entity.vao.vao);
                 gl::DrawElementsInstanced(gl::TRIANGLES, entity.index_count, gl::UNSIGNED_SHORT, ptr::null(), entity.active_instances as GLint);
             }
         }

@@ -287,11 +287,13 @@ pub fn load_lvl(level_name: &str, world_state: &mut WorldState, scene_data: &mut
                 let mut entity = RenderEntity::from_ozy(&format!("models/{}", ozy_name), standard_program, matrices_count, STANDARD_TRANSFORM_ATTRIBUTE, texture_keeper, &DEFAULT_TEX_PARAMS);
                 entity.update_transform_buffer(&matrix_floats, STANDARD_TRANSFORM_ATTRIBUTE);
 
-                if entity.transparent {                    
+    
+                if entity.transparent {
                     world_state.transparent_terrain_indices.push(scene_data.transparent_entities.insert(entity));
                 } else {
                     world_state.opaque_terrain_indices.push(scene_data.opaque_entities.insert(entity));
-                }                
+                }
+    
             }                
         }
         Err(e) => { level_load_error(e); }

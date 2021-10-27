@@ -822,7 +822,7 @@ fn main() {
         }
 
         let vao = glutil::create_vertex_array_object(&verts, inds, &[3, 3]);
-        let mut re = RenderEntity::from_vao(vao, debug_program, inds.len(), 1, DEBUG_TRANSFORM_ATTRIBUTE);
+        let mut re = RenderEntity::from_vao(vao, debug_program, inds.len(), 1, DEBUG_TRANSFORM_ATTRIBUTE, false);
         re.ignore_depth = true;
         re.init_new_instanced_buffer(4, DEBUG_COLOR_ATTRIBUTE, RenderEntity::COLOR_BUFFER_INDEX);
 
@@ -860,7 +860,8 @@ fn main() {
             debug_program,
             ozy::prims::sphere_index_count(segments, rings),
             64,
-            DEBUG_TRANSFORM_ATTRIBUTE
+            DEBUG_TRANSFORM_ATTRIBUTE,
+            false
         );
         re.init_new_instanced_buffer(4, DEBUG_COLOR_ATTRIBUTE, RenderEntity::COLOR_BUFFER_INDEX);
         re.init_new_instanced_buffer(1, DEBUG_HIGHLIGHTED_ATTRIBUTE, RenderEntity::HIGHLIGHTED_BUFFER_INDEX);
@@ -2154,10 +2155,15 @@ fn main() {
                         graphics_token.end(&imgui_ui);
                     }
 
+                    if let Some(window_token) = imgui_ui.begin_menu(im_str!("Window"), true) {
+                        
+                        window_token.end(&imgui_ui);
+                    }
+
                     menu_token.end(&imgui_ui);
                 }
 
-                imgui_ui.text(im_str!("Frametime: {:.2}ms\tFPS: {:.2}\tFrame: {}", delta_time * 1000.0 / world_state.delta_timescale, framerate, frame_count));
+                imgui_ui.text(im_str!("Frametime: {:.2}ms\tFPS: {:.0}\tFrame: {}", delta_time * 1000.0 / world_state.delta_timescale, framerate, frame_count));
                 imgui_ui.text(im_str!("Totoros spawned: {}", world_state.totoros.count()));
                 imgui_ui.text(im_str!("Point lights count: {}/{}", scene_data.point_lights.count(), render::MAX_POINT_LIGHTS));
                 
@@ -2189,7 +2195,7 @@ fn main() {
                 }
                 imgui_ui.same_line(0.0);
                 if imgui_ui.button(im_str!("Choose mp3"), [0.0, 32.0]) {
-                        send_or_error(&audio_sender, AudioCommand::SelectNewBGM);
+                    send_or_error(&audio_sender, AudioCommand::SelectNewBGM);
                 }
 
                 imgui_ui.separator();
@@ -2624,7 +2630,7 @@ fn main() {
                                 let scales = [&left_water_pillar_scale, &right_water_pillar_scale];
                                 for i in 0..poses.len() {
                                     if let Some(p) = poses[i] {
-                                        if let Some(entity) = scene_data.transparent_entities.get_mut_element(water_cylinder_entity_index) {
+                                        if let Some(entity) = scene_data.opaque_entities.get_mut_element(water_cylinder_entity_index) {
                                             let mm = xrutil::pose_to_mat4(&p, &world_from_tracking) * glm::scaling(scales[i]);
                                             entity.update_single_transform(i, &mm, 16);
                                         }
@@ -2829,7 +2835,7 @@ fn main() {
                         for command in list.commands() {
                             match command {
                                 DrawCmd::Elements {count, cmd_params} => {
-                                    gl::BindVertexArray(imgui_vao);
+                                    gl::BindVertexArray(imgui_vao.vao);
                                     gl::ActiveTexture(gl::TEXTURE0);
                                     gl::BindTexture(gl::TEXTURE_2D, cmd_params.texture_id.id() as GLuint);
                                     gl::Scissor(cmd_params.clip_rect[0] as GLint,
@@ -2845,12 +2851,9 @@ fn main() {
                         }
                         
                         //Free the vertex and index buffers
-                        let mut bufs = [0, 0];
-                        gl::GetIntegerv(gl::ARRAY_BUFFER_BINDING, &mut bufs[0]);
-                        gl::GetIntegerv(gl::ELEMENT_ARRAY_BUFFER_BINDING, &mut bufs[1]);
-                        let bufs = [bufs[0] as GLuint, bufs[1] as GLuint];
+                        let bufs = [imgui_vao.vbo, imgui_vao.ebo];
                         gl::DeleteBuffers(2, &bufs[0]);
-                        gl::DeleteVertexArrays(1, &imgui_vao);
+                        gl::DeleteVertexArrays(1, &imgui_vao.vao);
                     }
                 }
             }
