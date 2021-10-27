@@ -665,6 +665,7 @@ fn main() {
     let mut env_menu = false;
     let mut entity_panel = false;
     let mut server_connection_dialogue = false;
+    let mut destination_string = String::with_capacity(4096);
     
     let default_camera_position = glm::vec3(0.0, -8.0, 5.5);
     let mut camera = {
@@ -2000,15 +2001,24 @@ fn main() {
         //Draw ImGui
         if do_imgui {
             //Sets a flag to a value or unsets the flag if it already is the value
-            pub fn do_radio_button<F: Eq + Default>(imgui_ui: &imgui::Ui, label: &str, flag: &mut F, new_flag: F) {
+            fn do_radio_button<F: Eq + Default>(imgui_ui: &imgui::Ui, label: &str, flag: &mut F, new_flag: F) {
                 if imgui_ui.radio_button_bool(label, *flag == new_flag) { 
                     if *flag != new_flag { *flag = new_flag; }
                     else { *flag = F::default(); }
                 }
             }
-            let standard_button_size = [0.0, 32.0];
+            fn do_button(imgui_ui: &imgui::Ui, label: &str) -> bool {
+                let standard_button_size = [0.0, 32.0];
+                imgui_ui.button_with_size(label, standard_button_size)
+            }
+            fn do_readwrite_vec3(imgui_ui: &imgui::Ui, label: &str, vector: &mut glm::TVec3<f32>) {
+                let drag_speed = 0.02;
+                imgui_ui.text(label);
+                imgui::Drag::new("X").speed(drag_speed).build(&imgui_ui, &mut vector.x);
+                imgui::Drag::new("Y").speed(drag_speed).build(&imgui_ui, &mut vector.y);
+                imgui::Drag::new("Z").speed(drag_speed).build(&imgui_ui, &mut vector.z);
+            }
 
-            let drag_speed = 0.02;            
             if let Some(win_token) = imgui::Window::new("Main menu").menu_bar(true).begin(&imgui_ui) {
                 if let Some(menu_token) = imgui_ui.begin_menu_bar() {
                     if let Some(file_token) = imgui_ui.begin_menu("File") {
@@ -2169,6 +2179,38 @@ fn main() {
                     }
 
                     if let Some(window_token) = imgui_ui.begin_menu("Window") {
+                        if MenuItem::new("Toggle fullscreen").build(&imgui_ui) {
+                            unsafe {
+                                //Toggle window fullscreen
+                                if !is_fullscreen {
+                                    window.set_decorated(false);
+                                    glfw.with_primary_monitor_mut(|_, opt_monitor| {
+                                        if let Some(monitor) = opt_monitor {
+                                            let pos = monitor.get_pos();
+                                            if let Some(mode) = monitor.get_video_mode() {
+                                                window_size = glm::vec2(mode.width, mode.height);
+                                                resize_main_window(
+                                                    &mut window,
+                                                    &mut core_rt,
+                                                    &mut ping_rt,
+                                                    &mut pong_rt,
+                                                    window_size,
+                                                    pos,
+                                                    WindowMode::Windowed
+                                                );
+                                            }
+                                        }
+                                    });
+                                } else {
+                                    window_size = get_window_size(&config);
+                                    window.set_decorated(true);
+                                    resize_main_window(&mut window, &mut core_rt, &mut ping_rt, &mut pong_rt, window_size, (200, 200), WindowMode::Windowed);
+                                }
+                            }
+
+                            default_framebuffer.size = core_rt.framebuffer.size;
+                            is_fullscreen = !is_fullscreen;
+                        }
                         
                         window_token.end();
                     }
@@ -2199,15 +2241,15 @@ fn main() {
                     send_or_error(&audio_sender, AudioCommand::SetListenerGain(bgm_volume));
                 }
 
-                if imgui_ui.button_with_size("Play/Pause", standard_button_size) {
+                if do_button(&imgui_ui, "Play/Pause") {
                     send_or_error(&audio_sender, AudioCommand::PlayPause);
                 }
                 imgui_ui.same_line();
-                if imgui_ui.button_with_size("Restart", standard_button_size) {
+                if do_button(&imgui_ui, "Restart") {
                     send_or_error(&audio_sender, AudioCommand::RestartBGM);
                 }
                 imgui_ui.same_line();
-                if imgui_ui.button_with_size("Choose mp3", standard_button_size) {
+                if do_button(&imgui_ui, "Choose mp3") {
                     send_or_error(&audio_sender, AudioCommand::SelectNewBGM);
                 }
 
@@ -2219,47 +2261,13 @@ fn main() {
                 
                 //Reset player position button
                 if let Some(_) = &xr_instance {
-                    if imgui_ui.button_with_size("Reset player position", standard_button_size) {
+                    if do_button(&imgui_ui, "Reset player position") {
                         reset_player_position(&mut world_state.player);
                     }
                 }
 
-                if imgui_ui.button_with_size("Reset freecam position", standard_button_size) {
-                        camera.position = default_camera_position;
-                }
-
-                //Fullscreen button
-                if imgui_ui.button_with_size("Toggle fullscreen", standard_button_size) {
-                    unsafe {
-                        //Toggle window fullscreen
-                        if !is_fullscreen {
-                            window.set_decorated(false);
-                            glfw.with_primary_monitor_mut(|_, opt_monitor| {
-                                if let Some(monitor) = opt_monitor {
-                                    let pos = monitor.get_pos();
-                                    if let Some(mode) = monitor.get_video_mode() {
-                                        window_size = glm::vec2(mode.width, mode.height);
-                                        resize_main_window(
-                                            &mut window,
-                                            &mut core_rt,
-                                            &mut ping_rt,
-                                            &mut pong_rt,
-                                            window_size,
-                                            pos,
-                                            WindowMode::Windowed
-                                        );
-                                    }
-                                }
-                            });
-                        } else {
-                            window_size = get_window_size(&config);
-                            window.set_decorated(true);
-                            resize_main_window(&mut window, &mut core_rt, &mut ping_rt, &mut pong_rt, window_size, (200, 200), WindowMode::Windowed);
-                        }
-                    }
-
-                    default_framebuffer.size = core_rt.framebuffer.size;
-                    is_fullscreen = !is_fullscreen;
+                if do_button(&imgui_ui, "Reset freecam position") {
+                    camera.position = default_camera_position;
                 }
 
                 //End the window
@@ -2289,13 +2297,13 @@ fn main() {
                     imgui_ui.separator();
                     imgui_ui.checkbox("Turbo clicking", &mut turbo_clicking);
 
-                    if imgui_ui.button_with_size("Delete all totoros", standard_button_size) {
+                    if do_button(&imgui_ui, "Delete all totoros") {
                         world_state.totoros.clear();
                         world_state.selected_totoro = None;
                     }
 
                     unsafe {
-                        if imgui_ui.button_with_size("Clear grabbable triangles", standard_button_size) {
+                        if do_button(&imgui_ui, "Clear grabbable triangles") {
                             for i in 0..world_state.collision.grabbable_flags.len() {
                                 world_state.collision.grabbable_flags[i] = false;
                                 if let Some(entity) = scene_data.transparent_entities.get_mut_element(terrain_re_index) {
@@ -2309,7 +2317,7 @@ fn main() {
                         }
                     }
 
-                    if imgui_ui.button_with_size("Close", standard_button_size) { entity_panel = false; }
+                    if do_button(&imgui_ui, "Close") { entity_panel = false; }
 
                     win_token.end();
                 }
@@ -2319,6 +2327,17 @@ fn main() {
             if server_connection_dialogue {
                 if let Some(win_token) = imgui::Window::new("Connect to server").begin(&imgui_ui) {
 
+                    imgui::InputText::new(&imgui_ui, "Destination (<ip address>:<port>)", &mut destination_string).build();
+
+                    if do_button(&imgui_ui, "Connect") {
+                        
+                    }
+                    imgui_ui.separator();
+
+                    if do_button(&imgui_ui, "Close") {
+                        destination_string.clear();
+                        server_connection_dialogue = false;
+                    }
 
                     win_token.end();
                 }
@@ -2351,7 +2370,7 @@ fn main() {
                     
                     imgui_ui.checkbox("Use postfx", &mut using_postfx);
 
-                    if imgui_ui.button_with_size("Close", standard_button_size) { debug_vis_menu = false; }
+                    if do_button(&imgui_ui, "Close") { debug_vis_menu = false; }
 
                     win_token.end();
                 }
@@ -2391,7 +2410,7 @@ fn main() {
                         }
                     }
 
-                    if imgui_ui.button_with_size("Close", standard_button_size) { env_menu = false; }
+                    if do_button(&imgui_ui, "Close") { env_menu = false; }
 
                     win_token.end();
                 }
@@ -2401,10 +2420,7 @@ fn main() {
             if let Some(idx) = world_state.selected_totoro {
                 let tot = world_state.totoros.get_mut_element(idx).unwrap();
                 if let Some(token) = imgui::Window::new(format!("Totoro #{} control panel###totoro_panel", idx)).begin(&imgui_ui) {
-                    imgui_ui.text("Position");
-                    imgui::Drag::new("X").speed(drag_speed).build(&imgui_ui, &mut tot.position.x);
-                    imgui::Drag::new("Y").speed(drag_speed).build(&imgui_ui, &mut tot.position.y);
-                    imgui::Drag::new("Z").speed(drag_speed).build(&imgui_ui, &mut tot.position.z);
+                    do_readwrite_vec3(&imgui_ui, "Position", &mut tot.position);
                     imgui_ui.text(format!("Velocity ({:.3}, {:.3}, {:.3})", tot.velocity.x, tot.velocity.y, tot.velocity.z));
                     imgui_ui.text(format!("AI state: {:?}", tot.state));
                     imgui_ui.text(format!("AI timer state: {:.5}/{:.5}", scene_data.elapsed_time - tot.state_timer, tot.state_transition_after));
@@ -2412,7 +2428,7 @@ fn main() {
                     imgui_ui.separator();
                     imgui::Slider::new("Scale", 0.1, 4.0).build(&imgui_ui, &mut tot.scale);
 
-                    if imgui_ui.button_with_size("Toggle AI", standard_button_size) {
+                    if do_button(&imgui_ui, "Toggle AI") {
                         tot.state = match tot.state {
                             TotoroState::BrainDead => { TotoroState::Relaxed }
                             _ => { TotoroState::BrainDead }
@@ -2420,14 +2436,14 @@ fn main() {
                     }
                     imgui_ui.same_line();
 
-                    if imgui_ui.button_with_size("Kill", standard_button_size) {
+                    if do_button(&imgui_ui, "Kill") {
                         delete_object(&mut world_state.totoros, &mut world_state.selected_totoro, idx);
                     }
 
                     imgui_ui.separator();
                     do_radio_button(&imgui_ui, "Move totoro's home", &mut click_action, ClickAction::MoveSelectedTotoro);
 
-                    if imgui_ui.button_with_size("Close", standard_button_size) { world_state.selected_totoro = None; }
+                    if do_button(&imgui_ui, "Close") { world_state.selected_totoro = None; }
 
                     token.end();
                 }
@@ -2437,10 +2453,7 @@ fn main() {
             if let Some(idx) = scene_data.selected_point_light {
                 let light = scene_data.point_lights.get_mut_element(idx).unwrap();
                 if let Some(token) = imgui::Window::new(format!("Point light #{} control panel###point_light_panel", idx)).begin(&imgui_ui) {
-                    imgui_ui.text("Position");
-                    imgui::Drag::new("X").speed(drag_speed).build(&imgui_ui, &mut light.position.x);
-                    imgui::Drag::new("Y").speed(drag_speed).build(&imgui_ui, &mut light.position.y);
-                    imgui::Drag::new("Z").speed(drag_speed).build(&imgui_ui, &mut light.position.z);
+                    do_readwrite_vec3(&imgui_ui, "Position", &mut light.position);
                             
                     imgui_ui.separator();
                     imgui::Slider::new("Power", 0.0, 10.0).build(&imgui_ui, &mut light.power);
@@ -2451,12 +2464,12 @@ fn main() {
 
                     imgui_ui.separator();
                     do_radio_button(&imgui_ui, "Reposition light", &mut click_action, ClickAction::MovePointLight);
-                    if imgui_ui.button_with_size("Delete this light", standard_button_size) {
+                    if do_button(&imgui_ui, "Delete this light") {
                         scene_data.point_lights.delete(idx);
                         scene_data.selected_point_light = None;
                     }
 
-                    if imgui_ui.button_with_size("Close", standard_button_size) { scene_data.selected_point_light = None; }
+                    if do_button(&imgui_ui, "Close") { scene_data.selected_point_light = None; }
 
                     token.end();
                 }
