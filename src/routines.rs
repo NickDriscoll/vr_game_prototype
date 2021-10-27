@@ -22,12 +22,6 @@ use crate::structs::*;
 use crate::render::NEAR_DISTANCE;
 use crate::*;
 
-pub fn clamp<T: PartialOrd>(x: T, min: T, max: T) -> T {
-    if x > max { max }
-    else if x < min { min }
-    else { x }
-}
-
 pub fn clip_from_screen(screen_size: glm::TVec2<u32>) -> glm::TMat4<f32> {
 	glm::mat4(
 		2.0 / screen_size.x as f32, 0.0, 0.0, -1.0,
@@ -170,14 +164,6 @@ pub fn send_or_error<T>(s: &Sender<T>, message: T) {
 
 pub fn vec_to_array(vec: glm::TVec3<f32>) -> [f32; 3] {    
     [vec.x, vec.y, vec.z]
-}
-
-//Sets a flag to a value or unsets the flag if it already is the value
-pub fn do_radio_button<F: Eq + Default>(imgui_ui: &imgui::Ui, label: &imgui::ImStr, flag: &mut F, new_flag: F) {
-    if imgui_ui.radio_button_bool(label, *flag == new_flag) { 
-        if *flag != new_flag { *flag = new_flag; }
-        else { *flag = F::default(); }
-    }
 }
 
 pub unsafe fn resize_main_window(window: &mut Window, window_rt: &mut RenderTarget, ping_rt: &mut RenderTarget, pong_rt: &mut RenderTarget, window_size: glm::TVec2<u32>, pos: (i32, i32), window_mode: WindowMode) {
@@ -381,7 +367,7 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
             scan_skybox_directory(world_state, &new_skybox);
             scene_data.skybox_cubemap = unsafe { 
                 gl::DeleteTextures(1, &mut scene_data.skybox_cubemap);
-                create_skybox_cubemap(world_state.skybox_strings[world_state.active_skybox_index].to_str())
+                create_skybox_cubemap(&world_state.skybox_strings[world_state.active_skybox_index])
             };
         }
         Err(e) => {
@@ -407,7 +393,7 @@ fn scan_skybox_directory(world_state: &mut WorldState, skybox_name: &str) {
                             if name == skybox_name {
                                 world_state.active_skybox_index = current_skybox;
                             }
-                            v.push(im_str!("{}", name));
+                            v.push(format!("{}", name));
                         }
                         Err(e) => {
                             tfd::message_box_ok("Unable to read skybox entry", &format!("{}", e), MessageBoxIcon::Error);

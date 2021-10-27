@@ -1,4 +1,3 @@
-use imgui::ImString;
 use ozy::structs::OptionVec;
 use ozy::collision::{LineSegment, Terrain};
 use strum::EnumCount;
@@ -19,7 +18,7 @@ pub struct WorldState {
     pub collision: StaticCollision,
     pub opaque_terrain_indices: Vec<usize>,     //Indices of the terrain's graphics data in a RenderEntities array
     pub transparent_terrain_indices: Vec<usize>,     //Indices of the terrain's graphics data in a RenderEntities array
-    pub skybox_strings: Vec<ImString>,
+    pub skybox_strings: Vec<String>,
     pub level_name: String,
     pub active_skybox_index: usize,
     pub delta_timescale: f32

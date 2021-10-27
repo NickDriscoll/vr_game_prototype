@@ -252,11 +252,10 @@ impl Drop for RenderEntity {
         };
 
         unsafe {
-            let bufs = [self.vao.vbo, self.vao.ebo];
-            gl::DeleteBuffers(2, &bufs[0]);
+            let bufs = [self.vao.vbo, self.vao.ebo, self.instanced_buffers[0], self.instanced_buffers[1], self.instanced_buffers[2]];
+            gl::DeleteBuffers(bufs.len() as GLsizei, &bufs[0]);
             gl::DeleteVertexArrays(1, &self.vao.vao);
             gl::DeleteTextures(texs.len() as GLsizei, &texs[0]);
-            gl::DeleteBuffers(self.instanced_buffers.len() as GLsizei, &self.instanced_buffers[0]);
         }
     }
 }
