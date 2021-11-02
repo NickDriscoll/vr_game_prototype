@@ -575,7 +575,7 @@ pub fn compute_shadow_cascade_matrices(
     shadow_view: &glm::TMat4<f32>,
     v_mat: &glm::TMat4<f32>,
     projection: &glm::TMat4<f32>
-) -> [glm::TMat4<f32>; SHADOW_CASCADE_COUNT] {       
+) -> [glm::TMat4<f32>; SHADOW_CASCADE_COUNT] {
     let mut out_mats = [glm::identity(); SHADOW_CASCADE_COUNT];
 
     let shadow_from_view = shadow_view * glm::affine_inverse(*v_mat);
@@ -644,9 +644,10 @@ pub unsafe fn post_processing(fbo_texture_view: GLuint, window_size: glm::TVec2<
     gl::BindImageTexture(0, fbo_texture_view, 0, gl::FALSE, 0, gl::READ_WRITE, gl::RGBA8);
 
     //Dispatching compute. Extra groups may be required if the resolution isn't divisible by 32x32
-    let additional_x = if window_size.x % 32 != 0 { 1 } else { 0 };
-    let additional_y = if window_size.y % 32 != 0 { 1 } else { 0 };
-    gl::DispatchCompute(window_size.x / 32 + additional_x, window_size.y / 32 + additional_y, 1);
+    let kernel_size = 32;
+    let x_groups = (window_size.x + kernel_size - 1) / kernel_size;
+    let y_groups = (window_size.y + kernel_size - 1) / kernel_size;
+    gl::DispatchCompute(x_groups, y_groups, 1);
 
     //Waiting for the compute shader to finish before blitting to the default framebuffer
     gl::MemoryBarrier(gl::FRAMEBUFFER_BARRIER_BIT);

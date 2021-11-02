@@ -8,6 +8,7 @@ extern crate ozy_engine as ozy;
 
 mod audio;
 mod gamestate;
+mod network;
 mod structs;
 mod render;
 mod routines;
@@ -62,12 +63,7 @@ const DEFAULT_TEX_PARAMS: [(GLenum, GLenum); 4] = [
 ];
 
 fn get_lookup_texture_pixels(count: usize) -> usize {
-    let one_more = if count % 8 == 0 {
-        0
-    } else {
-        1
-    };
-    count / 8 + one_more
+    f32::ceil(count as f32 / 8.0) as usize
 }
 
 fn queue_debug_sphere(sphere_queue: &mut Vec<DebugSphere>, position: glm::TVec3<f32>, color: glm::TVec4<f32>, radius: f32, highlighted: bool) {
@@ -1995,6 +1991,11 @@ fn main() {
             send_or_error(&audio_sender, AudioCommand::SetListenerOrientation((listener_forward, listener_up)));
         }
 
+        //Network updating section
+        if let Some(socket) = &udp_socket {
+            socket.send(&u32::to_le_bytes(frame_count)).unwrap();
+        }
+
         camera.last_position = camera.position;
         mouse.was_clicked = mouse.clicked;
 
@@ -2255,7 +2256,7 @@ fn main() {
 
                 imgui_ui.separator();
 
-                if Slider::new("Timescale", 0.000001, 2.0).build(&imgui_ui, &mut world_state.delta_timescale) {
+                if Slider::new("Timescale", 0.001, 2.0).build(&imgui_ui, &mut world_state.delta_timescale) {
                     send_or_error(&audio_sender, AudioCommand::SetPitchShift(world_state.delta_timescale));
                 }
                 
@@ -2268,6 +2269,10 @@ fn main() {
 
                 if do_button(&imgui_ui, "Reset freecam position") {
                     camera.position = default_camera_position;
+                }
+
+                if do_button(&imgui_ui, "Help") {
+                    tfd::message_box_ok("PLACEHOLDER", "Nick needs to implement a help window", MessageBoxIcon::Warning);
                 }
 
                 //End the window
@@ -2326,12 +2331,32 @@ fn main() {
             //Window where you enter server connection info
             if server_connection_dialogue {
                 if let Some(win_token) = imgui::Window::new("Connect to server").begin(&imgui_ui) {
+                    imgui_ui.text(format!("Connection status: {:?}", udp_socket));                    
+                    imgui_ui.separator();
 
+                    imgui_ui.set_next_item_width(300.0);
                     imgui::InputText::new(&imgui_ui, "Destination (<ip address>:<port>)", &mut destination_string).build();
 
                     if do_button(&imgui_ui, "Connect") {
-                        
+                        udp_socket = match UdpSocket::bind("0.0.0.0:6900") {
+                            Ok(socket) => {
+                                if let Err(e) = socket.connect(&destination_string) {
+                                    println!("Unable to connect: {}", e);
+                                    None
+                                } else {
+                                    Some(socket)
+                                }
+                            }
+                            Err(e) => {
+                                println!("Couldn't bind: {}", e);
+                                None
+                            }
+                        };
                     }
+                    imgui_ui.same_line();
+
+                    if do_button(&imgui_ui, "Disconnect") { udp_socket = None; }
+
                     imgui_ui.separator();
 
                     if do_button(&imgui_ui, "Close") {

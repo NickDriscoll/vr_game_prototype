@@ -14,6 +14,7 @@ ozy_engine = { path = "../ozy_engine" }
 #ozy_engine = { git = "https://github.com/NickDriscoll/ozy_engine" }
 alto = "3.0.4"
 chrono = "*"
+enet = "0.2.3"
 gl = "*"
 glfw = "*"
 image = "*"

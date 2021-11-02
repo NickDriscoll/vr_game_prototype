@@ -221,6 +221,10 @@ pub fn rand_binomial() -> f32 {
     rand::random::<f32>() - rand::random::<f32>()
 }
 
+pub fn ranged_randomf32(min: f32, max: f32) -> f32 {
+    rand::random::<f32>() * (max - min) + min
+}
+
 pub fn load_lvl(level_name: &str, world_state: &mut WorldState, scene_data: &mut SceneData, texture_keeper: &mut TextureKeeper, standard_program: GLuint) {    
     let level_load_error = |s: std::io::Error| {
         tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", level_name, s), MessageBoxIcon::Error);
