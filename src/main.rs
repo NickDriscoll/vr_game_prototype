@@ -27,7 +27,9 @@ use std::io::{ErrorKind, Write};
 use std::path::Path;
 use std::process::exit;
 use std::mem::size_of;
+use std::net::SocketAddrV4;
 use std::os::raw::c_void;
+use std::str::FromStr;
 use std::sync::mpsc;
 use std::time::{Instant};
 use strum::EnumCount;
@@ -38,14 +40,14 @@ use ozy::render::{Framebuffer, RenderTarget, TextureKeeper};
 use ozy::routines::uniform_scale;
 use ozy::structs::OptionVec;
 use ozy::collision::*;
-use std::net::UdpSocket;
 
-use crate::audio::{AudioCommand, RequestedSoundEffect};
+use crate::audio::{AudioCommand, SoundEffectRequest};
 use crate::gamestate::*;
 use crate::structs::*;
 use crate::routines::*;
 use crate::render::{PointLight, MAX_POINT_LIGHTS, NEAR_DISTANCE, FAR_DISTANCE, STANDARD_TRANSFORM_ATTRIBUTE, STANDARD_HIGHLIGHTED_ATTRIBUTE, DEBUG_TRANSFORM_ATTRIBUTE, DEBUG_COLOR_ATTRIBUTE, DEBUG_HIGHLIGHTED_ATTRIBUTE};
 use crate::traits::SphereCollider;
+use crate::network::NetworkCommand;
 
 #[cfg(windows)]
 use winapi::{um::{winuser::GetWindowDC, wingdi::wglGetCurrentContext}};
@@ -661,7 +663,7 @@ fn main() {
     let mut env_menu = false;
     let mut entity_panel = false;
     let mut server_connection_dialogue = false;
-    let mut destination_string = String::with_capacity(4096);
+    let mut destination_string = String::with_capacity(64);
     
     let default_camera_position = glm::vec3(0.0, -8.0, 5.5);
     let mut camera = {
@@ -873,26 +875,22 @@ fn main() {
     };
 
     //Load gadget models
-    let gadget_model_map = {
+    let mut gadget_model_map = {
         let wand_entity = RenderEntity::from_ozy("models/wand.ozy", standard_program, 2, STANDARD_TRANSFORM_ATTRIBUTE, &mut texture_keeper, &DEFAULT_TEX_PARAMS);
         let stick_entity = RenderEntity::from_ozy("models/stick.ozy", standard_program, 2, STANDARD_TRANSFORM_ATTRIBUTE, &mut texture_keeper, &DEFAULT_TEX_PARAMS);
-        let mut h = HashMap::new();
-        h.insert(GadgetType::Net, wand_entity);
-        h.insert(GadgetType::WaterCannon, stick_entity);
+        let wand_index = scene_data.opaque_entities.insert(wand_entity);
+        let stick_index = scene_data.opaque_entities.insert(stick_entity);
+
+        let mut h = HashMap::with_capacity(2);
+        h.insert(GadgetType::Net, wand_index);
+        h.insert(GadgetType::StickyHand, stick_index);
+        h.insert(GadgetType::WaterCannon, stick_index);
         h
     };
 
     //Gadget state setup
     let mut left_hand_gadget = GadgetType::Net;
     let mut right_hand_gadget = GadgetType::WaterCannon;
-    let left_gadget_index = match gadget_model_map.get(&left_hand_gadget) {
-        Some(entity) => { scene_data.opaque_entities.insert(entity.clone()) }
-        None => { panic!("No model found for {:?}", left_hand_gadget); }
-    };
-    let right_gadget_index = match gadget_model_map.get(&right_hand_gadget) {
-        Some(entity) => { scene_data.opaque_entities.insert(entity.clone()) }
-        None => { panic!("No model found for {:?}", right_hand_gadget); }
-    };
 
     //Water gun state
     const MAX_WATER_PRESSURE: f32 = 30.0;
@@ -942,7 +940,7 @@ fn main() {
     //Frame timing variables
     let mut frame_count = 0;
     let mut last_frame_instant = Instant::now();
-    let mut last_xr_render_time = xr::Time::from_nanos(1);
+    let mut last_xr_render_time = xr::Time::from_nanos(0);
 
     //Init audio system
     let mut bgm_volume = match config.float_options.get(Configuration::BGM_VOLUME) {
@@ -997,8 +995,9 @@ fn main() {
     //Immediate mode interface for drawing debug spheres
     let mut debug_sphere_queue = Vec::with_capacity(64);
 
-    //Socket for communicating with the server
-    let mut udp_socket: Option<UdpSocket> = None;
+    //Start the network thread
+    let (network_sender, network_receiver) = mpsc::channel();
+    network::network_main(network_receiver);
 
     while !window.should_close() {
         let imgui_io = imgui_context.io_mut();
@@ -1038,6 +1037,7 @@ fn main() {
         for (_, event) in glfw::flush_messages(&events) {
             match event {
                 WindowEvent::Close => { window.set_should_close(true); }
+                WindowEvent::Char(c) => { imgui_io.add_input_character(c); }
                 WindowEvent::Key(key, _, Action::Press, _) => {
                     imgui_io.keys_down[key as usize] = true;
                     match key_directions.get(&key) {
@@ -1080,7 +1080,6 @@ fn main() {
                         }
                     }
                 }
-                WindowEvent::Char(c) => { imgui_io.add_input_character(c); }
                 WindowEvent::MouseButton(glfw::MouseButtonLeft, action, ..) => {
                     match action {
                         Action::Press => {
@@ -1169,28 +1168,23 @@ fn main() {
             //Gadget switching
             {
                 let gadgets = [&mut left_hand_gadget, &mut right_hand_gadget];
-                let gadget_indices = [left_gadget_index, right_gadget_index];
                 let states = [left_switch_state, right_switch_state];
                 for i in 0..states.len() {
                     if let Some(state) = states[i] {
                         //If switch button was pressed for this hand
                         if state.changed_since_last_sync {
                             if state.current_state {
-                                let new = (*gadgets[i] as usize + 1) % GadgetType::COUNT;
-                                *gadgets[i] = GadgetType::from_usize(new);
-                
-                                if let Some(ent) = scene_data.opaque_entities.get_mut_element(gadget_indices[i]) {unsafe{ 
-                                    ent.update_single_transform(i, &glm::zero(), 16);
-                                }}
-                                if let Some(ent) = gadget_model_map.get(gadgets[i]) {
-                                    scene_data.opaque_entities.replace(gadget_indices[i], ent.clone());
+                                match gadget_model_map.get(gadgets[i]) {
+                                    Some(entity_idx) => {
+                                        if let Some(entity) = scene_data.opaque_entities.get_mut_element(*entity_idx) {
+                                            unsafe { entity.update_single_transform(i, &glm::zero()); }
+                                        }
+                                    }
+                                    None => { println!("No model for gadget {:?}", gadgets[i]); }
                                 }
 
-                                world_state.delta_timescale *= 0.25;
-                                send_or_error(&audio_sender, AudioCommand::SetPitchShift(world_state.delta_timescale));
-                            } else {                                
-                                world_state.delta_timescale *= 4.0;
-                                send_or_error(&audio_sender, AudioCommand::SetPitchShift(world_state.delta_timescale));
+                                let new = (*gadgets[i] as usize + 1) % GadgetType::COUNT;
+                                *gadgets[i] = GadgetType::from_usize(new);
                             }
                         }
                     }
@@ -1414,7 +1408,7 @@ fn main() {
         };
 
         //Totoro update
-        let totoro_speed = 2.0;
+        let totoro_base_speed = 2.0;
         let totoro_awareness_radius = 5.0;
         for i in 0..world_state.totoros.len() {
             if let Some(totoro) = world_state.totoros.get_mut_element(i) {
@@ -1461,22 +1455,21 @@ fn main() {
                         } else if being_hit_by_water {
                             totoro.state = TotoroState::StartDying;
                             totoro.velocity = glm::zero();
-                        } else if ai_time >= totoro.state_transition_after {
+                        } else if ai_time >= totoro.relax_duration {
                             totoro.state_timer = scene_data.elapsed_time;
                             totoro.state = TotoroState::Meandering;
                             if glm::distance(&totoro.home, &totoro.position) > EPSILON {
                                 totoro.desired_forward = glm::normalize(&(totoro.home - totoro.position));
                                 totoro.desired_forward.z = 0.0;
-                                totoro.state_transition_after = 3.0;
                             }
                         }
                     }
                     TotoroState::Meandering => {
-                        if ai_time >= totoro.state_transition_after {
+                        if ai_time >= 3.0 {
                             totoro.state_timer = scene_data.elapsed_time;
                             totoro.velocity = glm::vec3(0.0, 0.0, totoro.velocity.z);
                             totoro.state = TotoroState::Relaxed;
-                            totoro.state_transition_after = rand::random::<f32>() * 2.0 + 1.0;
+                            totoro.relax_duration = rand::random::<f32>() * 2.0 + 1.0;
                         } else {
                             //Check if the player is nearby
                             if player_is_near {
@@ -1485,14 +1478,14 @@ fn main() {
                                 totoro.state = TotoroState::StartDying;
                                 totoro.velocity = glm::zero();
                             } else {
-                                let turn_speed = totoro_speed * 2.0;
+                                let turn_speed = totoro_base_speed * 2.0;
                                 totoro.forward = glm::normalize(&lerp(&totoro.forward, &totoro.desired_forward, turn_speed * delta_time));
                                 
                                 if ai_time >= 1.0 {
                                     totoro.desired_forward = glm::mat4_to_mat3(&glm::rotation(0.25 * glm::quarter_pi::<f32>() * rand_binomial(), &Z_UP)) * totoro.desired_forward;
                                 }
 
-                                let v = totoro.forward * totoro_speed;
+                                let v = totoro.forward * totoro_base_speed;
                                 totoro.velocity = glm::vec3(v.x, v.y, totoro.velocity.z);
                             }
                         }
@@ -1509,7 +1502,7 @@ fn main() {
 
                         if totoro_yell_paths.len() > 0 {
                             let path = totoro_yell_paths[rand::random::<usize>() % totoro_yell_paths.len()].clone();
-                            let yell_req = RequestedSoundEffect {
+                            let yell_req = SoundEffectRequest {
                                 id: None,
                                 path,
                                 position: vec_to_array(totoro.position),
@@ -1541,15 +1534,20 @@ fn main() {
                             new_forward = glm::normalize(&new_forward);
                             totoro.desired_forward = glm::vec4_to_vec3(&(glm::rotation(rand_binomial(), &Z_UP) * glm::vec3_to_vec4(&new_forward)));
                             
-                            let turn_speed = totoro_speed * 2.0;
+                            let turn_speed = totoro_base_speed * 2.0;
                             totoro.forward = lerp(&totoro.forward, &totoro.desired_forward, turn_speed * delta_time);
                             totoro.forward = glm::normalize(&totoro.forward);
-                            let v = totoro.forward * totoro_speed;
+                            let v = totoro.forward * totoro_base_speed;
                             totoro.velocity = glm::vec3(v.x, v.y, totoro.velocity.z);
+
+                            if ai_time >= 4.0 {
+                                totoro.state = TotoroState::Meandering;
+                                totoro.state_timer = scene_data.elapsed_time;
+                            }
                         }
                     }
                     TotoroState::StartDying => {
-                        let drown_req = RequestedSoundEffect {
+                        let drown_req = SoundEffectRequest {
                             id: Some(next_named_sfx),
                             path: String::from(totoro_drowning_path),
                             position: vec_to_array(totoro.position),
@@ -1992,9 +1990,7 @@ fn main() {
         }
 
         //Network updating section
-        if let Some(socket) = &udp_socket {
-            socket.send(&u32::to_le_bytes(frame_count)).unwrap();
-        }
+        
 
         camera.last_position = camera.position;
         mouse.was_clicked = mouse.clicked;
@@ -2174,7 +2170,7 @@ fn main() {
 
                     if let Some(network_token) = imgui_ui.begin_menu("Network") {
                         if MenuItem::new("Connect to server").build(&imgui_ui) { server_connection_dialogue = true; }
-                        if MenuItem::new("Disconnect").build(&imgui_ui) { udp_socket = None; }
+                        if MenuItem::new("Disconnect").build(&imgui_ui) {  }
 
                         network_token.end();
                     }
@@ -2183,8 +2179,8 @@ fn main() {
                         if MenuItem::new("Toggle fullscreen").build(&imgui_ui) {
                             unsafe {
                                 //Toggle window fullscreen
+                                window.set_decorated(is_fullscreen);
                                 if !is_fullscreen {
-                                    window.set_decorated(false);
                                     glfw.with_primary_monitor_mut(|_, opt_monitor| {
                                         if let Some(monitor) = opt_monitor {
                                             let pos = monitor.get_pos();
@@ -2204,7 +2200,6 @@ fn main() {
                                     });
                                 } else {
                                     window_size = get_window_size(&config);
-                                    window.set_decorated(true);
                                     resize_main_window(&mut window, &mut core_rt, &mut ping_rt, &mut pong_rt, window_size, (200, 200), WindowMode::Windowed);
                                 }
                             }
@@ -2331,31 +2326,26 @@ fn main() {
             //Window where you enter server connection info
             if server_connection_dialogue {
                 if let Some(win_token) = imgui::Window::new("Connect to server").begin(&imgui_ui) {
-                    imgui_ui.text(format!("Connection status: {:?}", udp_socket));                    
+                    imgui_ui.text(format!("Connection status: Nothing lol"));                    
                     imgui_ui.separator();
 
                     imgui_ui.set_next_item_width(300.0);
-                    imgui::InputText::new(&imgui_ui, "Destination (<ip address>:<port>)", &mut destination_string).build();
+                    imgui::InputText::new(&imgui_ui, "Server address (<ipv4 address>:<port>)", &mut destination_string).build();
 
                     if do_button(&imgui_ui, "Connect") {
-                        udp_socket = match UdpSocket::bind("0.0.0.0:6900") {
-                            Ok(socket) => {
-                                if let Err(e) = socket.connect(&destination_string) {
-                                    println!("Unable to connect: {}", e);
-                                    None
-                                } else {
-                                    Some(socket)
-                                }
+                        match SocketAddrV4::from_str(&destination_string) {
+                            Ok(saddr) => {
+                                let address = enet::Address::from(saddr);
+                                send_or_error(&network_sender, NetworkCommand::AttemptConnection(address));
                             }
                             Err(e) => {
-                                println!("Couldn't bind: {}", e);
-                                None
+                                println!("Connect error: {}", e);
                             }
-                        };
+                        }
                     }
                     imgui_ui.same_line();
 
-                    if do_button(&imgui_ui, "Disconnect") { udp_socket = None; }
+                    if do_button(&imgui_ui, "Disconnect") {  }
 
                     imgui_ui.separator();
 
@@ -2448,7 +2438,7 @@ fn main() {
                     do_readwrite_vec3(&imgui_ui, "Position", &mut tot.position);
                     imgui_ui.text(format!("Velocity ({:.3}, {:.3}, {:.3})", tot.velocity.x, tot.velocity.y, tot.velocity.z));
                     imgui_ui.text(format!("AI state: {:?}", tot.state));
-                    imgui_ui.text(format!("AI timer state: {:.5}/{:.5}", scene_data.elapsed_time - tot.state_timer, tot.state_transition_after));
+                    imgui_ui.text(format!("AI timer state: {:.5}/{:.5}", scene_data.elapsed_time - tot.state_timer, tot.relax_duration));
                             
                     imgui_ui.separator();
                     imgui::Slider::new("Scale", 0.1, 4.0).build(&imgui_ui, &mut tot.scale);
@@ -2676,13 +2666,24 @@ fn main() {
                             //Right here is where we want to update the controller objects' transforms
                             {
                                 if let Some(pose) = &left_grip_pose {
-                                    if let Some(entity) = scene_data.opaque_entities.get_mut_element(left_gadget_index) {
-                                        entity.update_single_transform(0, &xrutil::pose_to_mat4(pose, &world_from_tracking), 16);
+                                    match gadget_model_map.get_mut(&left_hand_gadget) {
+                                        Some(entity_idx) => {
+                                            if let Some(entity) = scene_data.opaque_entities.get_mut_element(*entity_idx) {
+                                                entity.update_single_transform(0, &xrutil::pose_to_mat4(pose, &world_from_tracking));
+                                            }
+                                        }
+                                        None => { println!("No model for gadget {:?}", left_hand_gadget); }
                                     }
                                 }
+
                                 if let Some(pose) = &right_grip_pose {
-                                    if let Some(entity) = scene_data.opaque_entities.get_mut_element(right_gadget_index) {
-                                        entity.update_single_transform(1, &xrutil::pose_to_mat4(pose, &world_from_tracking), 16);
+                                    match gadget_model_map.get_mut(&right_hand_gadget) {
+                                        Some(entity_idx) => {
+                                            if let Some(entity) = scene_data.opaque_entities.get_mut_element(*entity_idx) {
+                                                entity.update_single_transform(1, &xrutil::pose_to_mat4(pose, &world_from_tracking));
+                                            }
+                                        }
+                                        None => { println!("No model for gadget {:?}", right_hand_gadget); }
                                     }
                                 }
                             }
@@ -2695,7 +2696,7 @@ fn main() {
                                     if let Some(p) = poses[i] {
                                         if let Some(entity) = scene_data.opaque_entities.get_mut_element(water_cylinder_entity_index) {
                                             let mm = xrutil::pose_to_mat4(&p, &world_from_tracking) * glm::scaling(scales[i]);
-                                            entity.update_single_transform(i, &mm, 16);
+                                            entity.update_single_transform(i, &mm);
                                         }
                                     }
                                 }
@@ -2901,10 +2902,11 @@ fn main() {
                                     gl::BindVertexArray(imgui_vao.vao);
                                     gl::ActiveTexture(gl::TEXTURE0);
                                     gl::BindTexture(gl::TEXTURE_2D, cmd_params.texture_id.id() as GLuint);
-                                    gl::Scissor(cmd_params.clip_rect[0] as GLint,
-                                                window_size.y as GLint - cmd_params.clip_rect[3] as GLint,
-                                                (cmd_params.clip_rect[2] - cmd_params.clip_rect[0]) as GLint,
-                                                (cmd_params.clip_rect[3] - cmd_params.clip_rect[1]) as GLint
+                                    gl::Scissor(
+                                        cmd_params.clip_rect[0] as GLint,
+                                        window_size.y as GLint - cmd_params.clip_rect[3] as GLint,
+                                        (cmd_params.clip_rect[2] - cmd_params.clip_rect[0]) as GLint,
+                                        (cmd_params.clip_rect[3] - cmd_params.clip_rect[1]) as GLint
                                     );
                                     gl::DrawElementsBaseVertex(gl::TRIANGLES, count as GLint, gl::UNSIGNED_SHORT, (cmd_params.idx_offset * size_of::<GLushort>()) as _, cmd_params.vtx_offset as GLint);
                                 }

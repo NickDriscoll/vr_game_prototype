@@ -26,10 +26,8 @@ pub const DEBUG_HIGHLIGHTED_ATTRIBUTE: GLuint = 2;
 pub const DEBUG_COLOR_ATTRIBUTE: GLuint = 3;
 pub const DEBUG_TRANSFORM_ATTRIBUTE: GLuint = 4;
 
-const CUBE_INDICES_COUNT: GLsizei = 36;
-
 //Represents all of the data necessary to render an object (potentially instanced) that exists in the 3D scene
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct RenderEntity {
     pub vao: VertexArrayNames,
     pub instanced_buffers: [GLuint; Self::INSTANCED_BUFFERS_COUNT],         //GL names of instanced buffers
@@ -160,7 +158,8 @@ impl RenderEntity {
         gl::VertexAttribDivisor(attribute, 1);
     }
 
-    pub unsafe fn update_single_transform(&mut self, idx: usize, matrix: &glm::TMat4<f32>, attribute_size: usize) {
+    pub unsafe fn update_single_transform(&mut self, idx: usize, matrix: &glm::TMat4<f32>) {
+        let attribute_size = 16;
         gl::BindBuffer(gl::ARRAY_BUFFER, self.instanced_buffers[Self::TRANSFORM_BUFFER_INDEX]);
         gl::BufferSubData(
             gl::ARRAY_BUFFER,
@@ -434,6 +433,8 @@ impl ViewData {
 
 //This is the function that renders the 3D scene
 pub unsafe fn main_scene(framebuffer: &Framebuffer, scene_data: &SceneData, view_data: &ViewData) {
+    const CUBE_INDICES_COUNT: GLsizei = 36;
+
     //Main scene rendering
     gl::DepthMask(gl::TRUE);    //Enable depth writing
     framebuffer.bind();

@@ -15,7 +15,7 @@ pub const DEFAULT_BGM_PATH: &str = "music/cryptic_relics.mp3";
 
 const IDEAL_FRAMES_QUEUED: ALint = 5;   //Ideal number of queued audio frames for streaming sources
 
-pub struct RequestedSoundEffect {
+pub struct SoundEffectRequest {
     pub id: Option<usize>,
     pub path: String,
     pub position: [f32; 3],
@@ -36,7 +36,7 @@ pub enum AudioCommand {
     SetListenerGain(f32),
     SetPitchShift(f32),
     LoadSFX(String),
-    PlaySFX(RequestedSoundEffect),
+    PlaySFX(SoundEffectRequest),
     StopSFX(usize),
     SelectNewBGM,
     RestartBGM,

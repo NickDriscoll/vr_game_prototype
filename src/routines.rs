@@ -210,10 +210,9 @@ pub fn compute_click_ray(camera: &Camera, window_size: glm::TVec2<f32>, screen_s
     let view_space_mouse = glm::matrix_comp_mult(&normalized_coords, &max_coords);
     let world_space_mouse = camera.world_from_view * view_space_mouse;
 
-    let ray_origin = glm::vec3(camera_position.x, camera_position.y, camera_position.z);
     Ray {
-        origin: ray_origin,
-        direction: glm::normalize(&(glm::vec4_to_vec3(&world_space_mouse) - ray_origin))
+        origin: *camera_position,
+        direction: glm::normalize(&(glm::vec4_to_vec3(&world_space_mouse) - *camera_position))
     }
 }
 
