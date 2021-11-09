@@ -15,8 +15,6 @@ mod routines;
 mod traits;
 mod xrutil;
 
-use render::{CascadedShadowMap, FragmentFlag, RenderEntity, SceneData, ViewData};
-
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
 use gl::types::*;
 use imgui::{ColorEdit, DrawCmd, EditableColor, FontAtlasRefMut, MenuItem, Slider, TextureId};
@@ -46,6 +44,7 @@ use crate::gamestate::*;
 use crate::structs::*;
 use crate::routines::*;
 use crate::render::{PointLight, MAX_POINT_LIGHTS, NEAR_DISTANCE, FAR_DISTANCE, STANDARD_TRANSFORM_ATTRIBUTE, STANDARD_HIGHLIGHTED_ATTRIBUTE, DEBUG_TRANSFORM_ATTRIBUTE, DEBUG_COLOR_ATTRIBUTE, DEBUG_HIGHLIGHTED_ATTRIBUTE};
+use crate::render::{CascadedShadowMap, FragmentFlag, PostEffectFlag, RenderEntity, SceneData, ViewData};
 use crate::traits::SphereCollider;
 use crate::network::NetworkCommand;
 
@@ -574,7 +573,7 @@ fn main() {
     let shadow_program = compile_shader_or_crash(&[(gl::VERTEX_SHADER, "shaders/shadow.vert"), (gl::FRAGMENT_SHADER, "shaders/shadow.frag")]);
     let skybox_program = compile_shader_or_crash(&[(gl::VERTEX_SHADER, "shaders/skybox.vert"), (gl::FRAGMENT_SHADER, "shaders/skybox.frag")]);
     let imgui_program = compile_shader_or_crash(&[(gl::VERTEX_SHADER, "shaders/ui/imgui.vert"), (gl::FRAGMENT_SHADER, "shaders/ui/imgui.frag")]);
-    let postfx_program = compile_shader_or_crash(&[(gl::COMPUTE_SHADER, "shaders/gaussian_blur.comp")]);
+    let postfx_program = compile_shader_or_crash(&[(gl::COMPUTE_SHADER, "shaders/postfx.comp")]);
     
     //Initialize default framebuffer
     let mut default_framebuffer = Framebuffer {
@@ -660,6 +659,7 @@ fn main() {
     //User interface state
     let mut do_imgui = true;
     let mut debug_vis_menu = false;
+    let mut postfx_menu = false;
     let mut env_menu = false;
     let mut entity_panel = false;
     let mut server_connection_dialogue = false;
@@ -2164,6 +2164,7 @@ fn main() {
                     if let Some(graphics_token) = imgui_ui.begin_menu("Graphics") {
                         if MenuItem::new("Environment").build(&imgui_ui) { env_menu = true; }
                         if MenuItem::new("Debug").build(&imgui_ui) { debug_vis_menu = true; }
+                        if MenuItem::new("PostFX").build(&imgui_ui) { postfx_menu = true; }
 
                         graphics_token.end();
                     }
@@ -2382,10 +2383,25 @@ fn main() {
                     if let Some(_) = &xr_instance {
                         imgui_ui.checkbox("View player", &mut viewing_player_spheres);
                     }
-                    
-                    imgui_ui.checkbox("Use postfx", &mut using_postfx);
 
                     if do_button(&imgui_ui, "Close") { debug_vis_menu = false; }
+
+                    win_token.end();
+                }
+            }
+
+            if postfx_menu {
+                if let Some(win_token) = imgui::Window::new("PostFX").begin(&imgui_ui) {
+                    
+                    imgui_ui.checkbox("Use postfx", &mut using_postfx);
+                    imgui_ui.separator();
+
+                    do_radio_button(&imgui_ui, "Gaussian Blur", &mut scene_data.postfx_flag, PostEffectFlag::GaussianBlur);
+                    do_radio_button(&imgui_ui, "Black & White", &mut scene_data.postfx_flag, PostEffectFlag::BlackWhite);
+                    do_radio_button(&imgui_ui, "Glitchy", &mut scene_data.postfx_flag, PostEffectFlag::Glitchy);
+                    imgui_ui.separator();
+
+                    if do_button(&imgui_ui, "Close") { postfx_menu = false; }
 
                     win_token.end();
                 }
@@ -2550,11 +2566,9 @@ fn main() {
                 let mm = glm::translation(&sphere.position) * uniform_scale(-sphere.radius);
                 write_matrix_to_buffer(&mut transform_buffer, idx, mm);
                 write_vec4_to_buffer(&mut color_buffer, idx, sphere.color);
-                highlighted_buffer[idx] = if sphere.highlighted {
-                    1.0
-                } else {
-                    0.0
-                };
+
+                highlighted_buffer[idx] = if sphere.highlighted { 1.0 }
+                                            else { 0.0 };
                 
                 idx += 1;
             }
@@ -2770,7 +2784,7 @@ fn main() {
 
                                     //Post-processing step
                                     if using_postfx {
-                                        render::post_processing(ping_rt.color_attachment_view, window_size, postfx_program, scene_data.elapsed_time);
+                                        render::post_processing(ping_rt.color_attachment_view, window_size, postfx_program, &scene_data);
                                     }
 
                                     //Blit to default framebuffer
@@ -2846,7 +2860,7 @@ fn main() {
 
                 //Post-processing step
                 if using_postfx {
-                    render::post_processing(ping_rt.color_attachment_view, window_size, postfx_program, scene_data.elapsed_time);
+                    render::post_processing(ping_rt.color_attachment_view, window_size, postfx_program, &scene_data);
                 }
                 
                 //Blit to default framebuffer

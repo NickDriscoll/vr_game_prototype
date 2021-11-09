@@ -1,0 +1,71 @@
+#version 430 core
+
+layout(local_size_x = 32, local_size_y = 32) in;
+
+//const float GAUSSIAN_WEIGHTS[TAP / 2 + 1] = float[](0.23273657289002558, 0.21483375959079284, 0.16879795396419436);
+//const int TAP = 5; //Must be odd
+const int TAP = 9; //Must be odd
+const int BOUND = TAP / 2;
+const float GAUSSIAN_WEIGHTS[TAP / 2 + 1] = float[](0.17218543046357615, 0.15894039735099338, 0.12488174077578051, 0.08325449385052035, 0.04683065279091769);
+
+restrict layout(rgba8, binding = 0) uniform image2D ping_im;
+layout (binding = 0) uniform sampler2D ping_tex;
+layout (binding = 1) uniform sampler2D noise_tex;
+uniform float elapsed_time;
+
+uniform int effect_type = 2;
+const int GAUSSIAN_BLUR_EFFECT = 0;
+const int BLACK_WHITE_EFFECT = 1;
+const int GLITCHY_EFFECT = 2;
+
+void main() {
+    ivec2 image_coord = ivec2(gl_GlobalInvocationID.xy);
+    image_coord = (image_coord + ivec2(elapsed_time * 100.0, elapsed_time * 400.0)) % ivec2(gl_NumWorkGroups.xy * gl_WorkGroupSize.xy);
+    vec3 pixel = imageLoad(ping_im, image_coord).rgb;
+
+    switch (effect_type) {
+        case GAUSSIAN_BLUR_EFFECT:
+        for (int i = 0; i < 2; i++) {
+            //Horizontal blur pass
+            {
+                vec3 res = vec3(0.0);
+                for (int i = -BOUND; i <= BOUND; i++) {
+                    ivec2 unit_offset = ivec2(1, 0);
+                    vec3 sam = imageLoad(ping_im, image_coord + i * unit_offset).rgb;
+                    res += sam * GAUSSIAN_WEIGHTS[abs(i)];
+                }
+                imageStore(ping_im, image_coord, vec4(res, 1.0));
+            }
+
+            barrier();
+
+            //Vertical blur pass
+            {
+                vec3 res = vec3(0.0);
+                for (int i = -BOUND; i <= BOUND; i++) {
+                    ivec2 unit_offset = ivec2(0, 1);
+                    vec3 sam = imageLoad(ping_im, image_coord + i * unit_offset).rgb;
+                    res += sam * GAUSSIAN_WEIGHTS[abs(i)];
+                }
+                imageStore(ping_im, image_coord, vec4(res, 1.0));
+            }
+        }
+        break;
+
+        case BLACK_WHITE_EFFECT:
+        float avg = (pixel.r + pixel.g + pixel.b) / 3.0;
+        vec3 res = vec3(avg);
+        imageStore(ping_im, image_coord, vec4(res, 1.0));
+
+        break;
+
+        case GLITCHY_EFFECT:
+        vec2 local_pos = vec2(gl_LocalInvocationID.xy);
+        vec2 local_size = vec2(gl_WorkGroupSize.xy);
+        vec3 tint = vec3((local_pos / local_size + sin(elapsed_time) * 0.5 + 0.5), 1.1);
+        imageStore(ping_im, image_coord, vec4(pixel * tint, 1.0));
+        break;
+    }
+}
+
+

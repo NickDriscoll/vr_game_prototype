@@ -324,6 +324,7 @@ impl SphereCollider for SpotLight {
 
 pub struct SceneData {
     pub fragment_flag: FragmentFlag,
+    pub postfx_flag: PostEffectFlag,
     pub complex_normals: bool,
     pub toon_shading: bool,
     pub using_postfx: bool,
@@ -369,6 +370,7 @@ impl Default for SceneData {
 
         SceneData {
             fragment_flag: FragmentFlag::Default,
+            postfx_flag: PostEffectFlag::GaussianBlur,
             complex_normals: true,
             toon_shading: true,
             using_postfx: false,
@@ -410,6 +412,19 @@ const FRAGMENT_FLAG_NAMES: [&str; 5] = ["visualize_albedo", "visualize_normals",
 impl Default for FragmentFlag {
     fn default() -> Self {
         FragmentFlag::Default
+    }
+}
+
+#[derive(Eq, PartialEq)]
+pub enum PostEffectFlag {
+    GaussianBlur,
+    BlackWhite,
+    Glitchy
+}
+
+impl Default for PostEffectFlag {
+    fn default() -> Self {
+        PostEffectFlag::GaussianBlur
     }
 }
 
@@ -633,13 +648,20 @@ pub fn compute_shadow_cascade_matrices(
     out_mats
 }
 
-pub unsafe fn post_processing(fbo_texture_view: GLuint, window_size: glm::TVec2<u32>, postfx_program: GLuint, elapsed_time: f32) {
+pub unsafe fn post_processing(fbo_texture_view: GLuint, window_size: glm::TVec2<u32>, postfx_program: GLuint, scene_data: &SceneData) {
     gl::BindTexture(gl::TEXTURE_2D, fbo_texture_view);
     gl::GenerateMipmap(gl::TEXTURE_2D);
 
     //Binding the compute shader program
     gl::UseProgram(postfx_program);
-    glutil::bind_float(postfx_program, "elapsed_time", elapsed_time);
+    glutil::bind_float(postfx_program, "elapsed_time", scene_data.elapsed_time);
+
+    let post_flag = match scene_data.postfx_flag {
+        PostEffectFlag::GaussianBlur => { 0 }
+        PostEffectFlag::BlackWhite => { 1 }
+        PostEffectFlag::Glitchy => { 2 }
+    };
+    glutil::bind_int(postfx_program, "effect_type", post_flag);
 
     //ping_rt.color_attachment_view is a texture view into ping_rt.texture but it's internal format is set to gl::RGBA8 so the compute shader can use it
     gl::BindImageTexture(0, fbo_texture_view, 0, gl::FALSE, 0, gl::READ_WRITE, gl::RGBA8);
