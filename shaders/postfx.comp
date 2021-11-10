@@ -13,10 +13,11 @@ layout (binding = 0) uniform sampler2D ping_tex;
 layout (binding = 1) uniform sampler2D noise_tex;
 uniform float elapsed_time;
 
-uniform int effect_type = 2;
-const int GAUSSIAN_BLUR_EFFECT = 0;
-const int BLACK_WHITE_EFFECT = 1;
-const int GLITCHY_EFFECT = 2;
+uniform int effect_type;
+const int PASSTHROUGH_EFFECT = 0;
+const int GAUSSIAN_BLUR_EFFECT = 1;
+const int BLACK_WHITE_EFFECT = 2;
+const int GLITCHY_EFFECT = 3;
 
 void main() {
     ivec2 image_coord = ivec2(gl_GlobalInvocationID.xy);
@@ -24,6 +25,9 @@ void main() {
     vec3 pixel = imageLoad(ping_im, image_coord).rgb;
 
     switch (effect_type) {
+        case PASSTHROUGH_EFFECT:
+        break;
+
         case GAUSSIAN_BLUR_EFFECT:
         for (int i = 0; i < 2; i++) {
             //Horizontal blur pass

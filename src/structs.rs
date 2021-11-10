@@ -184,8 +184,7 @@ impl Configuration {
                 }
     
                 //Write string options
-                for label in &
-                Self::STRS {
+                for label in &Self::STRS {
                     let string = format!("{} = {}\n", label, self.string_options.get(*label).unwrap());
                     if let Err(e) = file.write(string.as_bytes()) {
                         println!("Error writing configuration file: {}", e);
@@ -198,14 +197,14 @@ impl Configuration {
             }
         }
     }
-}
 
-pub fn get_window_size(config: &Configuration) -> glm::TVec2<u32> {
-    match (config.int_options.get(Configuration::WINDOWED_WIDTH), config.int_options.get(Configuration::WINDOWED_HEIGHT)) {
-        (Some(width), Some(height)) => { glm::vec2(*width, *height) }
-        _ => { 
-            println!("Window width or height not found in config file");
-            glm::vec2(1280, 720)
+    pub fn get_window_size(&self) -> glm::TVec2<u32> {
+        match (self.int_options.get(Configuration::WINDOWED_WIDTH), self.int_options.get(Configuration::WINDOWED_HEIGHT)) {
+            (Some(width), Some(height)) => { glm::vec2(*width, *height) }
+            _ => { 
+                println!("Window width or height not found in config file");
+                glm::vec2(1280, 720)
+            }
         }
     }
 }

@@ -370,7 +370,7 @@ impl Default for SceneData {
 
         SceneData {
             fragment_flag: FragmentFlag::Default,
-            postfx_flag: PostEffectFlag::GaussianBlur,
+            postfx_flag: PostEffectFlag::PassThrough,
             complex_normals: true,
             toon_shading: true,
             using_postfx: false,
@@ -417,6 +417,7 @@ impl Default for FragmentFlag {
 
 #[derive(Eq, PartialEq)]
 pub enum PostEffectFlag {
+    PassThrough,
     GaussianBlur,
     BlackWhite,
     Glitchy
@@ -424,7 +425,7 @@ pub enum PostEffectFlag {
 
 impl Default for PostEffectFlag {
     fn default() -> Self {
-        PostEffectFlag::GaussianBlur
+        PostEffectFlag::PassThrough
     }
 }
 
@@ -657,9 +658,10 @@ pub unsafe fn post_processing(fbo_texture_view: GLuint, window_size: glm::TVec2<
     glutil::bind_float(postfx_program, "elapsed_time", scene_data.elapsed_time);
 
     let post_flag = match scene_data.postfx_flag {
-        PostEffectFlag::GaussianBlur => { 0 }
-        PostEffectFlag::BlackWhite => { 1 }
-        PostEffectFlag::Glitchy => { 2 }
+        PostEffectFlag::PassThrough => { 0 }
+        PostEffectFlag::GaussianBlur => { 1 }
+        PostEffectFlag::BlackWhite => { 2 }
+        PostEffectFlag::Glitchy => { 3 }
     };
     glutil::bind_int(postfx_program, "effect_type", post_flag);
 

@@ -365,7 +365,7 @@ fn main() {
         None => { glfw.window_hint(glfw::WindowHint::ContextVersion(4, 3)); }
     }
 
-    let mut window_size = get_window_size(&config);
+    let mut window_size = config.get_window_size();
     //Create the window
 	glfw.window_hint(WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
     let (mut window, events) = match glfw.create_window(window_size.x, window_size.y, "THCATO", glfw::WindowMode::Windowed) {
@@ -2200,7 +2200,7 @@ fn main() {
                                         }
                                     });
                                 } else {
-                                    window_size = get_window_size(&config);
+                                    window_size = config.get_window_size();
                                     resize_main_window(&mut window, &mut core_rt, &mut ping_rt, &mut pong_rt, window_size, (200, 200), WindowMode::Windowed);
                                 }
                             }
@@ -2457,6 +2457,7 @@ fn main() {
                     imgui_ui.text(format!("AI timer state: {:.5}/{:.5}", scene_data.elapsed_time - tot.state_timer, tot.relax_duration));
                             
                     imgui_ui.separator();
+                    imgui::Slider::new("Health", 0.0, 100.0).build(&imgui_ui, &mut tot.health);
                     imgui::Slider::new("Scale", 0.1, 4.0).build(&imgui_ui, &mut tot.scale);
 
                     if do_button(&imgui_ui, "Toggle AI") {
