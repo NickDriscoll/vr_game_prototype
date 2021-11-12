@@ -333,9 +333,11 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
             {
                 let tri_count = io_or_error(io::read_u32(&mut file), path);
                 let bytes = io_or_error(io::read_u8_data(&mut file, tri_count as usize), path);
-                world_state.collision.grabbable_flags = vec![false; tri_count as usize];
+                world_state.collision.grabbable_flags = vec![false; world_state.collision.terrain.face_normals.len()];
                 let flags = &mut world_state.collision.grabbable_flags;
-                for i in 0..flags.len() {
+
+                let elems = usize::min(bytes.len(), world_state.collision.terrain.face_normals.len());
+                for i in 0..elems {
                     flags[i] = bytes[i] > 0;
                 }
             }    

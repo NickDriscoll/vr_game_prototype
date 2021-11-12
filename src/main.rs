@@ -105,7 +105,7 @@ fn main() {
                 int_options.insert(String::from(Configuration::WINDOWED_WIDTH), 1280);
                 int_options.insert(String::from(Configuration::WINDOWED_HEIGHT), 720);
                 float_options.insert(String::from(Configuration::BGM_VOLUME), 10.0);
-                string_options.insert(String::from(Configuration::LEVEL_NAME), String::from("toon_level"));
+                string_options.insert(String::from(Configuration::LEVEL_NAME), String::from("teaching"));
                 string_options.insert(String::from(Configuration::MUSIC_NAME), String::from(audio::DEFAULT_BGM_PATH));
                 let c = Configuration {
                     int_options,
@@ -642,7 +642,7 @@ fn main() {
             let custom_font = FontSource::DefaultFontData {
                 config: Some(font_config)
             };
-            atlas.add_font(&[custom_font]);
+            //atlas.add_font(&[custom_font]);
 
             //Upload font atlas to GPU
             let mut tex = 0;
