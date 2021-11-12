@@ -333,6 +333,7 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
             {
                 let tri_count = io_or_error(io::read_u32(&mut file), path);
                 let bytes = io_or_error(io::read_u8_data(&mut file, tri_count as usize), path);
+                world_state.collision.grabbable_flags = vec![false; tri_count as usize];
                 let flags = &mut world_state.collision.grabbable_flags;
                 for i in 0..flags.len() {
                     flags[i] = bytes[i] > 0;
@@ -371,6 +372,50 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
             scene_data.skybox_cubemap = unsafe { 
                 gl::DeleteTextures(1, &mut scene_data.skybox_cubemap);
                 create_skybox_cubemap(&world_state.skybox_strings[world_state.active_skybox_index])
+            };
+
+            //Recreate collision triangle RenderEntity
+            scene_data.transparent_entities.delete(world_state.collision_re_index);
+            world_state.collision_re_index = unsafe {
+                let collision = &world_state.collision;
+                let inds = &collision.terrain.indices;
+                let mut verts = vec![0.0; collision.terrain.vertices.len() * 6];
+                for i in 0..collision.terrain.vertices.len() {
+                    let v = &collision.terrain.vertices[i];
+                    verts[6 * i] = v.x;
+                    verts[6 * i + 1] = v.y;
+                    verts[6 * i + 2] = v.z;
+                    verts[6 * i + 3] = 0.0;
+                    verts[6 * i + 4] = 0.0;
+                    verts[6 * i + 5] = 0.0;
+                }
+    
+                let vao = glutil::create_vertex_array_object(&verts, inds, &[3, 3]);
+                let mut re = RenderEntity::from_vao(vao, scene_data.debug_program, inds.len(), 1, DEBUG_TRANSFORM_ATTRIBUTE, false);
+                re.ignore_depth = true;
+                re.init_new_instanced_buffer(4, DEBUG_COLOR_ATTRIBUTE, RenderEntity::COLOR_BUFFER_INDEX);
+    
+                let color = [1.0, 0.0, 1.0, 0.2];
+                re.update_color_buffer(&color, DEBUG_COLOR_ATTRIBUTE);
+    
+                //Create lookup texture for selected triangles
+                {
+                    gl::GenTextures(1, &mut re.lookup_texture);
+                    gl::BindTexture(gl::TEXTURE_1D, re.lookup_texture);
+    
+                    let simple_tex_params = [
+                        (gl::TEXTURE_WRAP_S, gl::REPEAT),
+                        (gl::TEXTURE_WRAP_T, gl::REPEAT),
+                        (gl::TEXTURE_MIN_FILTER, gl::NEAREST),
+                        (gl::TEXTURE_MAG_FILTER, gl::NEAREST)
+                    ];
+                    glutil::apply_texture_parameters(gl::TEXTURE_1D, &simple_tex_params);
+                    
+                    let pixels = LUT_pixels_from_flags(&collision.grabbable_flags);
+                    gl::TexImage1D(gl::TEXTURE_1D, 0, gl::R8UI as GLint, pixels.len() as GLsizei, 0, gl::RED_INTEGER, gl::UNSIGNED_BYTE, &pixels[0] as *const u8 as *const c_void);
+                }
+    
+                scene_data.transparent_entities.insert(re)
             };
         }
         Err(e) => {

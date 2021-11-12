@@ -17,7 +17,7 @@ mod xrutil;
 
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
 use gl::types::*;
-use imgui::{ColorEdit, DrawCmd, EditableColor, FontAtlasRefMut, MenuItem, Slider, TextureId};
+use imgui::{ColorEdit, DrawCmd, EditableColor, Font, FontAtlasRefMut, FontConfig, FontSource, MenuItem, Slider, TextureId};
 use noise::NoiseFn;
 use std::collections::HashMap;
 use std::fs::{File, read_dir};
@@ -603,6 +603,7 @@ fn main() {
     //Creating Dear ImGui context
     let mut imgui_context = imgui::Context::create();
     imgui_context.style_mut().use_dark_colors();
+    //Imgui IO glue
     {
         let io = imgui_context.io_mut();
         io.display_size[0] = window_size.x as f32;
@@ -635,6 +636,15 @@ fn main() {
     //Create and upload Dear IMGUI font atlas
     match imgui_context.fonts() {
         FontAtlasRefMut::Owned(atlas) => unsafe {
+            //Set up font atlas
+            let mut font_config = FontConfig::default();
+            font_config.size_pixels = 15.0;
+            let custom_font = FontSource::DefaultFontData {
+                config: Some(font_config)
+            };
+            atlas.add_font(&[custom_font]);
+
+            //Upload font atlas to GPU
             let mut tex = 0;
             let font_atlas = atlas.build_alpha8_texture();
             
@@ -650,6 +660,7 @@ fn main() {
             glutil::apply_texture_parameters(gl::TEXTURE_2D, &font_atlas_params);
             gl::TexImage2D(gl::TEXTURE_2D, 0, gl::RED as GLsizei, font_atlas.width as GLsizei, font_atlas.height as GLsizei, 0, gl::RED, gl::UNSIGNED_BYTE, font_atlas.data.as_ptr() as _);
             atlas.tex_id = TextureId::new(tex as usize);  //Giving Dear Imgui a reference to the font atlas GPU texture
+            atlas.clear_tex_data();
         }
         FontAtlasRefMut::Shared(_) => {
             panic!("Not dealing with this case.");
@@ -708,6 +719,8 @@ fn main() {
     //Initialize scene data struct
     let mut scene_data = SceneData::default();
     scene_data.skybox_program = skybox_program;
+    scene_data.depth_program = shadow_program;
+    scene_data.debug_program = debug_program;
 
     //Initialize shadow data
     let cascade_size = 2048;
@@ -792,6 +805,49 @@ fn main() {
         let terrain = Terrain::from_ozt(&format!("models/{}.ozt", level_name));
         println!("Loaded {} collision triangles from {}.ozt", terrain.face_normals.len(), level_name);
         let collision = StaticCollision::new(terrain);
+
+        //Make RenderEntity for visualizing collision tris
+        let collision_re_index = unsafe {
+            let inds = &collision.terrain.indices;
+            let mut verts = vec![0.0; collision.terrain.vertices.len() * 6];
+            for i in 0..collision.terrain.vertices.len() {
+                let v = &collision.terrain.vertices[i];
+                verts[6 * i] = v.x;
+                verts[6 * i + 1] = v.y;
+                verts[6 * i + 2] = v.z;
+                verts[6 * i + 3] = 0.0;
+                verts[6 * i + 4] = 0.0;
+                verts[6 * i + 5] = 0.0;
+            }
+
+            let vao = glutil::create_vertex_array_object(&verts, inds, &[3, 3]);
+            let mut re = RenderEntity::from_vao(vao, debug_program, inds.len(), 1, DEBUG_TRANSFORM_ATTRIBUTE, false);
+            re.ignore_depth = true;
+            re.init_new_instanced_buffer(4, DEBUG_COLOR_ATTRIBUTE, RenderEntity::COLOR_BUFFER_INDEX);
+
+            let color = [1.0, 0.0, 1.0, 0.2];
+            re.update_color_buffer(&color, DEBUG_COLOR_ATTRIBUTE);
+
+            //Create lookup texture for selected triangles
+            {
+                gl::GenTextures(1, &mut re.lookup_texture);
+                gl::BindTexture(gl::TEXTURE_1D, re.lookup_texture);
+
+                let simple_tex_params = [
+                    (gl::TEXTURE_WRAP_S, gl::REPEAT),
+                    (gl::TEXTURE_WRAP_T, gl::REPEAT),
+                    (gl::TEXTURE_MIN_FILTER, gl::NEAREST),
+                    (gl::TEXTURE_MAG_FILTER, gl::NEAREST)
+                ];
+                glutil::apply_texture_parameters(gl::TEXTURE_1D, &simple_tex_params);
+                
+                let pixels = LUT_pixels_from_flags(&collision.grabbable_flags);
+                gl::TexImage1D(gl::TEXTURE_1D, 0, gl::R8UI as GLint, pixels.len() as GLsizei, 0, gl::RED_INTEGER, gl::UNSIGNED_BYTE, &pixels[0] as *const u8 as *const c_void);
+            }
+
+            scene_data.transparent_entities.insert(re)
+        };
+
         let mut word = WorldState {
             player: Player::new(glm::zero(), glm::zero()),
             totoros: OptionVec::with_capacity(64),
@@ -799,6 +855,7 @@ fn main() {
             collision,
             opaque_terrain_indices: Vec::new(),
             transparent_terrain_indices: Vec::new(),
+            collision_re_index,
             skybox_strings: Vec::new(),
             level_name: String::new(),
             active_skybox_index: 0,
@@ -810,48 +867,6 @@ fn main() {
         load_ent(&format!("maps/{}.ent", level_name), &mut scene_data, &mut word);
 
         word
-    };
-
-    //Make RenderEntity for visualizing collision tris
-    let terrain_re_index = unsafe {
-        let inds = &world_state.collision.terrain.indices;
-        let mut verts = vec![0.0; world_state.collision.terrain.vertices.len() * 6];
-        for i in 0..world_state.collision.terrain.vertices.len() {
-            let v = &world_state.collision.terrain.vertices[i];
-            verts[6 * i] = v.x;
-            verts[6 * i + 1] = v.y;
-            verts[6 * i + 2] = v.z;
-            verts[6 * i + 3] = 0.0;
-            verts[6 * i + 4] = 0.0;
-            verts[6 * i + 5] = 0.0;
-        }
-
-        let vao = glutil::create_vertex_array_object(&verts, inds, &[3, 3]);
-        let mut re = RenderEntity::from_vao(vao, debug_program, inds.len(), 1, DEBUG_TRANSFORM_ATTRIBUTE, false);
-        re.ignore_depth = true;
-        re.init_new_instanced_buffer(4, DEBUG_COLOR_ATTRIBUTE, RenderEntity::COLOR_BUFFER_INDEX);
-
-        let color = [1.0, 0.0, 1.0, 0.2];
-        re.update_color_buffer(&color, DEBUG_COLOR_ATTRIBUTE);
-
-        //Create lookup texture for selected triangles
-        {
-            gl::GenTextures(1, &mut re.lookup_texture);
-            gl::BindTexture(gl::TEXTURE_1D, re.lookup_texture);
-
-            let simple_tex_params = [
-                (gl::TEXTURE_WRAP_S, gl::REPEAT),
-                (gl::TEXTURE_WRAP_T, gl::REPEAT),
-                (gl::TEXTURE_MIN_FILTER, gl::NEAREST),
-                (gl::TEXTURE_MAG_FILTER, gl::NEAREST)
-            ];
-            glutil::apply_texture_parameters(gl::TEXTURE_1D, &simple_tex_params);
-            
-            let pixels = LUT_pixels_from_flags(&world_state.collision.grabbable_flags);
-            gl::TexImage1D(gl::TEXTURE_1D, 0, gl::R8UI as GLint, pixels.len() as GLsizei, 0, gl::RED_INTEGER, gl::UNSIGNED_BYTE, &pixels[0] as *const u8 as *const c_void);
-        }
-
-        scene_data.transparent_entities.insert(re)
     };
 
     //Create debug sphere render entity
@@ -876,15 +891,17 @@ fn main() {
 
     //Load gadget models
     let mut gadget_model_map = {
+        let sp_entity = RenderEntity::from_ozy("models/sphere.ozy", standard_program, 2, STANDARD_TRANSFORM_ATTRIBUTE, &mut texture_keeper, &DEFAULT_TEX_PARAMS);
         let wand_entity = RenderEntity::from_ozy("models/wand.ozy", standard_program, 2, STANDARD_TRANSFORM_ATTRIBUTE, &mut texture_keeper, &DEFAULT_TEX_PARAMS);
         let stick_entity = RenderEntity::from_ozy("models/stick.ozy", standard_program, 2, STANDARD_TRANSFORM_ATTRIBUTE, &mut texture_keeper, &DEFAULT_TEX_PARAMS);
+        let sp_index = scene_data.opaque_entities.insert(sp_entity);
         let wand_index = scene_data.opaque_entities.insert(wand_entity);
         let stick_index = scene_data.opaque_entities.insert(stick_entity);
 
-        let mut h = HashMap::with_capacity(2);
-        h.insert(GadgetType::Net, wand_index);
+        let mut h = HashMap::with_capacity(3);
+        h.insert(GadgetType::Net, sp_index);
         h.insert(GadgetType::StickyHand, stick_index);
-        h.insert(GadgetType::WaterCannon, stick_index);
+        h.insert(GadgetType::WaterCannon, wand_index);
         h
     };
 
@@ -1746,7 +1763,7 @@ fn main() {
         }
 
         //Keep the selected triangles texture up to date
-        if let Some(entity) = scene_data.transparent_entities.get_mut_element(terrain_re_index) {
+        if let Some(entity) = scene_data.transparent_entities.get_mut_element(world_state.collision_re_index) {
             let pixels = LUT_pixels_from_flags(&world_state.collision.grabbable_flags);
             unsafe {
                 gl::BindTexture(gl::TEXTURE_1D, entity.lookup_texture);
@@ -1836,7 +1853,7 @@ fn main() {
                     focus: midpoint(&(world_state.player.tracked_segment.p0 + glm::vec3(0.0, 0.0, Player::RADIUS)), &world_state.player.tracked_segment.p1),
                     radius: glm::distance(&(world_state.player.tracked_segment.p0 + glm::vec3(0.0, 0.0, Player::RADIUS)), &world_state.player.tracked_segment.p1)
                 };
-                if glm::distance(&player_sphere.focus, &triangle_sphere.focus) < player_sphere.radius + triangle_sphere.radius {
+                if spheres_collide(&player_sphere, &triangle_sphere) {
                     let player_capsule = Capsule {
                         segment: LineSegment {
                             p0: world_state.player.tracked_segment.p0,
@@ -2031,6 +2048,7 @@ fn main() {
         
                                 //Load entity data
                                 load_ent(&format!("maps/{}.ent", lvl_name), &mut scene_data, &mut world_state);
+                                viewing_triangles = false;
                             }
                         }
 
@@ -2281,7 +2299,7 @@ fn main() {
                     imgui_ui.checkbox("View point lights", &mut viewing_point_lights);
                     imgui_ui.checkbox("View player spawn", &mut viewing_player_spawn);
                     if imgui_ui.checkbox("View collision triangles", &mut viewing_triangles) {
-                        if let Some(re) = scene_data.transparent_entities.get_mut_element(terrain_re_index) {
+                        if let Some(re) = scene_data.transparent_entities.get_mut_element(world_state.collision_re_index) {
                             let mat = if viewing_triangles { glm::identity::<f32, 4>() }
                             else { glm::zero() };
 
@@ -2289,6 +2307,7 @@ fn main() {
                         }
                     }
                     imgui_ui.checkbox("View collision spheres", &mut viewing_collision_spheres);
+                    imgui_ui.separator();
                     imgui_ui.text("Click actions");
                     do_radio_button(&imgui_ui, "Create totoro", &mut click_action, ClickAction::CreateTotoro);
                     do_radio_button(&imgui_ui, "Create light source", &mut click_action, ClickAction::CreatePointLight);
@@ -2307,7 +2326,7 @@ fn main() {
                         if do_button(&imgui_ui, "Clear grabbable triangles") {
                             for i in 0..world_state.collision.grabbable_flags.len() {
                                 world_state.collision.grabbable_flags[i] = false;
-                                if let Some(entity) = scene_data.transparent_entities.get_mut_element(terrain_re_index) {
+                                if let Some(entity) = scene_data.transparent_entities.get_mut_element(world_state.collision_re_index) {
                                     let triangle_count = world_state.collision.terrain.face_normals.len();
                                     let width = get_lookup_texture_pixels(triangle_count);
                                     let pixels = vec![0x00u8; width];
