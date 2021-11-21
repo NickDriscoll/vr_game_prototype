@@ -694,7 +694,7 @@ fn main() {
             last_position: position,
             view_space_velocity: glm::zero(),
             orientation: glm::vec2(0.0, -glm::half_pi::<f32>() * 0.6),
-            is_colliding: true,
+            is_collidable: true,
             using_mouselook: false,
             radius: 0.5,
             speed: 5.0,
@@ -850,6 +850,7 @@ fn main() {
 
         let mut word = WorldState {
             player: Player::new(glm::zero(), glm::zero()),
+            freecam: camera,
             totoros: OptionVec::with_capacity(64),
             selected_totoro: None,
             collision,
@@ -1059,16 +1060,16 @@ fn main() {
                     imgui_io.keys_down[key as usize] = true;
                     match key_directions.get(&key) {
                         Some(dir) => {
-                            camera.view_space_velocity += dir;
+                            world_state.freecam.view_space_velocity += dir;
                         }
                         None => {
                             match key {
                                 Key::Escape => { do_imgui = !do_imgui; }
                                 Key::LeftShift => {
-                                    camera.speed *= 5.0;
+                                    world_state.freecam.speed *= 5.0;
                                 }
                                 Key::LeftControl => {
-                                    camera.speed /= 5.0;
+                                    world_state.freecam.speed /= 5.0;
                                 }
                                 Key::F2 => {
                                     full_screenshot_this_frame = true;
@@ -1082,15 +1083,15 @@ fn main() {
                     imgui_io.keys_down[key as usize] = false;
                     match key_directions.get(&key) {
                         Some(dir) => {
-                            camera.view_space_velocity -= dir;
+                            world_state.freecam.view_space_velocity -= dir;
                         }
                         None => {
                             match key {
                                 Key::LeftShift => {
-                                    camera.speed /= 5.0;
+                                    world_state.freecam.speed /= 5.0;
                                 }
                                 Key::LeftControl => {
-                                    camera.speed *= 5.0;
+                                    world_state.freecam.speed *= 5.0;
                                 }
                                 _ => {}
                             }
@@ -1115,24 +1116,24 @@ fn main() {
                 }
                 WindowEvent::MouseButton(glfw::MouseButtonRight, glfw::Action::Release, ..) => {
                     imgui_io.mouse_down[1] = false;
-                    if camera.using_mouselook {
+                    if world_state.freecam.using_mouselook {
                         window.set_cursor_mode(glfw::CursorMode::Normal);
                     } else {
                         window.set_cursor_mode(glfw::CursorMode::Hidden);
                     }
-                    camera.using_mouselook = !camera.using_mouselook;
+                    world_state.freecam.using_mouselook = !world_state.freecam.using_mouselook;
                 }
                 WindowEvent::CursorPos(x, y) => {
                     imgui_io.mouse_pos = [x as f32, y as f32];
                     mouse.screen_space_pos = glm::vec2(x as f32, y as f32);
-                    if camera.using_mouselook {
+                    if world_state.freecam.using_mouselook {
                         const CAMERA_SENSITIVITY_DAMPENING: f32 = 0.002;
                         let offset = glm::vec2(mouse.screen_space_pos.x as f32 - window_size.x as f32 / 2.0, mouse.screen_space_pos.y as f32 - window_size.y as f32 / 2.0);
-                        camera.orientation += offset * CAMERA_SENSITIVITY_DAMPENING;
-                        if camera.orientation.y < -glm::pi::<f32>() {
-                            camera.orientation.y = -glm::pi::<f32>();
-                        } else if camera.orientation.y > 0.0 {
-                            camera.orientation.y = 0.0;
+                        world_state.freecam.orientation += offset * CAMERA_SENSITIVITY_DAMPENING;
+                        if world_state.freecam.orientation.y < -glm::pi::<f32>() {
+                            world_state.freecam.orientation.y = -glm::pi::<f32>();
+                        } else if world_state.freecam.orientation.y > 0.0 {
+                            world_state.freecam.orientation.y = 0.0;
                         }
                     }
                 }
@@ -1629,7 +1630,7 @@ fn main() {
         }
 
         //If the user is controlling the camera, force the mouse cursor into the center of the screen
-        if camera.using_mouselook {
+        if world_state.freecam.using_mouselook {
             window.set_cursor_pos(window_size.x as f64 / 2.0, window_size.y as f64 / 2.0);
         }
 
@@ -1642,8 +1643,8 @@ fn main() {
         });
         */
 
-        let camera_velocity = camera.speed * glm::vec4_to_vec3(&(glm::affine_inverse(camera.view_from_world) * glm::vec3_to_vec4(&camera.view_space_velocity)));
-        camera.position += camera_velocity * delta_time / world_state.delta_timescale;
+        let camera_velocity = world_state.freecam.speed * glm::vec4_to_vec3(&(glm::affine_inverse(world_state.freecam.view_from_world) * glm::vec3_to_vec4(&world_state.freecam.view_space_velocity)));
+        world_state.freecam.position += camera_velocity * delta_time / world_state.delta_timescale;
 
         //Do click action
         if !imgui_wants_mouse && mouse.clicked && (!mouse.was_clicked || turbo_clicking) {
@@ -1675,7 +1676,7 @@ fn main() {
 
             //Compute click ray
             let w = glm::vec2(window_size.x as f32, window_size.y as f32);
-            let click_ray = compute_click_ray(&camera, w, &mouse.screen_space_pos, &camera.position);
+            let click_ray = compute_click_ray(&world_state.freecam, w, &mouse.screen_space_pos, &world_state.freecam.position);
             let terrain = &world_state.collision.terrain;
 
             //Branch based on which click action is active
@@ -1834,14 +1835,14 @@ fn main() {
             };
 
             //Check if this triangle is hitting the camera
-            if camera.is_colliding {
+            if world_state.freecam.is_collidable {
                 let s = Sphere {
-                    focus: camera.position,
-                    radius: camera.radius
+                    focus: world_state.freecam.position,
+                    radius: world_state.freecam.radius
                 };
 
                 if let Some(vec) = triangle_collide_sphere(&s, &triangle, &triangle_sphere) {
-                    camera.position += vec;
+                    world_state.freecam.position += vec;
                 }
             }
 
@@ -1993,11 +1994,11 @@ fn main() {
                     (vec_to_array(pos), vec_to_array(vel), vec_to_array(forward), vec_to_array(up))
                 }
                 None => {
-                    let camera_vel = camera.position - camera.last_position;
-                    let camera_forward = glm::vec4_to_vec3(&(camera.world_from_view * glm::vec4(0.0, 0.0, -1.0, 0.0)));
-                    let camera_up = glm::vec4_to_vec3(&(camera.world_from_view * glm::vec4(0.0, 1.0, 0.0, 0.0)));
+                    let camera_vel = world_state.freecam.position - world_state.freecam.last_position;
+                    let camera_forward = glm::vec4_to_vec3(&(world_state.freecam.world_from_view * glm::vec4(0.0, 0.0, -1.0, 0.0)));
+                    let camera_up = glm::vec4_to_vec3(&(world_state.freecam.world_from_view * glm::vec4(0.0, 1.0, 0.0, 0.0)));
                     
-                    (vec_to_array(camera.position), vec_to_array(camera_vel), vec_to_array(camera_forward), vec_to_array(camera_up))
+                    (vec_to_array(world_state.freecam.position), vec_to_array(camera_vel), vec_to_array(camera_forward), vec_to_array(camera_up))
                 }
             };
 
@@ -2009,7 +2010,7 @@ fn main() {
         //Network updating section
         
 
-        camera.last_position = camera.position;
+        world_state.freecam.last_position = world_state.freecam.position;
         mouse.was_clicked = mouse.clicked;
 
         //Draw ImGui
@@ -2100,7 +2101,12 @@ fn main() {
                                         scene_data.sun_size,
                                         world_state.player.spawn_position.x,
                                         world_state.player.spawn_position.y,
-                                        world_state.player.spawn_position.z
+                                        world_state.player.spawn_position.z,
+                                        world_state.freecam.position.x,
+                                        world_state.freecam.position.y,
+                                        world_state.freecam.position.z,
+                                        world_state.freecam.orientation.x,
+                                        world_state.freecam.orientation.y,
                                     ];
                                     let floats_per_totoro = 4;
                                     let floats_per_light = 9;
@@ -2243,7 +2249,7 @@ fn main() {
                         else { glfw.set_swap_interval(SwapInterval::None); }
                     }
                 }
-                imgui_ui.checkbox("Camera collision", &mut camera.is_colliding);
+                imgui_ui.checkbox("Camera collision", &mut world_state.freecam.is_collidable);
                 if let Some(_) = &xr_instance {
                     imgui_ui.checkbox("HMD Perspective", &mut hmd_pov);
                     imgui_ui.checkbox("Infinite ammo", &mut infinite_ammo);
@@ -2282,7 +2288,7 @@ fn main() {
                 }
 
                 if do_button(&imgui_ui, "Reset freecam position") {
-                    camera.position = default_camera_position;
+                    world_state.freecam.position = default_camera_position;
                 }
 
                 if do_button(&imgui_ui, "Help") {
@@ -2664,10 +2670,11 @@ fn main() {
 
         //Create a view matrix from the camera state
         {
-            let new_view_matrix = glm::rotation(camera.orientation.y, &glm::vec3(1.0, 0.0, 0.0)) *
-                                  glm::rotation(camera.orientation.x, &Z_UP) *
-                                  glm::translation(&(-camera.position));
-            camera.update_view(new_view_matrix, window_size);
+            let camera = &mut world_state.freecam;
+            let new_view_matrix = glm::rotation(world_state.freecam.orientation.y, &glm::vec3(1.0, 0.0, 0.0)) *
+                                  glm::rotation(world_state.freecam.orientation.x, &Z_UP) *
+                                  glm::translation(&(-world_state.freecam.position));
+            world_state.freecam.update_view(new_view_matrix, window_size);
         }
 
         //Rendering
@@ -2787,7 +2794,7 @@ fn main() {
                                 }
 
                                 //Draw the companion view if we're showing HMD POV
-                                let projection = camera.clipping_from_view;
+                                let projection = world_state.freecam.clipping_from_view;
                                 let v_mat = xrutil::pose_to_viewmat(&pose, &tracking_from_world);
                                 if hmd_pov {
                                     let v_world_pos = xrutil::pose_to_mat4(&pose, &world_from_tracking);
@@ -2861,16 +2868,16 @@ fn main() {
             //Main window rendering
             if !hmd_pov {
                 //Render shadows
-                let projection = &camera.clipping_from_view;
-                let v_mat = &camera.view_from_world;
+                let projection = &world_state.freecam.clipping_from_view;
+                let v_mat = &world_state.freecam.view_from_world;
                 scene_data.sun_shadow_map.matrices = render::compute_shadow_cascade_matrices(&scene_data.sun_shadow_map.view_space_distances, &shadow_view, v_mat, projection);
                 render::cascaded_shadow_map(&scene_data.sun_shadow_map, scene_data.opaque_entities.as_slice());
 
                 //Render main scene
                 let freecam_viewdata = ViewData::new(
-                    camera.position,
-                    camera.view_from_world,
-                    camera.clipping_from_view
+                    world_state.freecam.position,
+                    world_state.freecam.view_from_world,
+                    world_state.freecam.clipping_from_view
                 );
                 render::main_scene(&core_rt.framebuffer, &scene_data, &freecam_viewdata);
 
@@ -2904,7 +2911,7 @@ fn main() {
 
             //Render Dear ImGui
             gl::UseProgram(imgui_program);
-            glutil::bind_matrix4(imgui_program, "projection", &camera.clipping_from_screen);
+            glutil::bind_matrix4(imgui_program, "projection", &world_state.freecam.clipping_from_screen);
             {
                 let draw_data = imgui_ui.render();
                 if draw_data.total_vtx_count > 0 {

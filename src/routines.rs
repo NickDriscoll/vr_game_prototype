@@ -308,7 +308,7 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
 
     match File::open(path) {
         Ok(mut file) => {
-            let floats_at_start = 12;
+            let floats_at_start = 17;
             let r = io::read_pascal_strings(&mut file, 1);
             let new_skybox = io_or_error(r, path)[0].clone();
 
@@ -326,6 +326,11 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
             world_state.player.spawn_position.x = raw_floats[9];
             world_state.player.spawn_position.y = raw_floats[10];
             world_state.player.spawn_position.z = raw_floats[11];
+            world_state.freecam.position.x = raw_floats[12];
+            world_state.freecam.position.y = raw_floats[13];
+            world_state.freecam.position.z = raw_floats[14];
+            world_state.freecam.orientation.x = raw_floats[15];
+            world_state.freecam.orientation.y = raw_floats[16];
 
             world_state.player.tracking_position = world_state.player.spawn_position;
 

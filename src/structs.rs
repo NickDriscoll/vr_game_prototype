@@ -35,7 +35,7 @@ pub struct Camera {
     pub radius: f32,
     pub aspect_ratio: f32,
 	pub fov_radians: f32,
-    pub is_colliding: bool,
+    pub is_collidable: bool,
     pub using_mouselook: bool,    
 	pub view_from_world: glm::TMat4<f32>,
     pub clipping_from_view: glm::TMat4<f32>,

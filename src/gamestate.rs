@@ -5,6 +5,7 @@ use ozy::collision::*;
 use xr::Posef;
 use crate::traits::SphereCollider;
 use crate::routines::*;
+use crate::structs::Camera;
 
 #[derive(PartialEq, Eq)]
 pub enum MoveState {
@@ -14,6 +15,7 @@ pub enum MoveState {
 
 pub struct WorldState {
     pub player: Player,
+    pub freecam: Camera,
     pub totoros: OptionVec<Totoro>,
     pub selected_totoro: Option<usize>,
     pub collision: StaticCollision,
