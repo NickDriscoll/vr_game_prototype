@@ -15,6 +15,7 @@ mod routines;
 mod traits;
 mod xrutil;
 
+
 use glfw::{Action, Context, Key, SwapInterval, Window, WindowEvent, WindowHint, WindowMode};
 use gl::types::*;
 use imgui::{ColorEdit, DrawCmd, EditableColor, Font, FontAtlasRefMut, FontConfig, FontSource, MenuItem, Slider, TextureId};
@@ -31,7 +32,6 @@ use std::str::FromStr;
 use std::sync::mpsc;
 use std::time::{Instant};
 use strum::EnumCount;
-use tfd::MessageBoxIcon;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
 use ozy::{glutil, io};
 use ozy::render::{Framebuffer, RenderTarget, TextureKeeper};
@@ -142,7 +142,7 @@ fn main() {
         //Make sure the local OpenXR implementation supports OpenGL
         if let Some(set) = &extension_set {
             if !set.khr_opengl_enable {
-                tfd::message_box_ok("XR initialization error", "OpenXR implementation does not support OpenGL!", MessageBoxIcon::Error);
+                tfd::message_box_ok("XR initialization error", "OpenXR implementation does not support OpenGL!", tfd::MessageBoxIcon::Error);
                 exit(-1);
             }
         } 
@@ -677,7 +677,7 @@ fn main() {
     let mut destination_string = String::with_capacity(64);
     
     let default_camera_position = glm::vec3(0.0, -8.0, 5.5);
-    let mut camera = {
+    let camera = {
         let position = default_camera_position;
         let fov_radians = glm::half_pi();
 
@@ -939,7 +939,6 @@ fn main() {
     let mut last_toggled_tri = None;
     let mut hmd_pov = false;
     let mut do_vsync = true;
-    let mut using_postfx = false;
     let mut screenshot_this_frame = false;
     let mut full_screenshot_this_frame = false;
     let mut turbo_clicking = false;
@@ -982,14 +981,14 @@ fn main() {
                         send_or_error(&audio_sender, AudioCommand::LoadSFX(name));
                     }
                     Err(e) => {
-                        tfd::message_box_ok("Audio error", &format!("Error reading sfx entry: {}", e), MessageBoxIcon::Error);
+                        tfd::message_box_ok("Audio error", &format!("Error reading sfx entry: {}", e), tfd::MessageBoxIcon::Error);
                     }
                 }
             }
             paths
         }
         Err(e) => {
-            tfd::message_box_ok("Audio error", &format!("Error reading sfx directory: {}", e), MessageBoxIcon::Error);
+            tfd::message_box_ok("Audio error", &format!("Error reading sfx directory: {}", e), tfd::MessageBoxIcon::Error);
             Vec::new()
         }
     };
@@ -1648,32 +1647,6 @@ fn main() {
 
         //Do click action
         if !imgui_wants_mouse && mouse.clicked && (!mouse.was_clicked || turbo_clicking) {
-            fn check_hit_info(hit_info: Option<(f32, usize)>, t: &mut f32, i: &mut Option<usize>, f: &mut Option<usize>, new_f: usize) {
-                if let Some(info) = hit_info {
-                    if info.0 < *t {
-                        *t = info.0;
-                        *i = Some(info.1);
-                        *f = Some(new_f);
-                    }
-                }
-            }
-
-            let mut get_clicked_closure = |click_ray: &Ray, world_state: &mut WorldState| {
-                let mut r_t = f32::INFINITY;
-                let mut r_i = None;
-                let mut f = None;
-
-                let tot_hit_info = get_clicked_object(&world_state.totoros, click_ray);
-                check_hit_info(tot_hit_info, &mut r_t, &mut r_i, &mut f, 0);
-                let light_hit_info = get_clicked_object(&scene_data.point_lights, click_ray);
-                check_hit_info(light_hit_info, &mut r_t, &mut r_i, &mut f, 1);
-
-                world_state.selected_totoro = None;
-                scene_data.selected_point_light = None;
-
-                (f, r_i)
-            };
-
             //Compute click ray
             let w = glm::vec2(window_size.x as f32, window_size.y as f32);
             let click_ray = compute_click_ray(&world_state.freecam, w, &mouse.screen_space_pos, &world_state.freecam.position);
@@ -1690,22 +1663,71 @@ fn main() {
                     }
                 }
                 ClickAction::Select => {
-                    if let (Some(f), Some(idx)) =  get_clicked_closure(&click_ray, &mut world_state) {
-                        match f {
-                            0 => { world_state.selected_totoro = Some(idx); }
-                            1 => { scene_data.selected_point_light = Some(idx); }
-                            _ => {}
-                        }                        
+                    world_state.selected_totoro = None;
+                    scene_data.selected_point_light = None;
+                    let mut min_t = f32::INFINITY;
+                    if let Some(hit_info) = get_clicked_object(&world_state.totoros, &click_ray) {
+                        let t = hit_info.0;
+                        if t < min_t {
+                            min_t = hit_info.0;
+                            
+                            scene_data.selected_point_light = None;
+
+                            world_state.selected_totoro = Some(hit_info.1);
+                        }
+                    }
+                    if let Some(hit_info) = get_clicked_object(&scene_data.point_lights, &click_ray) {
+                        let t = hit_info.0;
+                        if t < min_t {
+                            min_t = hit_info.0;
+
+                            world_state.selected_totoro = None;
+
+                            scene_data.selected_point_light = Some(hit_info.1);
+                        }
                     }
                 }
                 ClickAction::DeleteObject => {
-                    if let (Some(f), Some(idx)) = get_clicked_closure(&click_ray, &mut world_state) {
-                        match f {
-                            0 => { delete_object(&mut world_state.totoros, &mut world_state.selected_totoro, idx); }
-                            1 => { delete_object(&mut scene_data.point_lights, &mut scene_data.selected_point_light, idx); }
-                            _ => {}
-                        }
+                    macro_rules! delete_clicked_object {
+                        ($($list_name:expr)+,$($selected_name:expr)+) => {
+                            {
+                                let mut min_t = f32::INFINITY;
+                                let mut idx = None;
+                                let mut selected_vec = None;
+
+                                let mut list_count = 0;
+                                $(
+                                    if let Some(hit_info) = get_clicked_object(&$list_name, &click_ray) {
+                                        let t = hit_info.0;
+                                        if t < min_t {
+                                            min_t = hit_info.0;
+                                            idx = Some(hit_info.1);
+                                            selected_vec = Some(list_count);
+                                        }
+                                    }
+                                    list_count += 1;
+                                )+
+
+                                if let (Some(i), Some(sel_v)) = (idx, selected_vec) {
+                                    match sel_v {
+                                        0 => { delete_object(&mut world_state.totoros, &mut world_state.selected_totoro, i); }
+                                        1 => { delete_object(&mut scene_data.point_lights, &mut scene_data.selected_point_light, i); }
+                                        /*
+                                        $(
+                                            list_count => { delete_object(&mut $list_name, &mut $selected_name, i); }
+                                        )+
+                                        */
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        };
                     }
+
+                    delete_clicked_object!(
+                        world_state.totoros scene_data.point_lights,
+                        world_state.selected_totoro scene_data.selected_point_light
+                    );
                 }
                 ClickAction::MoveSelectedTotoro => {
                     if let Some(idx) = world_state.selected_totoro {
@@ -2040,16 +2062,17 @@ fn main() {
                         if MenuItem::new("Load level").build(&imgui_ui) {
                             if let Some(path) = tfd::open_file_dialog("Load level data", "maps/", Some((&["*.lvl"], "*.lvl"))) {
                                 //Load the scene data from the level file
-                                let lvl_name = Path::new(&path).file_stem().unwrap().to_str().unwrap();
+                                let lvl_name = Path::new(&path).file_stem().unwrap().to_str().unwrap();                                
                                 load_lvl(lvl_name, &mut world_state, &mut scene_data, &mut texture_keeper, standard_program);
         
                                 //Load terrain data
                                 world_state.collision.terrain = Terrain::from_ozt(&format!("models/{}.ozt", lvl_name));
                                 println!("Loaded {} collision triangles from {}.ozt", world_state.collision.terrain.face_normals.len(), world_state.level_name);
-        
+            
                                 //Load entity data
                                 load_ent(&format!("maps/{}.ent", lvl_name), &mut scene_data, &mut world_state);
                                 viewing_triangles = false;
+                                
                             }
                         }
 
@@ -2081,7 +2104,7 @@ fn main() {
                             }
     
                             let save_error = |e: std::io::Error| {
-                                tfd::message_box_ok("Error saving level data", &format!("Could not save level data:\n{}", e), MessageBoxIcon::Error);
+                                tfd::message_box_ok("Error saving level data", &format!("Could not save level data:\n{}", e), tfd::MessageBoxIcon::Error);
                             };
                             
                             match File::create(format!("maps/{}.ent", world_state.level_name)) {
@@ -2240,8 +2263,6 @@ fn main() {
                 }
 
                 imgui_ui.text(format!("Frametime: {:.2}ms\tFPS: {:.0}\tFrame: {}", delta_time * 1000.0 / world_state.delta_timescale, framerate, frame_count));
-                imgui_ui.text(format!("Totoros spawned: {}", world_state.totoros.count()));
-                imgui_ui.text(format!("Point lights count: {}/{}", scene_data.point_lights.count(), render::MAX_POINT_LIGHTS));
                 
                 if let None = &xr_instance {
                     if imgui_ui.checkbox("Lock FPS (v-sync)", &mut do_vsync) {
@@ -2292,7 +2313,7 @@ fn main() {
                 }
 
                 if do_button(&imgui_ui, "Help") {
-                    tfd::message_box_ok("PLACEHOLDER", "Nick needs to implement a help window", MessageBoxIcon::Warning);
+                    tfd::message_box_ok("PLACEHOLDER", "Nick needs to implement a help window", tfd::MessageBoxIcon::Warning);
                 }
 
                 //End the window
@@ -2302,6 +2323,11 @@ fn main() {
             //Entity panel
             if entity_panel {
                 if let Some(win_token) = imgui::Window::new("Entity panel").begin(&imgui_ui) {
+                    imgui_ui.text(format!("Totoros spawned: {}", world_state.totoros.count()));
+                    imgui_ui.text(format!("Point lights count: {}/{}", scene_data.point_lights.count(), render::MAX_POINT_LIGHTS));
+                    imgui_ui.separator();
+
+                    imgui_ui.text("Visualizers");
                     imgui_ui.checkbox("View point lights", &mut viewing_point_lights);
                     imgui_ui.checkbox("View player spawn", &mut viewing_player_spawn);
                     if imgui_ui.checkbox("View collision triangles", &mut viewing_triangles) {
@@ -2386,7 +2412,7 @@ fn main() {
 
             //Do graphics menu
             if debug_vis_menu {
-                if let Some(win_token) = imgui::Window::new("Graphics").begin(&imgui_ui) {
+                if let Some(win_token) = imgui::Window::new("Debug graphics").begin(&imgui_ui) {
                     imgui_ui.text("Graphics options");
                     imgui_ui.checkbox("Wireframe view", &mut wireframe);
                     imgui_ui.checkbox("TRUE wireframe view", &mut true_wireframe);
@@ -2402,7 +2428,6 @@ fn main() {
 
                     imgui_ui.separator();
 
-
                     imgui_ui.checkbox("View shadow atlas", &mut showing_shadow_atlas);
 
                     if let Some(_) = &xr_instance {
@@ -2417,10 +2442,6 @@ fn main() {
 
             if postfx_menu {
                 if let Some(win_token) = imgui::Window::new("PostFX").begin(&imgui_ui) {
-                    
-                    imgui_ui.checkbox("Use postfx", &mut using_postfx);
-                    imgui_ui.separator();
-
                     do_radio_button(&imgui_ui, "Gaussian Blur", &mut scene_data.postfx_flag, PostEffectFlag::GaussianBlur);
                     do_radio_button(&imgui_ui, "Black & White", &mut scene_data.postfx_flag, PostEffectFlag::BlackWhite);
                     do_radio_button(&imgui_ui, "Glitchy", &mut scene_data.postfx_flag, PostEffectFlag::Glitchy);
@@ -2670,7 +2691,6 @@ fn main() {
 
         //Create a view matrix from the camera state
         {
-            let camera = &mut world_state.freecam;
             let new_view_matrix = glm::rotation(world_state.freecam.orientation.y, &glm::vec3(1.0, 0.0, 0.0)) *
                                   glm::rotation(world_state.freecam.orientation.x, &Z_UP) *
                                   glm::translation(&(-world_state.freecam.position));
@@ -2810,9 +2830,7 @@ fn main() {
                                     render::blit_full_color_buffer(&core_rt.framebuffer, &ping_rt.framebuffer);
 
                                     //Post-processing step
-                                    if using_postfx {
-                                        render::post_processing(ping_rt.color_attachment_view, window_size, postfx_program, &scene_data);
-                                    }
+                                    render::post_processing(ping_rt.color_attachment_view, window_size, postfx_program, &scene_data);
 
                                     //Blit to default framebuffer
                                     render::blit_full_color_buffer(&ping_rt.framebuffer, &default_framebuffer);
@@ -2886,9 +2904,7 @@ fn main() {
                 render::blit_full_color_buffer(&core_rt.framebuffer, &ping_rt.framebuffer);
 
                 //Post-processing step
-                if using_postfx {
-                    render::post_processing(ping_rt.color_attachment_view, window_size, postfx_program, &scene_data);
-                }
+                render::post_processing(ping_rt.color_attachment_view, window_size, postfx_program, &scene_data);
                 
                 //Blit to default framebuffer
                 render::blit_full_color_buffer(&ping_rt.framebuffer, &default_framebuffer);

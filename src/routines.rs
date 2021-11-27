@@ -226,7 +226,7 @@ pub fn ranged_randomf32(min: f32, max: f32) -> f32 {
 
 pub fn load_lvl(level_name: &str, world_state: &mut WorldState, scene_data: &mut SceneData, texture_keeper: &mut TextureKeeper, standard_program: GLuint) {    
     let level_load_error = |s: std::io::Error| {
-        tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", level_name, s), MessageBoxIcon::Error);
+        tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", level_name, s), tfd::MessageBoxIcon::Error);
         exit(-1);
     };
 
@@ -261,14 +261,14 @@ pub fn load_lvl(level_name: &str, world_state: &mut WorldState, scene_data: &mut
                 let matrices_count = match io::read_u32(&mut file) {
                     Ok(count) => { count as usize } 
                     Err(e) => {
-                        tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", world_state.level_name, e), MessageBoxIcon::Error);
+                        tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", world_state.level_name, e), tfd::MessageBoxIcon::Error);
                         panic!("Error reading from level file: {}", e);
                     }
                 };
                 let matrix_floats = match io::read_f32_data(&mut file, matrices_count as usize * 16) {
                     Ok(floats) => { floats }
                     Err(e) => {
-                        tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", world_state.level_name, e), MessageBoxIcon::Error);
+                        tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}", world_state.level_name, e), tfd::MessageBoxIcon::Error);
                         panic!("Error reading from level file: {}", e);
                     }
                 };
@@ -294,7 +294,7 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
         match res {
             Ok(r) => { r }
             Err(e) => {
-                tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}\n", level_name, e), MessageBoxIcon::Error);
+                tfd::message_box_ok("Error loading level", &format!("Error reading from level {}: {}\n", level_name, e), tfd::MessageBoxIcon::Warning);
                 panic!("Error reading from level file: {}", e);
             }
         }
@@ -426,7 +426,7 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
             };
         }
         Err(e) => {
-            tfd::message_box_ok("Error loading level data", &format!("Could not load level data:\n{}\nHave you saved the level data for this level yet?", e), MessageBoxIcon::Error);
+            tfd::message_box_ok("Error loading level data", &format!("Could not load level data:\n{}\nHave you saved the level data for this level yet?", e), tfd::MessageBoxIcon::Error);
 
             //We still want the skybox strings to get recomputed even if we can't load the ent file
             scan_skybox_directory(world_state, "");
@@ -451,14 +451,14 @@ fn scan_skybox_directory(world_state: &mut WorldState, skybox_name: &str) {
                             v.push(format!("{}", name));
                         }
                         Err(e) => {
-                            tfd::message_box_ok("Unable to read skybox entry", &format!("{}", e), MessageBoxIcon::Error);
+                            tfd::message_box_ok("Unable to read skybox entry", &format!("{}", e), tfd::MessageBoxIcon::Error);
                         }
                     }
                     current_skybox += 1;
                 }
             }
             Err(e) => {
-                tfd::message_box_ok("Unable to read skybox directory", &format!("{}", e), MessageBoxIcon::Error);
+                tfd::message_box_ok("Unable to read skybox directory", &format!("{}", e), tfd::MessageBoxIcon::Error);
             }
         }
         v
