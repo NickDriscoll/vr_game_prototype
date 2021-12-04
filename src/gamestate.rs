@@ -5,7 +5,7 @@ use ozy::collision::*;
 use xr::Posef;
 use crate::traits::SphereCollider;
 use crate::routines::*;
-use crate::structs::Camera;
+use crate::structs::{Camera, EntityList};
 
 #[derive(PartialEq, Eq)]
 pub enum MoveState {
@@ -16,9 +16,8 @@ pub enum MoveState {
 pub struct WorldState {
     pub player: Player,
     pub freecam: Camera,
-    pub totoros: OptionVec<Totoro>,
-    pub selected_totoro: Option<usize>,
     pub collision: StaticCollision,
+    pub totoros: EntityList<Totoro>,
     pub opaque_terrain_indices: Vec<usize>,     //Indices of the terrain's graphics data in a RenderEntities array
     pub transparent_terrain_indices: Vec<usize>,     //Indices of the terrain's graphics data in a RenderEntities array
     pub collision_re_index: usize,
@@ -153,15 +152,6 @@ impl Totoro {
             relax_duration: 2.0,
             saw_player_last: 0.0,
             drown_sfx_id: None
-        }
-    }
-}
-
-pub fn delete_object<T>(objects: &mut OptionVec<T>, selected: &mut Option<usize>, idx: usize) {
-    objects.delete(idx);
-    if let Some(i) = selected {
-        if *i == idx {
-            *selected = None;
         }
     }
 }

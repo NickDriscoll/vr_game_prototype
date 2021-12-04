@@ -10,6 +10,7 @@ use ozy::{glutil};
 use tfd::MessageBoxIcon;
 use gl::types::*;
 use crate::traits::SphereCollider;
+use crate::structs::EntityList;
 
 pub const NEAR_DISTANCE: f32 = 0.0625;
 pub const FAR_DISTANCE: f32 = 1_000.0;
@@ -250,6 +251,7 @@ impl Drop for RenderEntity {
             vec![self.material_textures[0], self.material_textures[1], self.material_textures[2], self.lookup_texture]
         };
 
+        //Freeing associated GL objects
         unsafe {
             let bufs = [self.vao.vbo, self.vao.ebo, self.instanced_buffers[0], self.instanced_buffers[1], self.instanced_buffers[2]];
             gl::DeleteBuffers(bufs.len() as GLsizei, &bufs[0]);
@@ -345,9 +347,8 @@ pub struct SceneData {
     pub shadow_intensity: f32,
     pub ambient_strength: f32,
     pub elapsed_time: f32,
-    pub point_lights: OptionVec<PointLight>,
+    pub point_lights: EntityList<PointLight>,
     pub point_lights_ubo: GLuint,
-    pub selected_point_light: Option<usize>,
     pub opaque_entities: OptionVec<RenderEntity>,
     pub transparent_entities: OptionVec<RenderEntity>
 }
@@ -392,9 +393,8 @@ impl Default for SceneData {
             ambient_strength: 0.2,
             sun_shadow_map,
             elapsed_time: 0.0,
-            point_lights: OptionVec::new(),
+            point_lights: EntityList::new(),
             point_lights_ubo: 0,
-            selected_point_light: None,
             opaque_entities: OptionVec::new(),
             transparent_entities: OptionVec::new()
         }

@@ -366,6 +366,7 @@ fn main() {
     }
 
     let mut window_size = config.get_window_size();
+    let mut window_wiggle = false;
     //Create the window
 	glfw.window_hint(WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));
     let (mut window, events) = match glfw.create_window(window_size.x, window_size.y, "THCATO", glfw::WindowMode::Windowed) {
@@ -851,8 +852,7 @@ fn main() {
         let mut word = WorldState {
             player: Player::new(glm::zero(), glm::zero()),
             freecam: camera,
-            totoros: OptionVec::with_capacity(64),
-            selected_totoro: None,
+            totoros: EntityList::with_capacity(64),
             collision,
             opaque_terrain_indices: Vec::new(),
             transparent_terrain_indices: Vec::new(),
@@ -1428,7 +1428,7 @@ fn main() {
         let totoro_base_speed = 2.0;
         let totoro_awareness_radius = 5.0;
         for i in 0..world_state.totoros.len() {
-            if let Some(totoro) = world_state.totoros.get_mut_element(i) {
+            if let Some(totoro) = world_state.totoros.entities.get_mut_element(i) {
                 let ai_time = scene_data.elapsed_time - totoro.state_timer;     //Time since last state change
                 let player_is_near = glm::distance(&world_state.player.tracked_segment.p1, &totoro.position) < totoro_awareness_radius;
 
@@ -1608,8 +1608,8 @@ fn main() {
                 //Queue debug sphere
                 if viewing_collision_spheres {
                     let sph = totoro.sphere();
-                    let highlighted = match world_state.selected_totoro {
-                        Some(idx) => { idx == i }
+                    let highlighted = match &world_state.totoros.selected_idx {
+                        Some(idx) => { *idx == i }
                         None => { false }
                     };
                     queue_debug_sphere(&mut debug_sphere_queue, sph.focus, glm::vec4(0.0, 0.0, 0.5, 0.5), sph.radius, highlighted);
@@ -1623,7 +1623,7 @@ fn main() {
                         totoro.drown_sfx_id = None;
                     }
 
-                    delete_object(&mut world_state.totoros, &mut world_state.selected_totoro, i);
+                    world_state.totoros.delete(i);
                 }
             }
         }
@@ -1633,24 +1633,26 @@ fn main() {
             window.set_cursor_pos(window_size.x as f64 / 2.0, window_size.y as f64 / 2.0);
         }
 
-        /*
-        glfw.with_primary_monitor_mut(|_, opt_monitor|{
-            if let Some(monitor) = opt_monitor {
-                let size = monitor.get_physical_size();
-                window.set_pos(size.0 / 2 + (200.0 * f32::sin(scene_data.elapsed_time)) as i32, size.1 / 2);
-            }
-        });
-        */
+        if window_wiggle {
+            glfw.with_primary_monitor_mut(|_, opt_monitor|{
+                if let Some(monitor) = opt_monitor {
+                    let size = monitor.get_physical_size();
+                    window.set_pos(size.0 / 2 + (200.0 * f32::sin(scene_data.elapsed_time*2.5)) as i32, size.1 / 2);
+                }
+            });
+        }
 
         let camera_velocity = world_state.freecam.speed * glm::vec4_to_vec3(&(glm::affine_inverse(world_state.freecam.view_from_world) * glm::vec3_to_vec4(&world_state.freecam.view_space_velocity)));
         world_state.freecam.position += camera_velocity * delta_time / world_state.delta_timescale;
 
         //Do click action
-        if !imgui_wants_mouse && mouse.clicked && (!mouse.was_clicked || turbo_clicking) {
-            //Compute click ray
-            let w = glm::vec2(window_size.x as f32, window_size.y as f32);
-            let click_ray = compute_click_ray(&world_state.freecam, w, &mouse.screen_space_pos, &world_state.freecam.position);
+        let click_action_this_frame = !imgui_wants_mouse && mouse.clicked && (!mouse.was_clicked || turbo_clicking);
+        if click_action_this_frame {
             let terrain = &world_state.collision.terrain;
+            let w = glm::vec2(window_size.x as f32, window_size.y as f32);
+
+            //Compute click ray
+            let click_ray = compute_click_ray(&world_state.freecam, w, &mouse.screen_space_pos, &world_state.freecam.position);
 
             //Branch based on which click action is active
             match click_action {
@@ -1659,21 +1661,21 @@ fn main() {
                     if let Some(collision) = ray_hit_terrain(terrain, &click_ray) {
                         let tot = Totoro::new(collision.point, scene_data.elapsed_time);
                         let i = world_state.totoros.insert(tot);
-                        world_state.selected_totoro = Some(i);
+                        world_state.totoros.selected_idx = Some(i);
                     }
                 }
                 ClickAction::Select => {
-                    world_state.selected_totoro = None;
-                    scene_data.selected_point_light = None;
+                    world_state.totoros.selected_idx = None;
+                    scene_data.point_lights.selected_idx = None;
                     let mut min_t = f32::INFINITY;
                     if let Some(hit_info) = get_clicked_object(&world_state.totoros, &click_ray) {
                         let t = hit_info.0;
                         if t < min_t {
                             min_t = hit_info.0;
                             
-                            scene_data.selected_point_light = None;
+                            scene_data.point_lights.selected_idx = None;
 
-                            world_state.selected_totoro = Some(hit_info.1);
+                            world_state.totoros.selected_idx = Some(hit_info.1);
                         }
                     }
                     if let Some(hit_info) = get_clicked_object(&scene_data.point_lights, &click_ray) {
@@ -1681,9 +1683,9 @@ fn main() {
                         if t < min_t {
                             min_t = hit_info.0;
 
-                            world_state.selected_totoro = None;
+                            world_state.totoros.selected_idx = None;
 
-                            scene_data.selected_point_light = Some(hit_info.1);
+                            scene_data.point_lights.selected_idx = Some(hit_info.1);
                         }
                     }
                 }
@@ -1710,8 +1712,8 @@ fn main() {
 
                                 if let (Some(i), Some(sel_v)) = (idx, selected_vec) {
                                     match sel_v {
-                                        0 => { delete_object(&mut world_state.totoros, &mut world_state.selected_totoro, i); }
-                                        1 => { delete_object(&mut scene_data.point_lights, &mut scene_data.selected_point_light, i); }
+                                        0 => { world_state.totoros.delete(i); }
+                                        1 => { scene_data.point_lights.delete(i); }
                                         /*
                                         $(
                                             list_count => { delete_object(&mut $list_name, &mut $selected_name, i); }
@@ -1726,11 +1728,11 @@ fn main() {
 
                     delete_clicked_object!(
                         world_state.totoros scene_data.point_lights,
-                        world_state.selected_totoro scene_data.selected_point_light
+                        world_state.totoros.selected_idx scene_data.selected_point_light
                     );
                 }
                 ClickAction::MoveSelectedTotoro => {
-                    if let Some(idx) = world_state.selected_totoro {
+                    if let Some(idx) = world_state.totoros.selected_idx {
                         if let Some(collision) = ray_hit_terrain(terrain, &click_ray) {
                             if let Some(tot) = world_state.totoros.get_mut_element(idx) {
                                 tot.position = collision.point;
@@ -1749,12 +1751,12 @@ fn main() {
                         if let Some(collision) = ray_hit_terrain(terrain, &click_ray) {
                             let light = PointLight::new(collision.point + glm::vec3(0.0, 0.0, 2.0), [rand::random(), rand::random(), rand::random()], 3.0);
                             let i = scene_data.point_lights.insert(light);
-                            scene_data.selected_point_light = Some(i);
+                            scene_data.point_lights.selected_idx = Some(i);
                         }
                     }
                 }
                 ClickAction::MovePointLight => {
-                    if let Some(idx) = scene_data.selected_point_light {
+                    if let Some(idx) = scene_data.point_lights.selected_idx {
                         if let Some(collision) = ray_hit_terrain(terrain, &click_ray) {
                             if let Some(light) = scene_data.point_lights.get_mut_element(idx) {
                                 light.position = collision.point + glm::vec3(0.0, 0.0, 2.0);
@@ -1782,7 +1784,7 @@ fn main() {
                         last_toggled_tri = None;
                     }
                 }
-            }            
+            }
         }
 
         //Keep the selected triangles texture up to date
@@ -1810,8 +1812,8 @@ fn main() {
 
         if viewing_point_lights {
             for i in 0..scene_data.point_lights.len() {
-                if let Some(light) = &scene_data.point_lights[i] {
-                    let highlighted = match scene_data.selected_point_light {
+                if let Some(light) = &scene_data.point_lights.entities[i] {
+                    let highlighted = match scene_data.point_lights.selected_idx {
                         Some(idx) => { idx == i }
                         None => { false }
                     };
@@ -2109,7 +2111,7 @@ fn main() {
                             
                             match File::create(format!("maps/{}.ent", world_state.level_name)) {
                                 Ok(mut file) => {
-                                    let totoros = &world_state.totoros;
+                                    let totoros = &world_state.totoros.entities;
                                     io::write_pascal_strings(&mut file, &[&world_state.skybox_strings[world_state.active_skybox_index]]);
     
                                     let floats_to_write = [
@@ -2169,7 +2171,7 @@ fn main() {
                                     //Write lights data
                                     write_u32_to_buffer(&mut bytes, scene_data.point_lights.count() as u32);
                                     for i in 0..scene_data.point_lights.len() {
-                                        if let Some(light) = &scene_data.point_lights[i] {
+                                        if let Some(light) = &scene_data.point_lights.entities[i] {
                                             write_vec3_to_buffer(&mut bytes, light.position);
                                             write_vec3_to_buffer(&mut bytes, glm::vec3(light.color[0], light.color[1], light.color[2]));
                                             write_f32_to_buffer(&mut bytes, light.power);
@@ -2255,6 +2257,8 @@ fn main() {
                             default_framebuffer.size = core_rt.framebuffer.size;
                             is_fullscreen = !is_fullscreen;
                         }
+
+                        if MenuItem::new("Toggle wiggle").build(&imgui_ui) { window_wiggle = !window_wiggle; }
                         
                         window_token.end();
                     }
@@ -2351,7 +2355,7 @@ fn main() {
 
                     if do_button(&imgui_ui, "Delete all totoros") {
                         world_state.totoros.clear();
-                        world_state.selected_totoro = None;
+                        world_state.totoros.selected_idx = None;
                     }
 
                     unsafe {
@@ -2494,7 +2498,7 @@ fn main() {
             }
 
             //Do selected Totoro window
-            if let Some(idx) = world_state.selected_totoro {
+            if let Some(idx) = world_state.totoros.selected_idx {
                 let tot = world_state.totoros.get_mut_element(idx).unwrap();
                 if let Some(token) = imgui::Window::new(format!("Totoro #{} control panel###totoro_panel", idx)).begin(&imgui_ui) {
                     do_readwrite_vec3(&imgui_ui, "Position", &mut tot.position);
@@ -2515,20 +2519,20 @@ fn main() {
                     imgui_ui.same_line();
 
                     if do_button(&imgui_ui, "Kill") {
-                        delete_object(&mut world_state.totoros, &mut world_state.selected_totoro, idx);
+                        world_state.totoros.delete(idx);
                     }
 
                     imgui_ui.separator();
                     do_radio_button(&imgui_ui, "Move totoro's home", &mut click_action, ClickAction::MoveSelectedTotoro);
 
-                    if do_button(&imgui_ui, "Close") { world_state.selected_totoro = None; }
+                    if do_button(&imgui_ui, "Close") { world_state.totoros.selected_idx = None; }
 
                     token.end();
                 }
             }
 
             //Do selected point light window
-            if let Some(idx) = scene_data.selected_point_light {
+            if let Some(idx) = scene_data.point_lights.selected_idx {
                 let light = scene_data.point_lights.get_mut_element(idx).unwrap();
                 if let Some(token) = imgui::Window::new(format!("Point light #{} control panel###point_light_panel", idx)).begin(&imgui_ui) {
                     do_readwrite_vec3(&imgui_ui, "Position", &mut light.position);
@@ -2544,10 +2548,9 @@ fn main() {
                     do_radio_button(&imgui_ui, "Reposition light", &mut click_action, ClickAction::MovePointLight);
                     if do_button(&imgui_ui, "Delete this light") {
                         scene_data.point_lights.delete(idx);
-                        scene_data.selected_point_light = None;
                     }
 
-                    if do_button(&imgui_ui, "Close") { scene_data.selected_point_light = None; }
+                    if do_button(&imgui_ui, "Close") { scene_data.point_lights.selected_idx = None; }
 
                     token.end();
                 }
@@ -2569,7 +2572,7 @@ fn main() {
 
         //Update the GPU instance buffer for the Totoros
         if let Some(entity) = scene_data.opaque_entities.get_mut_element(totoro_re_index) {
-            let totoros = &world_state.totoros;
+            let totoros = &world_state.totoros.entities;
             let mut highlighted_buffer = vec![0.0; totoros.count()];
             let mut transform_buffer = vec![0.0; totoros.count() * 16];
             let mut current_totoro = 0;
@@ -2587,7 +2590,7 @@ fn main() {
                     let mm = glm::translation(&totoro.position) * rotation_mat * uniform_scale(totoro.scale);
                     write_matrix_to_buffer(&mut transform_buffer, current_totoro, mm);
 
-                    if let Some(idx) = world_state.selected_totoro {
+                    if let Some(idx) = world_state.totoros.selected_idx {
                         if idx == i {
                             highlighted_buffer[current_totoro] = 1.0;
                         }
@@ -2634,7 +2637,7 @@ fn main() {
             let mut buffer = vec![0.0; MAX_POINT_LIGHTS * floats_per_light];        
             let mut current_light = 0;
             for i in 0..scene_data.point_lights.len() {
-                if let Some(light) = &scene_data.point_lights[i] {
+                if let Some(light) = &scene_data.point_lights.entities[i] {
                     buffer[current_light * 4] = light.position.x;
                     buffer[current_light * 4 + 1] = light.position.y;
                     buffer[current_light * 4 + 2] = light.position.z;

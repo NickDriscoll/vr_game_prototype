@@ -215,3 +215,46 @@ pub struct DebugSphere {
     pub radius: f32,
     pub highlighted: bool
 }
+
+pub struct EntityList<T> {
+    pub entities: OptionVec<T>,
+    pub selected_idx: Option<usize>
+}
+
+impl<T> EntityList<T> {
+    pub fn new() -> Self {
+        EntityList {
+            entities: OptionVec::new(),
+            selected_idx: None
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.entities.clear();
+        self.selected_idx = None;
+    }
+
+    pub fn delete(&mut self, idx: usize) {
+        self.entities.delete(idx);
+        if let Some(i) = self.selected_idx {
+            if i == idx {
+                self.selected_idx = None;
+            }
+        }
+    }
+
+    pub fn count(&self) -> usize { self.entities.count() }
+
+    pub fn get_mut_element(&mut self, idx: usize) -> Option<&mut T> { self.entities.get_mut_element(idx) }
+
+    pub fn insert(&mut self, item: T) -> usize { self.entities.insert(item) }
+
+    pub fn len(&self) -> usize { self.entities.len() }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        EntityList {
+            entities: OptionVec::with_capacity(capacity),
+            selected_idx: None
+        }
+    }
+}

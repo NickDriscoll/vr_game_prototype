@@ -105,9 +105,10 @@ pub unsafe fn create_skybox_cubemap(sky_name: &str) -> GLuint {
 	cubemap
 }
 
-pub fn get_clicked_object<T: SphereCollider>(objects: &OptionVec<T>, click_ray: &Ray) -> Option<(f32, usize)> {
+pub fn get_clicked_object<T: SphereCollider>(entity_list: &EntityList<T>, click_ray: &Ray) -> Option<(f32, usize)> {
     let mut smallest_t = f32::INFINITY;
     let mut hit_index = None;
+    let objects = &entity_list.entities;
     for i in 0..objects.len() {
         if let Some(thing) = &objects[i] {
             let sphere = thing.sphere();
@@ -118,7 +119,6 @@ pub fn get_clicked_object<T: SphereCollider>(objects: &OptionVec<T>, click_ray: 
                 direction: click_ray.direction
             };
 
-            //Compute t
             let d_dot_p = glm::dot(&test_ray.direction, &test_ray.origin);
             let sqrt_body = d_dot_p * d_dot_p - glm::dot(&test_ray.origin, &test_ray.origin) + sphere.radius * sphere.radius;
 
@@ -303,8 +303,6 @@ pub fn load_ent(path: &str, scene_data: &mut SceneData, world_state: &mut WorldS
     //First, clear world data
     world_state.totoros.clear();
     scene_data.point_lights.clear();
-    world_state.selected_totoro = None;
-    scene_data.selected_point_light = None;
 
     match File::open(path) {
         Ok(mut file) => {
